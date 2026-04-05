@@ -210,6 +210,17 @@ jobs:
           name: release-artifacts
           path: dist/releases/
 
+      - name: Generate release notes
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          # Fetch full tags so generate-changelog.sh can find previous tag
+          git fetch --tags
+          scripts/generate-changelog.sh "$VERSION" > /tmp/release-notes-generated.md
+          # Append the static install/first-run instructions
+          cat .github/release-notes.md >> /tmp/release-notes-generated.md
+          echo "--- Release notes ---"
+          cat /tmp/release-notes-generated.md
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -217,7 +228,7 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           gh release create "$TAG" \
             --title "dh $TAG" \
-            --notes-file .github/release-notes.md \
+            --notes-file /tmp/release-notes-generated.md \
             dist/releases/dh-darwin-amd64 \
             dist/releases/dh-darwin-arm64 \
             dist/releases/dh-linux-amd64 \

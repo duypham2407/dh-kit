@@ -117,6 +117,277 @@ Lưu ý:
 - Nếu không có `OPENAI_API_KEY`, semantic embedding tests và indexing flow sẽ dùng mock embedding provider deterministic.
 - Provider-backed smoke/test sẽ skip khi không có key.
 
+## User Guide
+
+Phần này dành cho người chỉ muốn dùng `dh`, không muốn đọc code trước.
+
+### Cách dùng nhanh nhất
+
+Muốn dùng `dh`, bạn làm theo thứ tự này:
+
+1. lấy binary `dh` phù hợp với máy của bạn
+2. cài binary vào máy
+3. mở terminal trong repo bạn muốn phân tích
+4. chạy `dh doctor`
+5. chạy `dh index`
+6. bắt đầu dùng `dh ask`, `dh explain`, `dh trace`, hoặc workflow lanes
+
+### Bước 1: Lấy binary
+
+Nếu bạn đã có thư mục release `dist/releases/`, trong đó sẽ có các file như:
+
+- `dh-darwin-arm64`
+- `dh-darwin-amd64`
+- `dh-linux-amd64`
+- `dh-linux-arm64`
+
+Chọn binary đúng với máy của bạn:
+
+- Mac Apple Silicon: `dh-darwin-arm64`
+- Mac Intel: `dh-darwin-amd64`
+- Linux x86_64: `dh-linux-amd64`
+- Linux ARM64: `dh-linux-arm64`
+
+### Bước 2: Cài binary
+
+Cách dễ nhất:
+
+```sh
+scripts/install-from-release.sh dist/releases
+```
+
+Lệnh này sẽ:
+
+- tự chọn binary phù hợp với máy
+- verify checksum từ `SHA256SUMS`
+- cài `dh` vào `$HOME/.local/bin/dh`
+
+Nếu muốn cài vào thư mục khác:
+
+```sh
+scripts/install-from-release.sh dist/releases "$HOME/bin"
+```
+
+### Bước 3: Đảm bảo `dh` nằm trong `PATH`
+
+Nếu bạn cài vào `$HOME/.local/bin`, hãy chắc rằng shell của bạn có path này.
+
+Kiểm tra:
+
+```sh
+echo "$PATH"
+which dh
+```
+
+Nếu `which dh` không ra gì, thêm vào shell config.
+
+Ví dụ với `zsh`:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Sau đó reload shell:
+
+```sh
+source ~/.zshrc
+```
+
+### Bước 4: Kiểm tra cài đặt
+
+Chạy:
+
+```sh
+dh --help
+dh doctor
+```
+
+Nếu `dh doctor` chạy được, nghĩa là app đã cài đúng.
+
+### Bước 5: Mở đúng repo bạn muốn dùng
+
+`dh` làm việc theo thư mục hiện tại.
+
+Ví dụ:
+
+```sh
+cd /path/to/your-project
+dh doctor
+```
+
+Bạn nên luôn đứng trong root của project muốn phân tích trước khi chạy `dh`.
+
+### Bước 6: Index repo lần đầu
+
+Trước khi hỏi `dh` về codebase, hãy index repo:
+
+```sh
+dh index
+```
+
+Việc này giúp `dh`:
+
+- scan workspace
+- extract symbols
+- build graph
+- chunk code
+- build semantic index
+
+Nếu repo thay đổi nhiều, bạn có thể chạy lại `dh index` để refresh.
+
+### Bước 7: Bắt đầu dùng các lệnh chính
+
+Hỏi trực tiếp về codebase:
+
+```sh
+dh ask "how does authentication work?"
+```
+
+Giải thích một symbol hoặc module:
+
+```sh
+dh explain "runIndexWorkflow"
+```
+
+Trace luồng xử lý:
+
+```sh
+dh trace "authentication request flow"
+```
+
+### Bước 8: Dùng workflow lanes khi cần
+
+Task nhỏ, hẹp:
+
+```sh
+dh quick "fix semantic search ordering bug"
+```
+
+Feature hoặc thay đổi lớn hơn:
+
+```sh
+dh delivery "implement telemetry export command"
+```
+
+Migration / upgrade / compatibility:
+
+```sh
+dh migrate "upgrade embedding provider integration"
+```
+
+## User Walkthrough
+
+Ví dụ đầy đủ cho một user mới:
+
+```sh
+# 1. Cài app
+scripts/install-from-release.sh dist/releases
+
+# 2. Đi tới project muốn phân tích
+cd ~/Code/my-project
+
+# 3. Kiểm tra health
+dh doctor
+
+# 4. Index project
+dh index
+
+# 5. Hỏi về codebase
+dh ask "how does auth work?"
+
+# 6. Giải thích symbol
+dh explain "createServer"
+
+# 7. Trace flow
+dh trace "login flow"
+```
+
+## Khi nào cần `OPENAI_API_KEY`
+
+Bạn chỉ cần `OPENAI_API_KEY` khi muốn dùng embedding provider thật.
+
+Ví dụ:
+
+```sh
+export OPENAI_API_KEY="sk-..."
+```
+
+Khi có key, semantic retrieval/provider-backed flows sẽ dùng model thật.
+
+Khi không có key:
+
+- app vẫn dùng được
+- nhiều flow dev/test vẫn chạy với mock provider
+- nhưng semantic provider-backed behavior sẽ không đầy đủ như môi trường thật
+
+## Những lệnh user nên nhớ
+
+Nếu chỉ nhớ vài lệnh, hãy nhớ các lệnh này:
+
+```sh
+dh doctor
+dh index
+dh ask "..."
+dh explain "..."
+dh trace "..."
+dh quick "..."
+```
+
+## Những lỗi thường gặp
+
+### `dh: command not found`
+
+Nguyên nhân:
+
+- chưa cài binary
+- binary chưa nằm trong `PATH`
+
+Cách xử lý:
+
+```sh
+scripts/install-from-release.sh dist/releases
+which dh
+```
+
+### `doctor` báo thiếu embedding key
+
+Nguyên nhân:
+
+- chưa set `OPENAI_API_KEY`
+
+Cách xử lý:
+
+- nếu chỉ muốn dùng local/dev flow thì có thể bỏ qua
+- nếu muốn semantic/provider-backed behavior thật thì set key:
+
+```sh
+export OPENAI_API_KEY="sk-..."
+```
+
+### Kết quả trả lời yếu hoặc thiếu context
+
+Nguyên nhân thường gặp:
+
+- chưa chạy `dh index`
+- index cũ sau khi codebase đã thay đổi lớn
+
+Cách xử lý:
+
+```sh
+dh index
+```
+
+### `doctor` báo DB integrity hoặc SQLite issue
+
+Nguyên nhân:
+
+- local runtime state trong `.dh/` bị lỗi
+
+Cách xử lý:
+
+- đọc action guidance từ `dh doctor`
+- nếu cần, tạo lại index bằng cách sửa local state rồi chạy lại `dh index`
+
 ## Development Quick Start
 
 Từ root repo:

@@ -70,6 +70,36 @@ docs/
 
 ## Requirements
 
+### For Users
+
+Nếu bạn chỉ muốn dùng `dh` như một app đã build sẵn, bạn chỉ cần:
+
+- binary `dh` đúng với nền tảng của bạn
+
+Không cần cài:
+
+- Node.js
+- npm
+- Go
+
+Optional:
+
+- `OPENAI_API_KEY` nếu muốn dùng embedding provider thật
+
+### For Developers
+
+Nếu bạn muốn chạy từ source, test, build, hoặc phát triển thêm tính năng, bạn cần:
+
+- Node.js
+- npm
+- Go
+- make
+
+### Optional Environment Variables
+
+- `OPENAI_API_KEY`: dùng embedding provider thật thay vì mock provider
+- `DH_RUN_QUIET=true`: tắt spinner / interactive noise trong automation và smoke runs
+
 Local development:
 
 - Node.js

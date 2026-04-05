@@ -18,6 +18,7 @@ import (
 	"github.com/duypham93/dh/packages/opencode-core/internal/llm/agent"
 	"github.com/duypham93/dh/packages/opencode-core/internal/logging"
 	"github.com/duypham93/dh/packages/opencode-core/internal/session"
+	"github.com/duypham93/dh/packages/opencode-core/internal/version"
 	"github.com/duypham93/dh/packages/opencode-core/pkg/types"
 )
 
@@ -73,7 +74,7 @@ func execute(args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
 		case "--version", "-v":
-			fmt.Println("dh dev")
+			fmt.Printf("dh %s\n", version.Version)
 			return nil
 		case "--help", "-h":
 			printHelp()

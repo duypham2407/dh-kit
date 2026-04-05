@@ -76,7 +76,15 @@ jobs:
           go-version: "1.26.1"
 
       - name: Build release artifacts
-        run: make release-all
+        run: |
+          # Extract version from tag (e.g. v0.1.0 -> 0.1.0), default to "dev"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="dev"
+          fi
+          echo "Building with VERSION=$VERSION"
+          make release-all VERSION="$VERSION"
 
       - name: Verify release artifacts
         run: scripts/verify-release-artifacts.sh dist/releases

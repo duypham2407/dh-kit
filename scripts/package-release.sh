@@ -3,6 +3,7 @@ set -eu
 
 SOURCE_DIR="${1:-packages/opencode-core/dist/releases}"
 OUTPUT_DIR="${2:-dist/releases}"
+VERSION="${3:-dev}"
 
 if [ ! -d "$SOURCE_DIR" ]; then
   echo "source release directory not found: $SOURCE_DIR" >&2
@@ -36,7 +37,7 @@ fi
 
   manifest_tmp="manifest.json.tmp"
   generated_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  printf '{\n  "generatedAt": "%s",\n  "files": [\n' "$generated_at" > "$manifest_tmp"
+  printf '{\n  "version": "%s",\n  "generatedAt": "%s",\n  "files": [\n' "$VERSION" "$generated_at" > "$manifest_tmp"
 
   first=1
   for file in dh-*; do

@@ -1,0 +1,22 @@
+node_modules/
+dist/
+
+# Local runtime data directory (sessions, sqlite dbs, work-items)
+.dh/
+*.local
+.DS_Store
+
+# Go build artifacts
+packages/opencode-core/dist/
+
+# ANN index cache files
+ann-*.json
+
+# SQLite databases (local state)
+*.db
+*.db-shm
+*.db-wal
+
+# Editor
+.vscode/
+.idea/

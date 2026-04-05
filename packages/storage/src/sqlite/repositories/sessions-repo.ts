@@ -1,0 +1,39 @@
+import type { SessionState } from "../../../../shared/src/types/session.js";
+import { openDhDatabase } from "../db.js";
+
+export class SessionsRepo {
+  constructor(private readonly repoRoot: string) {}
+
+  save(session: SessionState): void {
+    const database = openDhDatabase(this.repoRoot);
+    database.prepare(`
+      INSERT INTO sessions (
+        session_id, repo_root, lane, lane_locked, current_stage, status,
+        created_at, updated_at, semantic_mode, tool_enforcement_level, active_work_item_ids_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        repo_root = excluded.repo_root,
+        lane = excluded.lane,
+        lane_locked = excluded.lane_locked,
+        current_stage = excluded.current_stage,
+        status = excluded.status,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        semantic_mode = excluded.semantic_mode,
+        tool_enforcement_level = excluded.tool_enforcement_level,
+        active_work_item_ids_json = excluded.active_work_item_ids_json
+    `).run(
+      session.sessionId,
+      session.repoRoot,
+      session.lane,
+      session.laneLocked ? 1 : 0,
+      session.currentStage,
+      session.status,
+      session.createdAt,
+      session.updatedAt,
+      session.semanticMode,
+      session.toolEnforcementLevel,
+      JSON.stringify(session.activeWorkItemIds),
+    );
+  }
+}

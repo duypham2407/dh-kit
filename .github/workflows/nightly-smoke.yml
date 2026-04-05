@@ -1,0 +1,87 @@
+name: Nightly Staging Smoke
+
+on:
+  schedule:
+    # Run nightly at 03:00 UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  nightly-smoke:
+    name: Nightly staging smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+
+      - name: Type check and tests
+        run: |
+          npm run check
+          npm test
+
+      - name: Go tests
+        run: go test ./...
+        working-directory: packages/opencode-core
+
+      - name: Build release artifacts
+        run: make release-all
+
+      - name: Run staging E2E smoke
+        env:
+          DH_RUN_QUIET: "true"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: scripts/staging-e2e-smoke.sh dist/releases
+
+      - name: Capture doctor snapshot
+        # Use vitest to run the capture script so that TypeScript module resolution
+        # (.ts → .js import remapping) works correctly.  Plain `node` cannot resolve
+        # those imports because the project has noEmit: true and no compiled output.
+        run: |
+          npx vitest run packages/runtime/src/diagnostics/capture-snapshot.test.ts || echo "::warning::Doctor snapshot capture failed (non-fatal)"
+
+      - name: Check doctor snapshot for regressions
+        if: always()
+        run: |
+          if [ -f dist/diagnostics/doctor-snapshot.json ]; then
+            node scripts/check-doctor-snapshot.mjs dist/diagnostics/doctor-snapshot.json || echo "::warning::Doctor snapshot regressions detected"
+          else
+            echo "::warning::Doctor snapshot not captured"
+          fi
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-diagnostics-${{ github.run_id }}
+          path: |
+            dist/releases/
+            dist/diagnostics/
+          retention-days: 14
+
+      - name: Create issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "Nightly staging smoke failed ($(date -u +%Y-%m-%d))" \
+            --body "The nightly staging smoke test failed. See [run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})." \
+            --label "bug,ci"

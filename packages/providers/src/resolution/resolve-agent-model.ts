@@ -1,0 +1,35 @@
+import type { AgentModelAssignment, ResolvedModelSelection } from "../../../shared/src/types/model.js";
+import { listModels } from "../registry/model-registry.js";
+import { listProviders } from "../registry/provider-registry.js";
+import { listVariants } from "../registry/variant-registry.js";
+import { resolveFallbackModel } from "./resolve-fallback-model.js";
+
+export function resolveAgentModel(agentId: string, assignment?: AgentModelAssignment): ResolvedModelSelection {
+  if (assignment) {
+    validateResolvedModel(agentId, assignment.providerId, assignment.modelId, assignment.variantId);
+    return {
+      providerId: assignment.providerId,
+      modelId: assignment.modelId,
+      variantId: assignment.variantId,
+    };
+  }
+
+  return resolveFallbackModel(agentId);
+}
+
+export function validateResolvedModel(agentId: string, providerId: string, modelId: string, variantId: string): void {
+  const provider = listProviders().find((entry) => entry.providerId === providerId && entry.enabled);
+  if (!provider) {
+    throw new Error(`Provider '${providerId}' is not enabled for agent '${agentId}'.`);
+  }
+
+  const model = listModels(providerId).find((entry) => entry.modelId === modelId && entry.available);
+  if (!model) {
+    throw new Error(`Model '${modelId}' is not available for provider '${providerId}' and agent '${agentId}'.`);
+  }
+
+  const variant = listVariants(providerId, modelId).find((entry) => entry.variantId === variantId && entry.available);
+  if (!variant) {
+    throw new Error(`Variant '${variantId}' is not available for model '${modelId}' and agent '${agentId}'.`);
+  }
+}

@@ -1,0 +1,214 @@
+name: Release and Smoke
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      skip_provider_smoke:
+        description: "Skip provider-backed smoke test"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------- TypeScript checks ----------
+  ts-check:
+    name: TypeScript check + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Run tests
+        run: npm test
+
+  # ---------- Go tests ----------
+  go-test:
+    name: Go tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+
+      - name: Run Go tests
+        run: go test ./...
+        working-directory: packages/opencode-core
+
+  # ---------- Cross-compile + package ----------
+  build-release:
+    name: Build release artifacts
+    needs: [ts-check, go-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+
+      - name: Build release artifacts
+        run: make release-all
+
+      - name: Verify release artifacts
+        run: scripts/verify-release-artifacts.sh dist/releases
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/releases/
+          retention-days: 30
+
+  # ---------- Smoke test (linux) ----------
+  smoke-linux:
+    name: Smoke test (Linux)
+    needs: [build-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/releases/
+
+      - name: Make binaries executable
+        run: chmod +x dist/releases/dh-*
+
+      - name: Verify downloaded artifacts
+        run: scripts/verify-release-artifacts.sh dist/releases
+
+      - name: Install from release directory
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          scripts/install-from-release.sh dist/releases "$HOME/.local/bin"
+          "$HOME/.local/bin/dh" --version
+
+      - name: Run deterministic smoke
+        env:
+          DH_RUN_QUIET: "true"
+        run: |
+          BIN_PATH=$(scripts/resolve-release-binary.sh dist/releases)
+          chmod +x "$BIN_PATH"
+          "$BIN_PATH" --run-smoke
+
+      - name: Run provider-backed smoke
+        if: ${{ secrets.OPENAI_API_KEY != '' && github.event.inputs.skip_provider_smoke != 'true' }}
+        env:
+          DH_RUN_QUIET: "true"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          BIN_PATH=$(scripts/resolve-release-binary.sh dist/releases)
+          OUTPUT=$("$BIN_PATH" --run "Return exactly: DH_STAGING_SMOKE_OK" 2>&1 || true)
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -q "DH_STAGING_SMOKE_OK"; then
+            echo "[smoke] provider-backed smoke PASSED"
+          else
+            echo "[smoke] provider-backed smoke FAILED - DH_STAGING_SMOKE_OK not found in output"
+            exit 1
+          fi
+
+  # ---------- Smoke test (macOS) ----------
+  smoke-macos:
+    name: Smoke test (macOS)
+    needs: [build-release]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/releases/
+
+      - name: Make binaries executable
+        run: chmod +x dist/releases/dh-*
+
+      - name: Verify downloaded artifacts
+        run: scripts/verify-release-artifacts.sh dist/releases
+
+      - name: Run deterministic smoke
+        env:
+          DH_RUN_QUIET: "true"
+        run: |
+          BIN_PATH=$(scripts/resolve-release-binary.sh dist/releases)
+          "$BIN_PATH" --run-smoke
+
+  # ---------- GitHub Release (tag only) ----------
+  publish-release:
+    name: Publish GitHub Release
+    needs: [smoke-linux, smoke-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/releases/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG" \
+            --title "dh $TAG" \
+            --generate-notes \
+            dist/releases/dh-darwin-amd64 \
+            dist/releases/dh-darwin-arm64 \
+            dist/releases/dh-linux-amd64 \
+            dist/releases/dh-linux-arm64 \
+            dist/releases/SHA256SUMS \
+            dist/releases/manifest.json

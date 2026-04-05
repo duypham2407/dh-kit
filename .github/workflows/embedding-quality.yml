@@ -1,0 +1,41 @@
+name: Embedding Quality
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run weekly on Sundays at 04:00 UTC
+    - cron: "0 4 * * 0"
+
+jobs:
+  embedding-quality:
+    name: Provider-backed retrieval quality test
+    runs-on: ubuntu-latest
+    if: ${{ secrets.OPENAI_API_KEY != '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Run all tests (including provider-backed quality tests)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: npm test -- --reporter=verbose
+
+      - name: Summarize quality results
+        if: always()
+        run: |
+          echo "## Embedding Quality Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Provider: OpenAI text-embedding-3-small" >> $GITHUB_STEP_SUMMARY
+          echo "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY

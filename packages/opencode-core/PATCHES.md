@@ -528,7 +528,7 @@ Validation run:
 
 ## provider-backed staging smoke + non-tty run hardening
 
-- Verified provider-backed smoke path with OpenAI key from local example secret file:
+- Verified provider-backed smoke path with a locally configured OpenAI key:
   - `OPENAI_API_KEY=... scripts/staging-e2e-smoke.sh`
   - deterministic smoke + provider-backed `dh --run "Return exactly: DH_STAGING_SMOKE_OK"` completed successfully
 - Observed non-TTY warning from spinner (`/dev/tty`), then hardened run path:

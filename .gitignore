@@ -1,22 +1,37 @@
 node_modules/
 dist/
 
-# Local runtime data directory (sessions, sqlite dbs, work-items)
+# Local runtime data directory (sessions, sqlite dbs, work-items, telemetry)
 .dh/
 *.local
 .DS_Store
 
+# OpenCode local runtime state (DB, WAL — NOT opencode.json config)
+.opencode/*.db
+.opencode/*.db-shm
+.opencode/*.db-wal
+
 # Go build artifacts
 packages/opencode-core/dist/
 
-# ANN index cache files
+# ANN / HNSW index cache files
 ann-*.json
+hnsw-*.json
 
 # SQLite databases (local state)
 *.db
 *.db-shm
 *.db-wal
 
+# Telemetry logs
+events.jsonl
+
+# DB backups created by recovery
+.dh/sqlite/backups/
+
 # Editor
 .vscode/
 .idea/
+
+# OS
+Thumbs.db

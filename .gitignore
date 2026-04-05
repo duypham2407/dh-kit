@@ -33,5 +33,8 @@ events.jsonl
 .vscode/
 .idea/
 
+# Demo/example directory (contains sensitive credentials — never push)
+example/
+
 # OS
 Thumbs.db

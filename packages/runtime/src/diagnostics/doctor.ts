@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { resolveDhPaths } from "../../../shared/src/utils/path.js";
 import { openDhDatabase, resolveSqliteDbPath } from "../../../storage/src/sqlite/db.js";
+import { checkDatabaseIntegrity, checkDatabaseReadable } from "../../../storage/src/sqlite/db-health.js";
 import { DEFAULT_AGENT_REGISTRY } from "../../../shared/src/constants/roles.js";
 import { listProviders } from "../../../providers/src/registry/provider-registry.js";
 import { listModels } from "../../../providers/src/registry/model-registry.js";
@@ -38,6 +39,7 @@ export type DoctorSnapshot = {
   timestamp: string;
   ok: boolean;
   tables: { required: number; present: number; missing: string[] };
+  dbIntegrity: { ok: boolean; details: string[] };
   chunks: number;
   embeddings: number;
   embeddingModel: string;
@@ -78,6 +80,10 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   ];
   const availableTables = new Set(tables.map((table) => table.name));
   const missingTables = requiredTables.filter((table) => !availableTables.has(table));
+
+  // Database integrity check
+  const integrityResult = checkDatabaseIntegrity(repoRoot);
+
   const providers = listProviders();
   const modelsByProvider = new Map<string, number>();
   for (const provider of providers) {
@@ -123,10 +129,14 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
 
   const sqliteBridgeReady = availableTables.has("hook_invocation_logs") && goBinaryReady;
 
-  const statusOk = missingTables.length === 0 && providers.length > 0 && DEFAULT_AGENT_REGISTRY.length > 0;
+  const statusOk = missingTables.length === 0 && providers.length > 0 && DEFAULT_AGENT_REGISTRY.length > 0 && integrityResult.ok;
 
   // Build actionable next-steps
   const actions: string[] = [];
+
+  if (!integrityResult.ok) {
+    actions.push(`Database integrity check FAILED: ${integrityResult.details.join("; ")}. Run "dh recover" to attempt automatic repair.`);
+  }
 
   if (!embeddingKeyAvailable && semanticMode !== "off") {
     actions.push(`Set ${embeddingKeyVar} to enable real embeddings: export ${embeddingKeyVar}="sk-..."`);
@@ -160,6 +170,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     `  sqlite: ${resolveSqliteDbPath(repoRoot)}`,
     "",
     "Database:",
+    `  integrity: ${integrityResult.ok ? "OK" : `FAILED — ${integrityResult.details.join("; ")}`}`,
     `  tables: ${missingTables.length === 0 ? `all ${requiredTables.length} present` : `missing: ${missingTables.join(", ")}`}`,
     `  chunks: ${chunkCount}`,
     `  embeddings: ${embeddingCount} (model: ${embeddingModel})`,
@@ -217,6 +228,10 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
         required: requiredTables.length,
         present: requiredTables.length - missingTables.length,
         missing: missingTables,
+      },
+      dbIntegrity: {
+        ok: integrityResult.ok,
+        details: integrityResult.details,
       },
       chunks: chunkCount,
       embeddings: embeddingCount,

@@ -5,7 +5,8 @@ import { ChunksRepo } from "../../../storage/src/sqlite/repositories/chunks-repo
 import { EmbeddingsRepo, type EmbeddingRow } from "../../../storage/src/sqlite/repositories/embeddings-repo.js";
 import { contentHash, estimateTokens } from "./chunker.js";
 import type { ChunkInput } from "../../../shared/src/types/embedding.js";
-import { writeAnnIndex } from "./ann-index.js";
+import { writeAnnIndex, buildAndWriteHnswIndex } from "./ann-index.js";
+import { recordTelemetry } from "./telemetry-collector.js";
 
 /**
  * Embedding provider abstraction. The default implementation calls the
@@ -184,6 +185,7 @@ export async function embedAndPersist(
   chunks: ChunkRow[],
   provider: EmbeddingProvider,
 ): Promise<EmbedPipelineResult> {
+  const t0 = performance.now();
   const embRepo = new EmbeddingsRepo(repoRoot);
   const config = provider.config;
   let embeddingsStored = 0;
@@ -220,6 +222,23 @@ export async function embedAndPersist(
     embRepo.saveBatch(embedInputs);
     embeddingsStored += embedInputs.length;
   }
+
+  const durationMs = performance.now() - t0;
+  const usedMock = !isEmbeddingKeyAvailable(config);
+
+  recordTelemetry(repoRoot, {
+    kind: "embedding_pipeline",
+    metrics: {
+      durationMs,
+      chunksInput: chunks.length,
+      chunksEmbedded: embeddingsStored,
+      chunksSkipped: skippedDuplicates,
+      totalTokens,
+      avgTokensPerChunk: embeddingsStored > 0 ? totalTokens / embeddingsStored : 0,
+      modelName: config.modelName,
+      usedMockProvider: usedMock,
+    },
+  });
 
   return {
     chunksStored: chunks.length,
@@ -316,7 +335,22 @@ export async function reembedAllChunks(
 }
 
 export async function rebuildAnnIndex(repoRoot: string, modelName: string): Promise<string> {
+  const t0 = performance.now();
   const embRepo = new EmbeddingsRepo(repoRoot);
   const embeddings = embRepo.listByModel(modelName);
-  return writeAnnIndex(repoRoot, modelName, embeddings);
+  // Build both flat cache (legacy compat) and HNSW index
+  const flatPath = await writeAnnIndex(repoRoot, modelName, embeddings);
+  await buildAndWriteHnswIndex(repoRoot, modelName, embeddings);
+  const durationMs = performance.now() - t0;
+
+  recordTelemetry(repoRoot, {
+    kind: "ann_build",
+    metrics: {
+      durationMs,
+      vectorCount: embeddings.length,
+      modelName,
+    },
+  });
+
+  return flatPath;
 }

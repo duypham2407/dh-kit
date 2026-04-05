@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/duypham93/dh/packages/opencode-core/internal/app"
 	"github.com/duypham93/dh/packages/opencode-core/internal/bridge"
+	"github.com/duypham93/dh/packages/opencode-core/internal/clibundle"
 	"github.com/duypham93/dh/packages/opencode-core/internal/config"
 	"github.com/duypham93/dh/packages/opencode-core/internal/db"
 	"github.com/duypham93/dh/packages/opencode-core/internal/dhhooks"
@@ -21,6 +23,20 @@ import (
 	"github.com/duypham93/dh/packages/opencode-core/internal/version"
 	"github.com/duypham93/dh/packages/opencode-core/pkg/types"
 )
+
+// cliSubcommands are the commands handled by the embedded TypeScript CLI.
+var cliSubcommands = map[string]bool{
+	"ask":      true,
+	"explain":  true,
+	"trace":    true,
+	"index":    true,
+	"doctor":   true,
+	"quick":    true,
+	"delivery": true,
+	"migrate":  true,
+	"config":   true,
+	"clean":    true,
+}
 
 var runNonInteractiveFn = runNonInteractive
 var stderrIsTTYFn = stderrIsTTY
@@ -99,11 +115,15 @@ func execute(args []string) error {
 			}
 			return nil
 		}
+
+		// Delegate known subcommands to embedded TS CLI
+		if cliSubcommands[args[0]] {
+			return delegateToCli(args)
+		}
 	}
 
-	// Default: show hook demo (same as previous behavior)
-	runHookDemo(registry)
-	return nil
+	// Default: delegate to TS CLI (shows home screen / help)
+	return delegateToCli(args)
 }
 
 func buildHookRegistry() (hooks.Registry, func()) {
@@ -157,12 +177,62 @@ func printHelp() {
 	fmt.Println("dh - AI software factory CLI")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  dh                    Show hook status")
-	fmt.Println("  dh --hooks            Show hook status (same as default)")
-	fmt.Println("  dh --run <prompt>     Run a prompt in non-interactive mode")
-	fmt.Println("  dh --run-smoke        Run hook smoke without provider")
-	fmt.Println("  dh --version          Show version")
-	fmt.Println("  dh --help             Show this help")
+	fmt.Println("  dh ask <question>         Ask about the codebase")
+	fmt.Println("  dh explain <symbol>        Explain a symbol")
+	fmt.Println("  dh trace <target>          Trace a flow")
+	fmt.Println("  dh index                   Index the codebase")
+	fmt.Println("  dh doctor [--json]         Check health")
+	fmt.Println("  dh quick <task>            Run a quick task")
+	fmt.Println("  dh delivery <goal>         Run a delivery workflow")
+	fmt.Println("  dh migrate <goal>          Run a migration workflow")
+	fmt.Println("  dh config --show           Show config")
+	fmt.Println("  dh clean --yes             Clean local data")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fmt.Println("  dh --hooks                Show hook status")
+	fmt.Println("  dh --run <prompt>          Run a prompt non-interactively")
+	fmt.Println("  dh --run-smoke             Run hook smoke test")
+	fmt.Println("  dh --version               Show version")
+	fmt.Println("  dh --help                  Show this help")
+	fmt.Println()
+	fmt.Println("First-time setup:")
+	fmt.Println("  1. dh doctor")
+	fmt.Println("  2. dh index")
+	fmt.Println("  3. dh ask \"how does this project work?\"")
+}
+
+// delegateToCli extracts the embedded TS CLI bundle and runs it with Node.js.
+func delegateToCli(args []string) error {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Node.js is required but 'node' was not found in PATH.\n")
+		fmt.Fprintf(os.Stderr, "Install Node.js (v22+) from https://nodejs.org/ and try again.\n")
+		return fmt.Errorf("node not found in PATH: %w", err)
+	}
+
+	bundlePath, err := clibundle.ExtractBundle()
+	if err != nil {
+		return fmt.Errorf("failed to extract CLI bundle: %w", err)
+	}
+
+	cmdArgs := append([]string{bundlePath}, args...)
+	cmd := exec.Command(nodePath, cmdArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Pass through environment, ensure DH_PROJECT_ROOT is set
+	cmd.Env = os.Environ()
+
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
+		}
+		return fmt.Errorf("cli delegate failed: %w", err)
+	}
+
+	return nil
 }
 
 func runNonInteractiveHookSmoke() error {

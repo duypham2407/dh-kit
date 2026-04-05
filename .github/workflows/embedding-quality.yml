@@ -6,6 +6,9 @@ on:
     # Run weekly on Sundays at 04:00 UTC
     - cron: "0 4 * * 0"
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   embedding-quality:
     name: Provider-backed retrieval quality test

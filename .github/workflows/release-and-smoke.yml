@@ -14,6 +14,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # ---------- TypeScript checks ----------
   ts-check:
@@ -48,6 +51,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26.1"
+          cache-dependency-path: packages/opencode-core/go.sum
 
       - name: Run Go tests
         run: go test ./...
@@ -74,6 +78,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26.1"
+          cache-dependency-path: packages/opencode-core/go.sum
 
       - name: Build release artifacts
         run: |
@@ -88,6 +93,18 @@ jobs:
 
       - name: Verify release artifacts
         run: scripts/verify-release-artifacts.sh dist/releases
+
+      - name: Sign release artifacts
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+        run: |
+          if [ -z "$GPG_PRIVATE_KEY" ]; then
+            echo "GPG_PRIVATE_KEY not set; skipping signing"
+          else
+            echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+            scripts/sign-release.sh dist/releases "$GPG_KEY_ID"
+          fi
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
@@ -226,15 +243,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
+          # Build asset list: always include binaries + checksums + manifest
+          ASSETS="dist/releases/dh-darwin-amd64 dist/releases/dh-darwin-arm64 dist/releases/dh-linux-amd64 dist/releases/dh-linux-arm64 dist/releases/SHA256SUMS dist/releases/manifest.json"
+          # Append .sig files if GPG signing ran
+          for sig in dist/releases/*.sig; do
+            [ -f "$sig" ] && ASSETS="$ASSETS $sig"
+          done
           gh release create "$TAG" \
             --title "dh $TAG" \
             --notes-file /tmp/release-notes-generated.md \
-            dist/releases/dh-darwin-amd64 \
-            dist/releases/dh-darwin-arm64 \
-            dist/releases/dh-linux-amd64 \
-            dist/releases/dh-linux-arm64 \
-            dist/releases/SHA256SUMS \
-            dist/releases/manifest.json
+            $ASSETS
 
   # ---------- Update Homebrew tap (tag only) ----------
   update-homebrew:

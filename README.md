@@ -16,6 +16,14 @@ Nó giúp bạn:
 - Linux x86_64
 - Linux ARM64
 
+### Requirements
+
+- **Node.js v22+** must be installed and available in `PATH`. The `dh` binary delegates subcommands (`ask`, `explain`, `trace`, `doctor`, `index`, etc.) to an embedded JavaScript CLI that runs on Node.js.
+
+  ```sh
+  node --version  # should print v22.x or later
+  ```
+
 ## Who This Is For
 
 `dh` phù hợp nếu bạn muốn:

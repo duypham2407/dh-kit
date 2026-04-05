@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   check-and-test:
     name: TypeScript check + tests
@@ -41,6 +44,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26.1"
+          cache-dependency-path: packages/opencode-core/go.sum
 
       - name: Run Go tests
         run: go test ./...

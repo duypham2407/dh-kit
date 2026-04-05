@@ -140,11 +140,15 @@ jobs:
           "$BIN_PATH" --run-smoke
 
       - name: Run provider-backed smoke
-        if: ${{ secrets.OPENAI_API_KEY != '' && github.event.inputs.skip_provider_smoke != 'true' }}
+        if: ${{ github.event.inputs.skip_provider_smoke != 'true' }}
         env:
           DH_RUN_QUIET: "true"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "[smoke] OPENAI_API_KEY not set; skipping provider-backed smoke"
+            exit 0
+          fi
           BIN_PATH=$(scripts/resolve-release-binary.sh dist/releases)
           OUTPUT=$("$BIN_PATH" --run "Return exactly: DH_STAGING_SMOKE_OK" 2>&1 || true)
           echo "$OUTPUT"

@@ -10,30 +10,45 @@ jobs:
   embedding-quality:
     name: Provider-backed retrieval quality test
     runs-on: ubuntu-latest
-    if: ${{ secrets.OPENAI_API_KEY != '' }}
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check for API key
+        id: check-key
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "OPENAI_API_KEY not set; skipping quality tests"
+          else
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
       - name: Set up Node.js
+        if: steps.check-key.outputs.has_key == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
+        if: steps.check-key.outputs.has_key == 'true'
         run: npm ci
 
       - name: Type check
+        if: steps.check-key.outputs.has_key == 'true'
         run: npm run check
 
       - name: Run all tests (including provider-backed quality tests)
+        if: steps.check-key.outputs.has_key == 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: npm test -- --reporter=verbose
 
       - name: Summarize quality results
-        if: always()
+        if: always() && steps.check-key.outputs.has_key == 'true'
         run: |
           echo "## Embedding Quality Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

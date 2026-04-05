@@ -65,6 +65,14 @@ dh index
 
 Các vấn đề kiểu này thường nằm ở local state trong `.dh/`.
 
+Bạn có thể reset local state của project hiện tại bằng:
+
+```sh
+dh clean --yes
+dh doctor
+dh index
+```
+
 ## Cần gỡ `dh`
 
 ```sh

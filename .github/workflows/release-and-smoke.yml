@@ -205,7 +205,7 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           gh release create "$TAG" \
             --title "dh $TAG" \
-            --generate-notes \
+            --notes-file .github/release-notes.md \
             dist/releases/dh-darwin-amd64 \
             dist/releases/dh-darwin-arm64 \
             dist/releases/dh-linux-amd64 \

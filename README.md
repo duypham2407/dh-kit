@@ -225,6 +225,13 @@ dh ask "..."
 dh explain "..."
 dh trace "..."
 dh quick "..."
+dh clean --yes
+```
+
+## Version
+
+```sh
+dh --version
 ```
 
 ## Everyday Usage
@@ -352,6 +359,19 @@ dh index
 Chạy lại:
 
 ```sh
+dh index
+```
+
+### Muốn reset local state của `dh`
+
+```sh
+dh clean --yes
+```
+
+Lệnh này sẽ xóa `.dh/` của project hiện tại. Sau đó chạy lại:
+
+```sh
+dh doctor
 dh index
 ```
 

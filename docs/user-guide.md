@@ -93,6 +93,10 @@ dh ask "how does auth work?"
 
 ## Ý nghĩa các lệnh cơ bản
 
+### `dh --version`
+
+In ra version hiện tại của binary `dh`.
+
 ### `dh doctor`
 
 Kiểm tra local runtime, DB, config, semantic readiness.
@@ -118,6 +122,10 @@ Trace luồng xử lý hoặc dependency flow.
 ### `dh quick`
 
 Chạy một workflow nhanh cho task nhỏ.
+
+### `dh clean --yes`
+
+Xóa local runtime state `.dh/` của project hiện tại để reset index/cache/DB.
 
 ## Khi nào cần `OPENAI_API_KEY`
 

@@ -198,6 +198,10 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     `Status: ${statusOk ? "OK" : "ISSUES FOUND"}`,
   ];
 
+  if (chunkCount === 0) {
+    summaryLines.push("", "First-time setup:", "  1. dh index", "  2. dh ask \"how does this project work?\"");
+  }
+
   if (actions.length > 0) {
     summaryLines.push("", "Recommended actions:");
     for (const action of actions) {

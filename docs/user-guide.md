@@ -29,6 +29,18 @@ Bạn chỉ cần clone source nếu bạn là developer của chính `dh`.
 
 ## Cài đặt trên macOS/Linux
 
+### Cài trực tiếp từ GitHub Releases
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/duypham2407/dh-kit/main/scripts/install-github-release.sh | sh
+```
+
+Nếu muốn cài vào thư mục khác:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/duypham2407/dh-kit/main/scripts/install-github-release.sh | sh -s -- latest "$HOME/bin"
+```
+
 ### Cách khuyến nghị
 
 Nếu bạn có thư mục release:
@@ -92,6 +104,8 @@ Build index để `dh` hiểu codebase tốt hơn.
 ### `dh ask`
 
 Hỏi một câu tự nhiên về codebase.
+
+Nếu chưa có index hoặc chưa có enough data, command sẽ gợi ý bước tiếp theo như `dh index` hoặc `dh doctor`.
 
 ### `dh explain`
 

@@ -8,7 +8,7 @@ import { runMigrateCommand } from "./migrate.js";
 import { runQuickCommand } from "./quick.js";
 import { runTraceCommand } from "./trace.js";
 
-const HELP = `dh <command> [args]\n\nCommands:\n  quick <task> [--json]\n  delivery <goal> [--json]\n  migrate <goal> [--json]\n  ask <question> [--json]\n  explain <symbol> [--json]\n  trace <target> [--json]\n  index\n  doctor [--json] [--debug-dump [path]]\n  config --agent\n  config --verify-agent [quick|delivery|migration]\n  config --semantic [always|auto|off]\n  config --embedding\n  config --show`;
+const HELP = `dh <command> [args]\n\nCommands:\n  quick <task> [--json]\n  delivery <goal> [--json]\n  migrate <goal> [--json]\n  ask <question> [--json]\n  explain <symbol> [--json]\n  trace <target> [--json]\n  index\n  doctor [--json] [--debug-dump [path]]\n  config --agent\n  config --verify-agent [quick|delivery|migration]\n  config --semantic [always|auto|off]\n  config --embedding\n  config --show\n\nFirst-time setup:\n  1. dh doctor\n  2. dh index\n  3. dh ask "how does auth work?"\n\nExamples:\n  dh ask "where is session state persisted?"\n  dh explain "runIndexWorkflow"\n  dh trace "authentication flow"\n  dh quick "fix semantic search ordering bug"`;
 
 export async function runCli(args: string[], repoRoot: string): Promise<number> {
   const [command, ...rest] = args;

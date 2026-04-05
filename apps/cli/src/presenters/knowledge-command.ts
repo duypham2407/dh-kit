@@ -2,10 +2,14 @@ import type { KnowledgeCommandReport } from "../../../../packages/opencode-app/s
 
 export function renderKnowledgeCommandText(report: KnowledgeCommandReport): string {
   if (report.exitCode !== 0) {
-    return report.message ?? "Knowledge command failed.";
+    const lines = [report.message ?? "Knowledge command failed."];
+    if (report.guidance && report.guidance.length > 0) {
+      lines.push("", "next steps:", ...report.guidance.map((item) => `  - ${item}`));
+    }
+    return lines.join("\n");
   }
 
-  return [
+  const lines = [
     `command: ${report.command}`,
     `repo: ${report.repo}`,
     `intent: ${report.intent}`,
@@ -15,7 +19,13 @@ export function renderKnowledgeCommandText(report: KnowledgeCommandReport): stri
     `result count: ${report.resultCount}`,
     `evidence count: ${report.evidenceCount}`,
     ...report.evidencePreview,
-  ].join("\n");
+  ];
+
+  if (report.guidance && report.guidance.length > 0) {
+    lines.push("", "next steps:", ...report.guidance.map((item) => `  - ${item}`));
+  }
+
+  return lines.join("\n");
 }
 
 export function renderKnowledgeCommandJson(report: KnowledgeCommandReport): string {

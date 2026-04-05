@@ -29,6 +29,27 @@ Bạn không cần đọc source code của `dh` để bắt đầu dùng.
 
 ## Install
 
+### Option 0: One-line install from GitHub Releases
+
+macOS và Linux có thể cài trực tiếp từ GitHub Releases bằng script này:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/duypham2407/dh-kit/main/scripts/install-github-release.sh | sh
+```
+
+Script sẽ:
+
+- detect macOS/Linux và CPU architecture
+- tải đúng binary release
+- verify checksum từ `SHA256SUMS`
+- cài vào `$HOME/.local/bin/dh`
+
+Nếu muốn cài vào thư mục riêng:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/duypham2407/dh-kit/main/scripts/install-github-release.sh | sh -s -- latest "$HOME/bin"
+```
+
 ### Option 1: Install from a release directory
 
 Nếu bạn đã có thư mục release chứa các binary như:
@@ -126,6 +147,8 @@ Sau khi cài `dh`, cách bắt đầu đúng là:
 2. chạy `dh doctor`
 3. chạy `dh index`
 4. bắt đầu dùng `dh ask`, `dh explain`, `dh trace`
+
+Nếu bạn chạy `dh ask`, `dh explain`, hoặc `dh trace` quá sớm khi chưa index, CLI hiện sẽ gợi ý chạy `dh index` và `dh doctor`.
 
 ### Step 1: Go to your project
 

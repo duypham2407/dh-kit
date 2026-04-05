@@ -1,4 +1,6 @@
 import { runRetrieval } from "../../../retrieval/src/query/run-retrieval.js";
+import { ChunksRepo } from "../../../storage/src/sqlite/repositories/chunks-repo.js";
+import { EmbeddingsRepo } from "../../../storage/src/sqlite/repositories/embeddings-repo.js";
 
 export type KnowledgeCommandReport = {
   exitCode: number;
@@ -12,6 +14,7 @@ export type KnowledgeCommandReport = {
   evidenceCount: number;
   evidencePreview: string[];
   message?: string;
+  guidance?: string[];
 };
 
 export async function runKnowledgeCommand(input: {
@@ -32,6 +35,7 @@ export async function runKnowledgeCommand(input: {
       evidenceCount: 0,
       evidencePreview: [],
       message: `Missing input for '${input.kind}' command.`,
+      guidance: [`Example: dh ${input.kind} "how does authentication work?"`],
     };
   }
 
@@ -41,6 +45,28 @@ export async function runKnowledgeCommand(input: {
     mode: input.kind,
     semanticMode: "always",
   });
+
+  const guidance: string[] = [];
+
+  if (retrieval.results.length === 0) {
+    let chunkCount = 0;
+    let embeddingCount = 0;
+    try {
+      chunkCount = new ChunksRepo(input.repoRoot).count();
+      embeddingCount = new EmbeddingsRepo(input.repoRoot).countByModel("text-embedding-3-small");
+    } catch {
+      // ignore guidance probe failures
+    }
+
+    if (chunkCount === 0) {
+      guidance.push(`No indexed chunks found. Run: dh index`);
+    } else if (embeddingCount === 0) {
+      guidance.push(`Chunks exist but no embeddings were found. Run: dh index`);
+    }
+
+    guidance.push(`Try a more specific query or symbol name.`);
+    guidance.push(`Check runtime health with: dh doctor`);
+  }
 
   return {
     exitCode: 0,
@@ -55,5 +81,6 @@ export async function runKnowledgeCommand(input: {
     evidencePreview: retrieval.evidencePackets.slice(0, 3).map((packet, index) => {
       return `evidence ${index + 1}: ${packet.filePath} [${packet.lines[0]}-${packet.lines[1]}] score=${packet.score.toFixed(2)} reason=${packet.reason}`;
     }),
+    guidance,
   };
 }

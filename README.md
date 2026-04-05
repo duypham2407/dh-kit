@@ -440,6 +440,8 @@ User-facing docs:
 - `docs/user-guide.md`
 - `docs/troubleshooting.md`
 - `docs/privacy-and-local-data.md`
+- `docs/homebrew.md`
+- `docs/changelog-policy.md`
 
 Operations docs:
 

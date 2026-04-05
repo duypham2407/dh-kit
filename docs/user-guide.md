@@ -49,6 +49,16 @@ Nếu bạn có thư mục release:
 scripts/install-from-release.sh dist/releases
 ```
 
+### Homebrew (planned macOS distribution path)
+
+Homebrew là hướng phân phối macOS được khuyến nghị tiếp theo cho `dh`.
+
+Trạng thái hiện tại: chưa publish tap chính thức, nhưng policy và skeleton đã có trong:
+
+```text
+docs/homebrew.md
+```
+
 ### Nếu muốn cài vào thư mục riêng
 
 ```sh

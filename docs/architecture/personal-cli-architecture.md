@@ -16,8 +16,8 @@ Mục tiêu không phải sao chép nguyên xi các sản phẩm lớn, mà là 
 Current implementation note:
 
 - Đây là tài liệu định hướng kiến trúc và trade-off ở mức sản phẩm.
-- Current codebase đã hiện thực đáng kể phần local-first TypeScript path, semantic retrieval mặc định, SQLite persistence và CLI workflows.
-- Single-binary runtime hoàn chỉnh vẫn là target state, chưa phải current shipped state.
+- Current codebase đã hiện thực local-first TypeScript path, semantic retrieval mặc định, SQLite persistence, CLI workflows, Go runtime integration và single-binary distribution path.
+- Phần còn lại của tài liệu này nên được đọc như trade-off và hướng mở rộng của sản phẩm hơn là gap completion ở current shipped state.
 
 Tên app được chốt là `dh`.
 

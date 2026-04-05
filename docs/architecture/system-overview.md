@@ -17,8 +17,8 @@ Tài liệu này là overview cấp hệ thống. Chi tiết schema index nằm 
 Current implementation note:
 
 - Đây là tài liệu mô tả target architecture của hệ thống.
-- Ở code hiện tại, nhiều phần của application, retrieval, intelligence và storage đã có implementation usable ở TypeScript.
-- Tuy nhiên Go runtime fork, runtime-level hook enforcement hoàn chỉnh và single-binary distribution vẫn chưa hoàn tất; các phần đó nên được đọc như target state nhiều hơn current shipped state.
+- Ở code hiện tại, các phần chính của application, retrieval, intelligence, storage, Go runtime hook wiring và binary distribution path đã có implementation và validation usable end-to-end.
+- Các phần target-state trong tài liệu này nên được đọc chủ yếu như hướng scale-up, tuning và mở rộng capability, không còn là phần nền tảng chưa hoàn tất.
 
 ## Mục tiêu sản phẩm
 

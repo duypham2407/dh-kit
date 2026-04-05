@@ -15,8 +15,8 @@ Indexing model là nền của toàn bộ retrieval pipeline. Nếu schema yếu
 
 Current implementation note:
 
-- Current codebase đã có chunk persistence, embeddings persistence, AST-first symbol extraction, import extraction và index workflow runner cơ bản.
-- File này vẫn mô tả target indexing model đầy đủ; một số entity như call edges, reference edges, query logs và incremental indexing sâu vẫn chưa hoàn tất trong current implementation.
+- Current codebase đã có chunk persistence, embeddings persistence, AST-first symbol extraction, import extraction, call-site extraction, ANN-backed semantic path và index workflow runner tương ứng với roadmap hiện tại.
+- File này vẫn mô tả indexing model đầy đủ ở mức kiến trúc; các phần còn lại nên được đọc như hướng mở rộng schema và tối ưu hóa chiều sâu index hơn là gap completion của current implementation.
 
 ## Nguyên tắc thiết kế
 

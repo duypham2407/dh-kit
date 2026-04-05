@@ -23,9 +23,9 @@ Quyết định kiến trúc quan trọng nhất:
 
 Current implementation note:
 
-- Đây là tài liệu kiến trúc tổng hợp ở mức target state.
-- Current codebase đã có implementation usable ở TypeScript cho persistence, workflows, retrieval, semantic retrieval, config flows và diagnostics.
-- Go fork runtime thật, runtime-level hook enforcement hoàn chỉnh và single-binary distribution vẫn chưa hoàn tất; các phần đó nên được đọc như hướng triển khai tiếp theo hơn là trạng thái shipped hiện tại.
+- Đây là tài liệu kiến trúc tổng hợp ở mức target state, nhưng các khối chính được mô tả ở đây hiện đã có implementation và validation tương ứng trong codebase hiện tại.
+- Current codebase đã có persistence, workflows, retrieval, semantic retrieval, config flows, diagnostics, Go runtime hook wiring, release packaging và single-binary distribution path chạy được end-to-end.
+- Những phần còn lại nên được đọc chủ yếu như hướng mở rộng và tối ưu hóa tiếp theo, không còn là blocker cho trạng thái hoàn thành hiện tại.
 
 Nguyên tắc nền:
 

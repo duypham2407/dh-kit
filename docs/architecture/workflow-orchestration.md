@@ -17,8 +17,8 @@ Tài liệu này chốt kiến trúc orchestration cho `dh`, tập trung vào:
 
 Current implementation note:
 
-- Current codebase đã có lane resolution, lane lock session bootstrap, workflow runners, handoff manager và gate evaluator cơ bản ở TypeScript/runtime path.
-- Delivery/migration orchestration depth, work-item planning và runtime-level enforcement hoàn chỉnh vẫn chưa đạt target state mô tả trong tài liệu này.
+- Current codebase đã có lane resolution, lane lock session bootstrap, workflow runners, handoff manager, gate evaluator, dependency-aware planning, execution sequencing và runtime-level enforcement path tương ứng với roadmap hiện tại.
+- Các phần trong tài liệu này nên được đọc như hợp đồng orchestration hiện tại cùng với không gian tối ưu hóa tiếp theo, không còn là gap completion của roadmap.
 
 ## Nguyên tắc nền
 
@@ -37,7 +37,7 @@ Current implementation note:
 2. `delivery`
 3. `migration`
 
-Mỗi mode là một lane runtime riêng, có topology, policy và mức ceremony khác nhau. Current implementation đã phản ánh phần cơ bản của model này, nhưng chưa hoàn tất chiều sâu orchestration cuối cùng.
+Mỗi mode là một lane runtime riêng, có topology, policy và mức ceremony khác nhau. Current implementation đã phản ánh model này ở mức roadmap-complete; phần còn lại là tuning và mở rộng theo dữ liệu vận hành thực tế.
 
 ## Lane Lock Contract
 

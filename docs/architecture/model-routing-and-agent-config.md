@@ -18,8 +18,8 @@ Mục tiêu là để `dh` không dùng một model chung cho mọi agent, mà g
 
 Current implementation note:
 
-- Hiện tại assignment persistence, model resolution và interactive config flow đã usable ở TypeScript/runtime path.
-- Runtime-level model override qua Go hook vẫn là target architecture chưa hoàn tất ở current codebase.
+- Hiện tại assignment persistence, model resolution, interactive config flow và runtime-level model override path đã có implementation tương ứng với trạng thái hoàn tất hiện tại của roadmap.
+- Các phần trong tài liệu này nên được đọc như source of truth cho behavior và policy, không còn là mô tả của một target architecture chưa được wiring xong.
 
 ## Nguyên tắc nền
 

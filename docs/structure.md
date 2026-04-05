@@ -7,8 +7,8 @@ Last reviewed against code: 2026-04-05
 Current implementation note:
 
 - File này là mental model rút gọn, không phải inventory chính xác của mọi implementation hiện tại.
-- Current codebase đã có nhiều phần TS-side chạy được cho retrieval, semantic indexing, workflow orchestration cơ bản và config/doctor flows.
-- Go hook enforcement end-to-end và binary distribution vẫn là target state, chưa phải trạng thái runtime hoàn chỉnh hiện tại.
+- Current codebase đã có retrieval, semantic indexing, workflow orchestration, config/doctor flows, Go hook enforcement end-to-end và binary distribution path chạy được.
+- Các phần trong file này nên được đọc như mental model ổn định của hệ thống hiện tại, với dư địa mở rộng thêm chiều sâu thay vì các gap nền tảng chưa hoàn tất.
 
 Tổng thể kiến trúc (mental model)
 

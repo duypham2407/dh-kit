@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/duypham93/dh/packages/opencode-core/internal/app"
 	"github.com/duypham93/dh/packages/opencode-core/internal/bridge"
 	"github.com/duypham93/dh/packages/opencode-core/internal/clibundle"
@@ -16,10 +17,11 @@ import (
 	"github.com/duypham93/dh/packages/opencode-core/internal/dhhooks"
 	"github.com/duypham93/dh/packages/opencode-core/internal/format"
 	"github.com/duypham93/dh/packages/opencode-core/internal/hooks"
-	"github.com/duypham93/dh/packages/opencode-core/internal/llm/models"
 	"github.com/duypham93/dh/packages/opencode-core/internal/llm/agent"
+	"github.com/duypham93/dh/packages/opencode-core/internal/llm/models"
 	"github.com/duypham93/dh/packages/opencode-core/internal/logging"
 	"github.com/duypham93/dh/packages/opencode-core/internal/session"
+	"github.com/duypham93/dh/packages/opencode-core/internal/tui"
 	"github.com/duypham93/dh/packages/opencode-core/internal/version"
 	"github.com/duypham93/dh/packages/opencode-core/pkg/types"
 )
@@ -122,8 +124,8 @@ func execute(args []string) error {
 		}
 	}
 
-	// Default: delegate to TS CLI (shows home screen / help)
-	return delegateToCli(args)
+	// Default: launch interactive TUI
+	return runInteractive()
 }
 
 func buildHookRegistry() (hooks.Registry, func()) {
@@ -173,65 +175,96 @@ func installDhHooks(registry hooks.Registry) {
 	})
 }
 
+func runInteractive() error {
+	// Load config from current directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	_, err = config.Load(cwd, false)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Connect DB
+	conn, err := db.Connect()
+	if err != nil {
+		return fmt.Errorf("failed to connect database: %w", err)
+	}
+
+	// Create main context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	application, err := app.New(ctx, conn)
+	if err != nil {
+		return fmt.Errorf("failed to create app: %w", err)
+	}
+	defer application.Shutdown()
+
+	// Init MCP tools in background
+	go func() {
+		defer logging.RecoverPanic("MCP-init", nil)
+		agent.GetMcpTools(ctx, application.Permissions)
+	}()
+
+	// Launch TUI
+	program := tea.NewProgram(
+		tui.New(application, ctx),
+		tea.WithAltScreen(),
+	)
+
+	if _, err := program.Run(); err != nil {
+		return fmt.Errorf("TUI error: %w", err)
+	}
+
+	return nil
+}
+
 func printHelp() {
 	fmt.Println("dh - AI software factory CLI")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  dh ask <question>         Ask about the codebase")
-	fmt.Println("  dh explain <symbol>        Explain a symbol")
-	fmt.Println("  dh trace <target>          Trace a flow")
-	fmt.Println("  dh index                   Index the codebase")
+	fmt.Println("  dh                         Launch interactive session")
+	fmt.Println()
+	fmt.Println("Inside the session, use slash commands:")
+	fmt.Println("  /ask <question>            Ask about the codebase")
+	fmt.Println("  /quick <task>              Run a quick task")
+	fmt.Println("  /explain <symbol>          Explain a symbol")
+	fmt.Println("  /trace <flow>              Trace a code flow")
+	fmt.Println("  /clear                     Clear chat")
+	fmt.Println("  /new                       New session")
+	fmt.Println("  /help                      Show commands")
+	fmt.Println("  /quit                      Exit")
+	fmt.Println()
+	fmt.Println("Or type a message directly to chat with the AI agent.")
+	fmt.Println()
+	fmt.Println("Standalone commands:")
 	fmt.Println("  dh doctor [--json]         Check health")
-	fmt.Println("  dh quick <task>            Run a quick task")
-	fmt.Println("  dh delivery <goal>         Run a delivery workflow")
-	fmt.Println("  dh migrate <goal>          Run a migration workflow")
+	fmt.Println("  dh index                   Index the codebase")
 	fmt.Println("  dh config --show           Show config")
-	fmt.Println("  dh clean --yes             Clean local data")
 	fmt.Println()
 	fmt.Println("Flags:")
-	fmt.Println("  dh --hooks                Show hook status")
+	fmt.Println("  dh --hooks                 Show hook status")
 	fmt.Println("  dh --run <prompt>          Run a prompt non-interactively")
 	fmt.Println("  dh --run-smoke             Run hook smoke test")
 	fmt.Println("  dh --version               Show version")
 	fmt.Println("  dh --help                  Show this help")
-	fmt.Println()
-	fmt.Println("First-time setup:")
-	fmt.Println("  1. dh doctor")
-	fmt.Println("  2. dh index")
-	fmt.Println("  3. dh ask \"how does this project work?\"")
 }
 
-// delegateToCli extracts the embedded TS CLI bundle and runs it with Node.js.
+// delegateToCli extracts the embedded TS CLI bundle and runs it with Node.js,
+// wiring stdin/stdout/stderr through to the current process.
 func delegateToCli(args []string) error {
-	nodePath, err := exec.LookPath("node")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Node.js is required but 'node' was not found in PATH.\n")
-		fmt.Fprintf(os.Stderr, "Install Node.js (v22+) from https://nodejs.org/ and try again.\n")
-		return fmt.Errorf("node not found in PATH: %w", err)
-	}
-
-	bundlePath, err := clibundle.ExtractBundle()
-	if err != nil {
-		return fmt.Errorf("failed to extract CLI bundle: %w", err)
-	}
-
-	cmdArgs := append([]string{bundlePath}, args...)
-	cmd := exec.Command(nodePath, cmdArgs...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	// Pass through environment, ensure DH_PROJECT_ROOT is set
-	cmd.Env = os.Environ()
-
-	if err := cmd.Run(); err != nil {
+	if err := clibundle.Exec(args, os.Stdin, os.Stdout, os.Stderr); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			os.Exit(exitErr.ExitCode())
 		}
-		return fmt.Errorf("cli delegate failed: %w", err)
+		// Node not found: print friendly message
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return err
 	}
-
 	return nil
 }
 

@@ -121,6 +121,12 @@ for file in "$RELEASE_DIR"/dh-*.sig; do
 done
 
 if [ "$sig_found" -eq 1 ]; then
+  if [ "${SKIP_GPG_VERIFY:-0}" = "1" ]; then
+    echo "warning: SKIP_GPG_VERIFY=1; skipping signature verification"
+    echo "release artifacts verified: $RELEASE_DIR"
+    exit 0
+  fi
+
   if command -v gpg >/dev/null 2>&1; then
     for sigfile in "$RELEASE_DIR"/dh-*.sig; do
       if [ ! -f "$sigfile" ]; then

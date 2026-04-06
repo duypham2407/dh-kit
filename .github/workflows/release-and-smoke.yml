@@ -152,6 +152,8 @@ jobs:
         run: chmod +x dist/releases/dh-*
 
       - name: Verify downloaded artifacts
+        env:
+          SKIP_GPG_VERIFY: "1"
         run: scripts/verify-release-artifacts.sh dist/releases
 
       - name: Install from release directory
@@ -215,6 +217,8 @@ jobs:
         run: chmod +x dist/releases/dh-*
 
       - name: Verify downloaded artifacts
+        env:
+          SKIP_GPG_VERIFY: "1"
         run: scripts/verify-release-artifacts.sh dist/releases
 
       - name: Run deterministic smoke

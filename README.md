@@ -387,6 +387,33 @@ dh index
 
 Nếu bạn đã cài `dh` và có release mới:
 
+### Upgrade trực tiếp từ GitHub Releases
+
+Khuyên dùng cách này nếu bạn muốn lấy đúng bản mới nhất thay vì phụ thuộc vào `dist/releases` local:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/duypham2407/dh-kit/main/scripts/upgrade-github-release.sh | sh
+```
+
+Nếu muốn upgrade tới một tag cụ thể hoặc cài vào thư mục riêng:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/duypham2407/dh-kit/main/scripts/upgrade-github-release.sh | sh -s -- v0.1.6 "$HOME/bin"
+```
+
+Script này sẽ:
+
+- detect đúng OS/CPU
+- tải binary mới nhất từ GitHub Releases
+- verify checksum từ `SHA256SUMS`
+- backup binary cũ
+- verify binary mới bằng `dh --version`
+- rollback nếu verify thất bại
+
+### Upgrade từ release directory local
+
+Chỉ dùng cách này nếu bạn chắc chắn `dist/releases` là bản mới bạn vừa build hoặc vừa tải về:
+
 ```sh
 scripts/upgrade-from-release.sh dist/releases
 ```

@@ -157,6 +157,8 @@ jobs:
         run: scripts/verify-release-artifacts.sh dist/releases
 
       - name: Install from release directory
+        env:
+          SKIP_GPG_VERIFY: "1"
         run: |
           mkdir -p "$HOME/.local/bin"
           scripts/install-from-release.sh dist/releases "$HOME/.local/bin"

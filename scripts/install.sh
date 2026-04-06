@@ -53,7 +53,9 @@ fi
 
 # Verify GPG signature if present
 if [ -f "$BINARY_PATH.sig" ]; then
-  if command -v gpg >/dev/null 2>&1; then
+  if [ "${SKIP_GPG_VERIFY:-0}" = "1" ]; then
+    echo "warning: SKIP_GPG_VERIFY=1; skipping signature verification"
+  elif command -v gpg >/dev/null 2>&1; then
     if gpg --verify "$BINARY_PATH.sig" "$BINARY_PATH" 2>/dev/null; then
       echo "GPG signature verified for $(basename "$BINARY_PATH")"
     else

@@ -36,6 +36,9 @@ jobs:
           go-version: "1.26.1"
           cache-dependency-path: packages/opencode-core/go.sum
 
+      - name: Build embedded CLI bundle
+        run: scripts/build-cli-bundle.sh
+
       - name: Type check and tests
         run: |
           npm run check

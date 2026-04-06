@@ -249,7 +249,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
           # Fetch full tags so generate-changelog.sh can find previous tag
-          git fetch --tags
+          git fetch --tags --force
           scripts/generate-changelog.sh "$VERSION" > /tmp/release-notes-generated.md
           # Append the static install/first-run instructions
           cat .github/release-notes.md >> /tmp/release-notes-generated.md

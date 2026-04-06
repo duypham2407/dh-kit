@@ -60,9 +60,46 @@ if [ -z "$expected" ]; then
   exit 1
 fi
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-"$SCRIPT_DIR/upgrade.sh" "$binary_path" "$INSTALL_DIR" "$expected"
+if command -v shasum >/dev/null 2>&1; then
+  actual=$(shasum -a 256 "$binary_path" | cut -d' ' -f1)
+elif command -v sha256sum >/dev/null 2>&1; then
+  actual=$(sha256sum "$binary_path" | cut -d' ' -f1)
+else
+  echo "missing checksum tool: need shasum or sha256sum" >&2
+  exit 1
+fi
+
+if [ "$actual" != "$expected" ]; then
+  echo "checksum mismatch for $asset" >&2
+  echo "expected: $expected" >&2
+  echo "actual:   $actual" >&2
+  exit 1
+fi
 
 target="$INSTALL_DIR/dh"
+mkdir -p "$INSTALL_DIR"
+
+backup=""
+if [ -f "$target" ]; then
+  backup="$target.backup.$(date +%s)"
+  cp "$target" "$backup"
+  echo "[dh] backed up existing binary to $backup"
+fi
+
+cp "$binary_path" "$target"
+chmod +x "$target"
+echo "[dh] installed to $target"
+
+if "$target" --version >/dev/null 2>&1; then
+  echo "upgrade verified: $($target --version)"
+else
+  if [ -n "$backup" ] && [ -f "$backup" ]; then
+    echo "upgrade verification failed; rolling back to $backup" >&2
+    mv "$backup" "$target"
+    chmod +x "$target"
+  fi
+  exit 1
+fi
+
 echo "[dh] upgraded to $target"
 echo "[dh] verify with: $target --version"

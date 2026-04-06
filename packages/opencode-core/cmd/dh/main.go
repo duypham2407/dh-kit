@@ -1,11 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -42,6 +48,8 @@ var cliSubcommands = map[string]bool{
 
 var runNonInteractiveFn = runNonInteractive
 var stderrIsTTYFn = stderrIsTTY
+var selfUpdateFn = selfUpdate
+var executablePathFn = os.Executable
 
 var errUsage = errors.New("usage")
 
@@ -97,6 +105,12 @@ func execute(args []string) error {
 		case "--help", "-h":
 			printHelp()
 			return nil
+		case "update":
+			versionArg := "latest"
+			if len(args) > 1 {
+				versionArg = args[1]
+			}
+			return selfUpdateFn(versionArg)
 		case "--hooks":
 			runHookDemo(registry)
 			return nil
@@ -243,6 +257,7 @@ func printHelp() {
 	fmt.Println("Standalone commands:")
 	fmt.Println("  dh doctor [--json]         Check health")
 	fmt.Println("  dh index                   Index the codebase")
+	fmt.Println("  dh update [version]        Self-update from GitHub Releases")
 	fmt.Println("  dh config --show           Show config")
 	fmt.Println()
 	fmt.Println("Flags:")
@@ -388,4 +403,174 @@ func stderrIsTTY() bool {
 		return false
 	}
 	return (stderrInfo.Mode() & os.ModeCharDevice) != 0
+}
+
+func selfUpdate(versionArg string) error {
+	execPath, err := executablePathFn()
+	if err != nil {
+		return fmt.Errorf("resolve current executable: %w", err)
+	}
+
+	platform, arch, err := currentReleaseTarget()
+	if err != nil {
+		return err
+	}
+	asset := fmt.Sprintf("dh-%s-%s", platform, arch)
+
+	baseURL := strings.TrimSpace(os.Getenv("DH_SELF_UPDATE_BASE_URL"))
+	if baseURL == "" {
+		baseURL = "https://github.com/duypham2407/dh-kit/releases/latest/download"
+		if versionArg != "" && versionArg != "latest" {
+			baseURL = "https://github.com/duypham2407/dh-kit/releases/download/" + versionArg
+		}
+	}
+
+	tmpDir, err := os.MkdirTemp("", "dh-self-update-")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	binaryPath := filepath.Join(tmpDir, asset)
+	checksumsPath := filepath.Join(tmpDir, "SHA256SUMS")
+
+	fmt.Printf("[dh] downloading %s (%s)\n", asset, versionArg)
+	if err := downloadFile(baseURL+"/"+asset, binaryPath); err != nil {
+		return fmt.Errorf("download binary: %w", err)
+	}
+	if err := downloadFile(baseURL+"/SHA256SUMS", checksumsPath); err != nil {
+		return fmt.Errorf("download checksums: %w", err)
+	}
+
+	expected, err := checksumFromSHA256Sums(checksumsPath, asset)
+	if err != nil {
+		return err
+	}
+	actual, err := sha256File(binaryPath)
+	if err != nil {
+		return err
+	}
+	if actual != expected {
+		return fmt.Errorf("checksum mismatch for %s: expected %s got %s", asset, expected, actual)
+	}
+
+	backupPath := execPath + ".backup." + fmt.Sprintf("%d", os.Getpid())
+	if err := copyFile(execPath, backupPath, 0o755); err != nil {
+		return fmt.Errorf("backup current binary: %w", err)
+	}
+	fmt.Printf("[dh] backed up existing binary to %s\n", backupPath)
+
+	tempInstall := execPath + ".tmp"
+	if err := copyFile(binaryPath, tempInstall, 0o755); err != nil {
+		return fmt.Errorf("stage new binary: %w", err)
+	}
+	if err := os.Rename(tempInstall, execPath); err != nil {
+		_ = os.Remove(tempInstall)
+		return fmt.Errorf("replace current binary: %w", err)
+	}
+	fmt.Printf("[dh] installed to %s\n", execPath)
+
+	cmd := exec.Command(execPath, "--version")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		_ = copyFile(backupPath, execPath, 0o755)
+		return fmt.Errorf("verify updated binary: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	verified := strings.TrimSpace(filterDiagnosticLines(string(out)))
+	fmt.Printf("upgrade verified: %s\n", verified)
+	fmt.Printf("[dh] upgraded to %s\n", execPath)
+	return nil
+}
+
+func currentReleaseTarget() (string, string, error) {
+	platform := runtime.GOOS
+	arch := runtime.GOARCH
+	if platform != "darwin" && platform != "linux" {
+		return "", "", fmt.Errorf("unsupported platform: %s", platform)
+	}
+	switch arch {
+	case "arm64":
+	case "amd64":
+	default:
+		return "", "", fmt.Errorf("unsupported architecture: %s", arch)
+	}
+	return platform, arch, nil
+}
+
+func downloadFile(url, dest string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("GET %s failed: %s %s", url, resp.Status, strings.TrimSpace(string(body)))
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dest, data, 0o644)
+}
+
+func checksumFromSHA256Sums(path, asset string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open SHA256SUMS: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasSuffix(line, "  "+asset) {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) > 0 {
+			return parts[0], nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read SHA256SUMS: %w", err)
+	}
+	return "", fmt.Errorf("checksum for %s not found", asset)
+}
+
+func sha256File(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read file for checksum: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum), nil
+}
+
+func copyFile(src, dest string, mode os.FileMode) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dest, data, mode)
+}
+
+func filterDiagnosticLines(output string) string {
+	lines := strings.Split(output, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "WARN ") || strings.Contains(trimmed, " WARN ") {
+			continue
+		}
+		filtered = append(filtered, trimmed)
+	}
+	if len(filtered) == 0 {
+		return strings.TrimSpace(output)
+	}
+	return strings.Join(filtered, "\n")
 }

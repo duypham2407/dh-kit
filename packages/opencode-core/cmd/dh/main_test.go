@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -91,6 +96,246 @@ func TestExecuteRunWithoutPromptReturnsUsage(t *testing.T) {
 	err := execute([]string{"--run"})
 	if !errors.Is(err, errUsage) {
 		t.Fatalf("expected errUsage, got %v", err)
+	}
+}
+
+func TestExecuteUpdateUsesSelfUpdateFn(t *testing.T) {
+	oldUpdate := selfUpdateFn
+	called := false
+	var gotVersion string
+	selfUpdateFn = func(version string) error {
+		called = true
+		gotVersion = version
+		return nil
+	}
+	t.Cleanup(func() { selfUpdateFn = oldUpdate })
+
+	if err := execute([]string{"update", "v9.9.9"}); err != nil {
+		t.Fatalf("execute update failed: %v", err)
+	}
+	if !called {
+		t.Fatal("expected selfUpdateFn to be called")
+	}
+	if gotVersion != "v9.9.9" {
+		t.Fatalf("expected version v9.9.9, got %s", gotVersion)
+	}
+}
+
+func TestExecuteUpdateDefaultsToLatest(t *testing.T) {
+	oldUpdate := selfUpdateFn
+	called := false
+	selfUpdateFn = func(version string) error {
+		called = true
+		if version != "latest" {
+			t.Fatalf("expected latest, got %s", version)
+		}
+		return nil
+	}
+	t.Cleanup(func() { selfUpdateFn = oldUpdate })
+
+	if err := execute([]string{"update"}); err != nil {
+		t.Fatalf("execute update failed: %v", err)
+	}
+	if !called {
+		t.Fatal("expected selfUpdateFn to be called")
+	}
+	if dhhooks.GetRegistry() != nil {
+		t.Fatal("expected registry cleanup after execute")
+	}
+}
+
+func TestCurrentReleaseTarget(t *testing.T) {
+	platform, arch, err := currentReleaseTarget()
+	if err != nil {
+		t.Fatalf("currentReleaseTarget returned error on supported dev machine: %v", err)
+	}
+	if platform == "" || arch == "" {
+		t.Fatalf("expected non-empty platform/arch, got %q/%q", platform, arch)
+	}
+}
+
+func TestChecksumFromSHA256Sums(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "SHA256SUMS")
+	content := "abc123  dh-darwin-arm64\ndef456  dh-linux-amd64\n"
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+		t.Fatalf("write checksum file: %v", err)
+	}
+
+	got, err := checksumFromSHA256Sums(tmp, "dh-linux-amd64")
+	if err != nil {
+		t.Fatalf("checksumFromSHA256Sums failed: %v", err)
+	}
+	if got != "def456" {
+		t.Fatalf("expected def456, got %s", got)
+	}
+}
+
+func TestChecksumFromSHA256SumsMissingAsset(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "SHA256SUMS")
+	if err := os.WriteFile(tmp, []byte("abc123  dh-darwin-arm64\n"), 0o644); err != nil {
+		t.Fatalf("write checksum file: %v", err)
+	}
+
+	_, err := checksumFromSHA256Sums(tmp, "dh-linux-amd64")
+	if err == nil {
+		t.Fatal("expected error for missing asset")
+	}
+}
+
+func TestSHA256File(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "file.bin")
+	if err := os.WriteFile(tmp, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := sha256File(tmp)
+	if err != nil {
+		t.Fatalf("sha256File failed: %v", err)
+	}
+	expected := "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	if got != expected {
+		t.Fatalf("expected %s, got %s", expected, got)
+	}
+}
+
+func TestCopyFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.txt")
+	dst := filepath.Join(dir, "dst.txt")
+	if err := os.WriteFile(src, []byte("copy me"), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	if err := copyFile(src, dst, 0o755); err != nil {
+		t.Fatalf("copyFile failed: %v", err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read dst: %v", err)
+	}
+	if string(data) != "copy me" {
+		t.Fatalf("unexpected dst contents: %s", string(data))
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("stat dst: %v", err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("expected mode 755, got %o", info.Mode().Perm())
+	}
+}
+
+func TestFilterDiagnosticLines(t *testing.T) {
+	input := "2026/04/06 21:53:20 WARN FZF not found\ndh 0.1.8\n"
+	got := filterDiagnosticLines(input)
+	if got != "dh 0.1.8" {
+		t.Fatalf("expected filtered version output, got %q", got)
+	}
+}
+
+func TestPrintHelpIncludesUpdate(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
+	printHelp()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close write pipe: %v", err)
+	}
+	outBytes, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+	out := string(outBytes)
+	if !strings.Contains(out, "dh update [version]") {
+		t.Fatalf("expected help to include update command, got: %s", out)
+	}
+}
+
+func TestDownloadFileRejectsBadStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	err := downloadFile(server.URL, filepath.Join(t.TempDir(), "out.bin"))
+	if err == nil {
+		t.Fatal("expected error for non-200 response")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Fatalf("expected 404 in error, got %v", err)
+	}
+}
+
+func TestSelfUpdateEndToEndWithLocalServer(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("unsupported platform for release target test")
+	}
+
+	platform, arch, err := currentReleaseTarget()
+	if err != nil {
+		t.Fatalf("currentReleaseTarget: %v", err)
+	}
+	asset := fmt.Sprintf("dh-%s-%s", platform, arch)
+	binDir := t.TempDir()
+	execPath := filepath.Join(binDir, "dh")
+	initialScript := []byte("#!/bin/sh\necho dh old-build\n")
+	if err := os.WriteFile(execPath, initialScript, 0o755); err != nil {
+		t.Fatalf("write initial executable: %v", err)
+	}
+
+	newScript := []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo dh test-build\nelse\n  echo updated\nfi\n")
+	sumFile, err := func() (string, error) {
+		tmp := filepath.Join(t.TempDir(), asset)
+		if err := os.WriteFile(tmp, newScript, 0o755); err != nil {
+			return "", err
+		}
+		return sha256File(tmp)
+	}()
+	if err != nil {
+		t.Fatalf("prepare checksum: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/releases/download/v-test/" + asset:
+			_, _ = w.Write(newScript)
+		case "/releases/download/v-test/SHA256SUMS":
+			_, _ = w.Write([]byte(fmt.Sprintf("%s  %s\n", sumFile, asset)))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	oldExecutableEnv := os.Getenv("DH_SELF_UPDATE_BASE_URL")
+	_ = os.Setenv("DH_SELF_UPDATE_BASE_URL", server.URL+"/releases/download/v-test")
+	t.Cleanup(func() { _ = os.Setenv("DH_SELF_UPDATE_BASE_URL", oldExecutableEnv) })
+
+	oldExecPath := executablePathFn
+	executablePathFn = func() (string, error) { return execPath, nil }
+	t.Cleanup(func() { executablePathFn = oldExecPath })
+
+	if err := selfUpdate("v-test"); err != nil {
+		t.Fatalf("selfUpdate failed: %v", err)
+	}
+
+	data, err := os.ReadFile(execPath)
+	if err != nil {
+		t.Fatalf("read updated executable: %v", err)
+	}
+	if string(data) != string(newScript) {
+		t.Fatalf("executable was not replaced")
+	}
+	if _, err := os.Stat(execPath + ".backup." + fmt.Sprintf("%d", os.Getpid())); err != nil {
+		t.Fatalf("expected backup file to exist: %v", err)
+	}
+	if !bytes.Contains(data, []byte("dh test-build")) {
+		t.Fatalf("updated executable content missing expected version text")
 	}
 }
 

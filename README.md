@@ -391,6 +391,18 @@ Nếu bạn đã cài `dh` và có release mới:
 
 Khuyên dùng cách này nếu bạn muốn lấy đúng bản mới nhất thay vì phụ thuộc vào `dist/releases` local:
 
+Nếu `dh` đã cài sẵn trên máy, bạn có thể tự update trực tiếp từ app:
+
+```sh
+dh update
+```
+
+Hoặc update tới một tag cụ thể:
+
+```sh
+dh update v0.1.8
+```
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/duypham2407/dh-kit/main/scripts/upgrade-github-release.sh | sh
 ```

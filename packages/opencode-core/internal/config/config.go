@@ -206,6 +206,9 @@ func Load(workingDir string, debug bool) (*Config, error) {
 	if cfg.Agents == nil {
 		cfg.Agents = make(map[AgentName]Agent)
 	}
+	if err := ensureDefaultAgents(); err != nil {
+		return cfg, fmt.Errorf("config validation failed: %w", err)
+	}
 
 	// Override the max tokens for title agent
 	cfg.Agents[AgentTitle] = Agent{
@@ -611,6 +614,10 @@ func Validate() error {
 		return fmt.Errorf("config not loaded")
 	}
 
+	if err := ensureDefaultAgents(); err != nil {
+		return err
+	}
+
 	// Validate agent models
 	for name, agent := range cfg.Agents {
 		if err := validateAgent(cfg, name, agent); err != nil {
@@ -638,6 +645,58 @@ func Validate() error {
 	}
 
 	return nil
+}
+
+// requiredAgents are agents that must be present for the application to start.
+var requiredAgents = []AgentName{AgentCoder}
+
+func ensureDefaultAgents() error {
+	if cfg == nil {
+		return nil
+	}
+	if cfg.Agents == nil {
+		cfg.Agents = make(map[AgentName]Agent)
+	}
+	allAgents := []AgentName{AgentCoder, AgentSummarizer, AgentTask, AgentTitle}
+	for _, agentName := range allAgents {
+		if _, ok := cfg.Agents[agentName]; ok {
+			continue
+		}
+		if setDefaultModelForAgent(agentName) {
+			logging.Info("set default model for missing agent", "agent", agentName, "model", cfg.Agents[agentName].Model)
+		}
+	}
+
+	// Check that all required agents were populated. If not, return a clear,
+	// actionable error instead of letting the caller hit the opaque
+	// "agent coder not found" path later.
+	var missing []AgentName
+	for _, agentName := range requiredAgents {
+		if _, ok := cfg.Agents[agentName]; !ok {
+			missing = append(missing, agentName)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf(
+			"no LLM provider credentials found — cannot configure required agent(s): %s.\n"+
+				"Set at least one of these environment variables and try again:\n"+
+				"  ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY,\n"+
+				"  GROQ_API_KEY, OPENROUTER_API_KEY, AZURE_OPENAI_API_KEY\n"+
+				"Or configure GitHub Copilot credentials.\n"+
+				"Run `dh doctor` for detailed diagnostics.",
+			joinAgentNames(missing),
+		)
+	}
+	return nil
+}
+
+// joinAgentNames returns a comma-separated list of agent names for error messages.
+func joinAgentNames(names []AgentName) string {
+	parts := make([]string, len(names))
+	for i, n := range names {
+		parts[i] = string(n)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // getProviderAPIKey gets the API key for a provider from environment variables

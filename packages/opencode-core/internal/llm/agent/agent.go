@@ -737,7 +737,7 @@ func createAgentProvider(agentName config.AgentName) (provider.Provider, error) 
 	cfg := config.Get()
 	agentConfig, ok := cfg.Agents[agentName]
 	if !ok {
-		return nil, fmt.Errorf("agent %s not found", agentName)
+		return nil, fmt.Errorf("agent %s not found in config — no LLM provider credentials may be configured; run `dh doctor` for diagnostics", agentName)
 	}
 	model, ok := models.SupportedModels[agentConfig.Model]
 	if !ok {

@@ -225,7 +225,7 @@ func runInteractive() error {
 
 	// Launch TUI
 	program := tea.NewProgram(
-		tui.New(application, ctx),
+		tui.New(application),
 		tea.WithAltScreen(),
 	)
 

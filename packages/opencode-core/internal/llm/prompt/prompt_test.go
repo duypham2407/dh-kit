@@ -12,7 +12,14 @@ import (
 )
 
 func TestGetContextFromPaths(t *testing.T) {
-	t.Parallel()
+	// Ensure at least one provider credential is available so config.Load succeeds.
+	if os.Getenv("OPENAI_API_KEY") == "" {
+		old := os.Getenv("OPENAI_API_KEY")
+		if err := os.Setenv("OPENAI_API_KEY", "test-key-for-prompt-test"); err != nil {
+			t.Fatalf("set OPENAI_API_KEY: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Setenv("OPENAI_API_KEY", old) })
+	}
 
 	tmpDir := t.TempDir()
 	_, err := config.Load(tmpDir, false)

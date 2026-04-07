@@ -16,6 +16,11 @@ func TestSessionCreatePathsApplyHookInjection(t *testing.T) {
 	clearDhSessionStateStore()
 	t.Cleanup(clearDhSessionStateStore)
 
+	// Ensure at least one provider credential is available so config.Load succeeds.
+	if os.Getenv("OPENAI_API_KEY") == "" {
+		t.Setenv("OPENAI_API_KEY", "test-key-for-session-test")
+	}
+
 	workDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workDir, ".opencode"), 0o755); err != nil {
 		t.Fatalf("mkdir .opencode: %v", err)
@@ -78,6 +83,11 @@ func TestSessionCreatePathsApplyHookInjection(t *testing.T) {
 func TestNewServiceWithDBPersistsAndRehydrates(t *testing.T) {
 	clearDhSessionStateStore()
 	t.Cleanup(clearDhSessionStateStore)
+
+	// Ensure at least one provider credential is available so config.Load succeeds.
+	if os.Getenv("OPENAI_API_KEY") == "" {
+		t.Setenv("OPENAI_API_KEY", "test-key-for-session-test")
+	}
 
 	workDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workDir, ".opencode"), 0o755); err != nil {

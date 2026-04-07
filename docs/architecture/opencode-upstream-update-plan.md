@@ -53,46 +53,35 @@ Day la moc hoan thanh cua phase baseline import cho TUI/LSP. Phan con lai la sap
 
 ### Phase 1: Baseline Inventory And Provenance Lock
 
+Status: **Complete** (2026-04-07)
+
 Muc tieu:
 
 - chot ro phan nao da la upstream baseline
 - chot ro phan nao la patch DH
 - giam nham lan giua code import va code tu viet
 
-Cong viec:
+Ket qua:
 
-- kiem ke cac khu vuc fork trong `packages/opencode-core/`
-- cap nhat `FORK_ORIGIN.md` va `PATCHES.md` neu thieu provenance cua TUI/LSP import
-- danh dau cac khu vuc van con la DH-specific adaptation
-
-Acceptance:
-
-- co tai lieu ro de tra loi: file nao la upstream-derived, file nao la DH patch
-- patch delta hien tai co the giai thich duoc
+- ~25 packages upstream (module-path rewrite only), ~6 packages upstream+patch, ~6 packages dh-original
+- FORK_ORIGIN.md va PATCHES.md da duoc cap nhat day du
+- Provenance co the tra loi chinh xac cho moi file
 
 ### Phase 2: Upstream Runtime Parity
 
+Status: **Complete** (2026-04-07)
+
 Muc tieu:
 
-- tiep tuc dua cac phan runtime con lai ve gan upstream hon neu hien van la stub, adaptation manh, hoac chua dong bo
+- tiep tuc dua cac phan runtime con lai ve gan upstream hon
 
-Pham vi uu tien:
+Ket qua:
 
-- TUI
-- LSP
-- session/message/runtime paths lien quan den upstream UX
-- command wiring va behavior khac biet lon voi upstream
-
-Cong viec:
-
-- ra soat cac module runtime con su khac biet lon so voi upstream
-- quyet dinh module nao can import them, module nao giu nguyen adaptation hien tai
-- chi sua nhung cho can de baseline van build/test xanh trong repo DH
-
-Acceptance:
-
-- khong con stub quan trong o cac runtime surface chinh
-- baseline runtime co the duoc mo ta la "upstream-derived and operational"
+- Khong con stub nao trong runtime
+- Them bubblezone cho TUI mouse zone tracking (upstream parity)
+- Cap nhat golang.org/x/image tu 2019 pre-release len v0.26.0 (upstream parity)
+- cmd/schema/ duoc ghi nhan la intentional omission (developer tooling only)
+- Baseline runtime co the mo ta la "upstream-derived and operational"
 
 ### Phase 3: DH Integration Layer Hardening
 
@@ -100,23 +89,25 @@ Muc tieu:
 
 - giu cac hook va integration cua DH o dang mong, ro, va tach biet khoi baseline upstream nhat co the
 
-Pham vi:
+Status: **Complete** (2026-04-07)
 
-- 6 hook points cua DH
-- TS bridge va SQLite decision path
-- config/provider defaults
-- workflow state injection
+Ket qua kiem ke patch footprint:
 
-Cong viec:
+| File | Total lines | DH patch lines | Severity |
+|---|---|---|---|
+| `app/app.go` | 186 | 1 | Minimal (1 constructor call) |
+| `config/config.go` | 1039 | 1 | Minimal (1 error message) |
+| `agent/agent.go` | 805 | 5 | Moderate (model override + pre-tool + pre-answer dispatch) |
+| `agent/mcp-tools.go` | 274 | 3 | Minimal (MCP routing dispatch + intent) |
+| `prompt/prompt.go` | 151 | 2 | Minimal (skill injection) |
+| `provider/provider.go` | 258 | 2 | Minimal (model override) |
+| `session/session.go` | 211 | 11 | Moderate (session state hook + cleanup) |
 
-- giam patch footprint trong core path neu co the dua vao adapter/hook layer
-- bo sung test cho cac path startup, provider resolution, hook wiring, session state
-- ghi ro patch contracts de de update upstream ve sau
+Tat ca cac patch deu la 1-line dispatch calls vao `dhhooks.On*()` hoac helper calls. Khong co patch nao heavy.
 
-Acceptance:
+Test coverage da co day du: bridge integration tests, pre-tool/pre-answer policy tests, session hook injection tests, hook wiring smoke test, run-entry smoke tests.
 
-- cac patch DH trong runtime deu co diem vao ro rang
-- hook wiring co test hoac smoke evidence
+Khong can refactor them. Patch footprint nho va tach biet tot.
 
 ### Phase 4: DH Product Surface Update
 
@@ -162,12 +153,10 @@ Acceptance:
 
 ## Immediate Work Queue
 
-Thu tu uu tien de thi cong tiep:
+Phase 1, 2, 3 da hoan thanh. Thu tu uu tien tiep:
 
-1. tai lieu hoa chien luoc `upstream-first` de cac docs hien tai khong mau thuan nhau
-2. khoa provenance cho TUI/LSP import vua xong
-3. ra soat runtime areas con khac upstream dang ke
-4. sau do moi vao nhom thay doi DH do ban uu tien
+1. Phase 4: ap cac thay doi product surface cua DH theo yeu cau cua ban
+2. Phase 5: chuan hoa quy trinh update upstream cho lan sau
 
 ## Decision Rule For Future Changes
 

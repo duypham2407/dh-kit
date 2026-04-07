@@ -14,10 +14,50 @@ See `FORK_ORIGIN.md` for the detailed per-package inventory.
 
 ### Recent provenance events
 
+- 2026-04-07: Phase 4 product surface rebrand — all user-facing "opencode"/"OpenCode" strings, paths, headers, and filenames rebranded to "dh"/"DH" (see list below)
 - 2026-04-07: Full upstream TUI imported (48 files), replacing monolithic DH stub
 - 2026-04-07: Full upstream LSP imported (16 files), replacing stub files
 - 2026-04-07: Config startup fix (ensureDefaultAgents error propagation) -- DH patch on upstream config
 - 2026-04-07: Provenance docs updated to reflect current upstream-first direction
+
+## Phase 4 rebrand changelog
+
+All user-facing occurrences of `opencode`/`OpenCode` changed to `dh`/`DH`:
+
+| Area | File(s) | Change |
+|---|---|---|
+| Data directory | config.go | `.opencode` -> `.dh` |
+| App name / env prefix | config.go | `opencode` -> `dh` (drives `DH_*` env vars) |
+| Context/memory files | config.go | `OpenCode.md`/`opencode.md` -> `dh.md`/`DH.md` |
+| Debug env var | config.go | `OPENCODE_DEV_DEBUG` -> `DH_DEV_DEBUG` |
+| Default theme | config.go | `opencode` -> `dh` |
+| DB filename | db/connect.go | `opencode.db` -> `dh.db` |
+| File ignore map | fileutil/fileutil.go | `.opencode` -> `.dh` |
+| Commands path | custom_commands.go | `.opencode/commands` -> `.dh/commands` |
+| TUI header | chat/chat.go | `OpenCode` -> `DH`, repo URL updated |
+| TUI init dialog | dialog/init.go | `OpenCode.md` -> `dh.md` |
+| TUI init command | tui/tui.go | Memory file prompt updated to `dh.md` |
+| Theme | theme/dh.go (was opencode.go) | `OpenCodeTheme` -> `DHTheme`, registration `opencode` -> `dh` |
+| Theme manager | theme/manager.go | Sort preference `opencode` -> `dh` |
+| Icons | styles/icons.go | `OpenCodeIcon` -> `DHIcon` |
+| LLM identity | prompt/coder.go, prompt/task.go | `OpenCode` -> `DH`, memory refs -> `dh.md` |
+| OpenRouter | provider/provider.go | `X-Title` -> `DH` (Referer kept `opencode.ai` per decision) |
+| Copilot | provider/copilot.go | `User-Agent`/`Editor-*` -> `DH/1.0` |
+| MCP | agent/mcp-tools.go | Client name `OpenCode` -> `DH` |
+| Git commits | tools/bash.go | Footer/co-author -> `DH`/`noreply@dh.ai` |
+| HTTP agents | tools/fetch.go, tools/sourcegraph.go | `User-Agent` -> `dh/1.0` |
+| Shell temp files | tools/shell/shell.go | Prefix `opencode-` -> `dh-` |
+| Panic log | logging/logger.go | Prefix `opencode-panic-` -> `dh-panic-` |
+| Diff theme | diff/diff.go | XML style name `opencode-theme` -> `dh-theme` |
+| Tests | session tests | `.opencode` dir refs -> `.dh` |
+
+Migration notes for users:
+- Data directory: `~/.dh` (was `~/.opencode`)
+- DB file: `dh.db` (was `opencode.db`)
+- Memory file: `dh.md` (was `OpenCode.md` / `opencode.md`)
+- Environment variables: `DH_*` prefix (was `OPENCODE_*`)
+- Custom commands: `~/.dh/commands` (was `~/.opencode/commands`)
+- Config: `~/.config/dh/` (was `~/.config/opencode/`)
 
 ## Vendoring status
 
@@ -107,7 +147,7 @@ All hooks dispatch through `internal/dhhooks/dhhooks.go`, which is registered at
 
 **DB path model (unchanged):**
 - dh enforcement DB: `.dh/sqlite/dh.db` (bridge.DBPathTemplate) — written by TS, read by Go bridge
-- upstream app DB: `{config.Data.Directory}/opencode.db` — managed by upstream db.Connect/goose
+- upstream app DB: `{config.Data.Directory}/dh.db` — managed by upstream db.Connect/goose
 - These remain separate files serving separate purposes; WAL mode enables safe concurrent access
 
 **Integration tests added:**

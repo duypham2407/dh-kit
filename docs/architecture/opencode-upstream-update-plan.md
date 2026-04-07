@@ -115,9 +115,34 @@ Muc tieu:
 
 - sau khi baseline upstream on dinh, moi cap nhat product behavior cua `dh` theo yeu cau thuc te
 
-Nhom thay doi du kien:
+Status: **In Progress** (2026-04-07)
 
-- branding va naming (`dh` vs OpenCode surface)
+Nhom thay doi da ap dung (branding/naming rebrand):
+
+- config.go: defaultDataDirectory `.opencode` -> `.dh`, appName `opencode` -> `dh`, default context paths `OpenCode.md/opencode.md` -> `dh.md/DH.md`, env prefix `OPENCODE_*` -> `DH_*`, default theme `opencode` -> `dh`
+- db/connect.go: DB filename `opencode.db` -> `dh.db`
+- fileutil/fileutil.go: ignore map `.opencode` -> `.dh`
+- custom_commands.go: home commands path `.opencode/commands` -> `.dh/commands`, XDG config path `opencode/commands` -> `dh/commands`
+- TUI header: logo text `OpenCode` -> `DH`, repo URL updated
+- TUI init dialog: memory file reference `OpenCode.md` -> `dh.md`
+- TUI init command: memory file creation prompt updated to `dh.md`
+- Theme registration: `opencode` -> `dh`, type renamed `OpenCodeTheme` -> `DHTheme`, file renamed `opencode.go` -> `dh.go`
+- Theme manager: sort preference `opencode` -> `dh`
+- Icons: `OpenCodeIcon` -> `DHIcon`
+- LLM prompts (coder.go, task.go): identity `OpenCode` -> `DH`, memory file refs `OpenCode.md/opencode.md` -> `dh.md`, CLI help ref `opencode --help` -> `dh --help`
+- Provider headers: OpenRouter `X-Title` `OpenCode` -> `DH` (HTTP-Referer kept as `opencode.ai` per decision)
+- Copilot headers: `User-Agent` and `Editor-*` headers `OpenCode/1.0` -> `DH/1.0`
+- Copilot error message: config file reference `opencode.json` -> `dh.json`
+- MCP client info: `Name: "OpenCode"` -> `Name: "DH"`
+- Bash tool: commit footer `opencode`/`noreply@opencode.ai` -> `DH`/`noreply@dh.ai`
+- Fetch/Sourcegraph tools: `User-Agent` `opencode/1.0` -> `dh/1.0`
+- Shell temp files: prefix `opencode-` -> `dh-`
+- Panic log: filename prefix `opencode-panic-` -> `dh-panic-`
+- Diff syntax theme: XML style name `opencode-theme` -> `dh-theme`
+- Tests: `.opencode` dir refs -> `.dh`
+
+Nhom thay doi con lai:
+
 - lane/workflow UX (`quick`, `delivery`, `migration`)
 - command surface (`ask`, `explain`, `trace`, `doctor`, `index`, `run`)
 - config UX va onboarding

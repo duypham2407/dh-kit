@@ -148,7 +148,7 @@ func NewProvider(providerName models.ModelProvider, opts ...ProviderClientOption
 			WithOpenAIBaseURL("https://openrouter.ai/api/v1"),
 			WithOpenAIExtraHeaders(map[string]string{
 				"HTTP-Referer": "opencode.ai",
-				"X-Title":      "OpenCode",
+				"X-Title":      "DH",
 			}),
 		)
 		return &baseProvider[OpenAIClient]{

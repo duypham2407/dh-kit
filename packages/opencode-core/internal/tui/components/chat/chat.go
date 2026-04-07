@@ -98,7 +98,7 @@ func lspsConfigured(width int) string {
 }
 
 func logo(width int) string {
-	logo := fmt.Sprintf("%s %s", styles.OpenCodeIcon, "OpenCode")
+	logo := fmt.Sprintf("%s %s", styles.DHIcon, "DH")
 	t := theme.CurrentTheme()
 	baseStyle := styles.BaseStyle()
 
@@ -120,7 +120,7 @@ func logo(width int) string {
 }
 
 func repo(width int) string {
-	repo := "https://github.com/opencode-ai/opencode"
+	repo := "https://github.com/duypham93/dh"
 	t := theme.CurrentTheme()
 
 	return styles.BaseStyle().

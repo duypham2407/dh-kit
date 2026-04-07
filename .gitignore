@@ -42,6 +42,7 @@ events.jsonl
 
 # Demo/example directory (contains sensitive credentials — never push)
 example/
+example/*
 
 # OS
 Thumbs.db

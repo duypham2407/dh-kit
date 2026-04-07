@@ -22,8 +22,8 @@ func TestSessionCreatePathsApplyHookInjection(t *testing.T) {
 	}
 
 	workDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(workDir, ".opencode"), 0o755); err != nil {
-		t.Fatalf("mkdir .opencode: %v", err)
+	if err := os.MkdirAll(filepath.Join(workDir, ".dh"), 0o755); err != nil {
+		t.Fatalf("mkdir .dh: %v", err)
 	}
 
 	if _, err := config.Load(workDir, true); err != nil {
@@ -90,8 +90,8 @@ func TestNewServiceWithDBPersistsAndRehydrates(t *testing.T) {
 	}
 
 	workDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(workDir, ".opencode"), 0o755); err != nil {
-		t.Fatalf("mkdir .opencode: %v", err)
+	if err := os.MkdirAll(filepath.Join(workDir, ".dh"), 0o755); err != nil {
+		t.Fatalf("mkdir .dh: %v", err)
 	}
 
 	if _, err := config.Load(workDir, true); err != nil {

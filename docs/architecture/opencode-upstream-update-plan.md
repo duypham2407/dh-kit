@@ -115,7 +115,7 @@ Muc tieu:
 
 - sau khi baseline upstream on dinh, moi cap nhat product behavior cua `dh` theo yeu cau thuc te
 
-Status: **In Progress** (2026-04-07)
+Status: **Complete** (2026-04-08)
 
 Nhom thay doi da ap dung (branding/naming rebrand):
 
@@ -143,21 +143,17 @@ Nhom thay doi da ap dung (branding/naming rebrand):
 
 Nhom thay doi con lai:
 
-- lane/workflow UX (`quick`, `delivery`, `migration`)
-- command surface (`ask`, `explain`, `trace`, `doctor`, `index`, `run`)
-- config UX va onboarding
-- release/install/update flows
+- lane/workflow UX — da hoat dong qua TS CLI delegation (quick, delivery, migrate)
+- command surface — da hoat dong (ask, explain, trace, doctor, index, run, config, clean, update)
+- config UX va onboarding — da co first-run flow trong TS CLI (doctor -> index -> ask)
+- release/install/update flows — da co self-update (Go), install.sh, upgrade.sh, package-release.sh
 
-Cong viec:
-
-- xac dinh tung thay doi la "DH-specific requirement" thay vi phan ung tu lich su code cu
-- ap patch nho theo tung nhom
-- cap nhat docs user-facing sau moi nhom thay doi lon
-
-Acceptance:
-
-- moi thay doi product co the trich dan tu yeu cau ro rang cua ban
-- khong co viec port lai behavior cu chi vi no tung ton tai trong DH
+Acceptance: **Met.**
+- Moi thay doi product co the trich dan tu yeu cau ro rang (branding rebrand, co-author email, HTTP header decisions)
+- Khong co viec port lai behavior cu chi vi no tung ton tai
+- All user-facing strings rebranded to "dh"/"DH"
+- go build/go test pass
+- TS CLI help text, commands, and onboarding all reference "dh"
 
 ### Phase 5: Upstream Update Discipline
 
@@ -178,10 +174,9 @@ Acceptance:
 
 ## Immediate Work Queue
 
-Phase 1, 2, 3 da hoan thanh. Thu tu uu tien tiep:
+Phase 1, 2, 3, 4 da hoan thanh. Thu tu uu tien tiep:
 
-1. Phase 4: ap cac thay doi product surface cua DH theo yeu cau cua ban
-2. Phase 5: chuan hoa quy trinh update upstream cho lan sau
+1. Phase 5: chuan hoa quy trinh update upstream cho lan sau
 
 ## Decision Rule For Future Changes
 

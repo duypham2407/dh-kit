@@ -1,10 +1,10 @@
 # DH OpenCode Upstream Update Plan
 
-Last reviewed against code: 2026-04-07
+Last reviewed against code: 2026-04-08
 
 ## Status
 
-Active
+Complete — all 5 phases executed
 
 ## Goal
 
@@ -161,22 +161,24 @@ Muc tieu:
 
 - bien viec cap nhat tu upstream thanh quy trinh lap lai duoc
 
-Cong viec:
+Status: **Complete** (2026-04-08)
 
-- xac dinh cach so sanh `packages/opencode-core/` voi upstream commit goc
-- chot checklist cho moi lan import/upstream sync
-- ghi lai conflict-prone areas va patch-owned areas
+Ket qua:
 
-Acceptance:
+- Created `docs/operations/upstream-sync-checklist.md` — full step-by-step checklist for upstream sync
+- Documented 8 conflict-prone files with merge risk rating and patch summary
+- Documented ~45 patch-owned (dh-original) files that will never conflict
+- Documented complete branding re-application table (25+ areas)
+- Documented decision rules for handling new/changed/deleted upstream files
+- Pre-sync and post-sync verification steps included
 
+Acceptance: **Met.**
 - co checklist ro rang cho dot cap nhat upstream tiep theo
 - giam rui ro vo tinh ghi de patch DH khi keo upstream ve
 
 ## Immediate Work Queue
 
-Phase 1, 2, 3, 4 da hoan thanh. Thu tu uu tien tiep:
-
-1. Phase 5: chuan hoa quy trinh update upstream cho lan sau
+Phase 1, 2, 3, 4, 5 da hoan thanh. Plan execution complete.
 
 ## Decision Rule For Future Changes
 

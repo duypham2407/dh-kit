@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	zone "github.com/lrstanley/bubblezone"
 	"github.com/duypham93/dh/packages/opencode-core/internal/app"
 	"github.com/duypham93/dh/packages/opencode-core/internal/bridge"
 	"github.com/duypham93/dh/packages/opencode-core/internal/clibundle"
@@ -224,6 +225,7 @@ func runInteractive() error {
 	}()
 
 	// Launch TUI
+	zone.NewGlobal()
 	program := tea.NewProgram(
 		tui.New(application),
 		tea.WithAltScreen(),

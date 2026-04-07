@@ -1,44 +1,37 @@
 Track dh-specific Go runtime patches here.
 
+## Provenance Summary (2026-04-07)
+
+Classification of all code in `packages/opencode-core/`:
+
+| Classification | Package count | Approx files | Description |
+|---|---|---|---|
+| upstream | ~25 packages | ~100 files | Pure upstream with module-path rewrite only |
+| upstream+patch | 6 packages | ~8 patched files | Upstream with DH hook injection or config changes |
+| dh-original | 6 packages | ~40 files | Entirely new DH code (bridge, hooks, dhhooks, clibundle, cmd/dh, pkg/types) |
+
+See `FORK_ORIGIN.md` for the detailed per-package inventory.
+
+### Recent provenance events
+
+- 2026-04-07: Full upstream TUI imported (48 files), replacing monolithic DH stub
+- 2026-04-07: Full upstream LSP imported (16 files), replacing stub files
+- 2026-04-07: Config startup fix (ensureDefaultAgents error propagation) -- DH patch on upstream config
+- 2026-04-07: Provenance docs updated to reflect current upstream-first direction
+
 ## Vendoring status
 
-Steps 1-2 complete. Upstream source from `opencode-ai/opencode` commit `73ee493` is vendored into `packages/opencode-core/`.
+All vendoring steps complete. Upstream source from `opencode-ai/opencode` commit `73ee493` is fully vendored into `packages/opencode-core/`.
 
-### What was vendored
+As of 2026-04-07: full TUI and LSP are imported from upstream, replacing earlier stubs.
 
-The following upstream `internal/` packages were copied and module-path-rewritten:
+### What is vendored (upstream-derived, module-path-rewritten)
 
-- `internal/app/` - application container
-- `internal/completions/` - shell completion helpers
-- `internal/config/` - configuration (Viper)
-- `internal/db/` - SQLite connection, sqlc-generated queries, goose migrations
-- `internal/diff/` - diff utilities
-- `internal/fileutil/` - file utilities
-- `internal/format/` - output formatting and spinner
-- `internal/history/` - file history/undo
-- `internal/llm/agent/` - core agent loop (streaming, tool dispatch, multi-turn)
-- `internal/llm/models/` - model definitions, pricing, capabilities
-- `internal/llm/prompt/` - system prompt templates
-- `internal/llm/provider/` - LLM provider abstraction (10+ providers)
-- `internal/llm/tools/` - built-in tool implementations
-- `internal/logging/` - structured logging
-- `internal/message/` - message model and service
-- `internal/permission/` - permission/approval system
-- `internal/pubsub/` - generic typed pub/sub broker
-- `internal/session/` - session service
-- `internal/version/` - version string
-
-### What was deferred (stubs created instead)
-
-- `internal/lsp/` - full LSP client (stub: no-op client and handlers)
-- `internal/lsp/protocol/` - LSP protocol types (stub: minimal types for diagnostics tool)
-- `internal/lsp/watcher/` - workspace watcher (stub: blocks on context)
-- `internal/tui/` - full Bubbletea TUI (stub: theme interface with sensible defaults)
-- `internal/tui/components/dialog/` - TUI dialog components (stub: completion interfaces)
+All upstream `internal/` packages are now vendored. See `FORK_ORIGIN.md` for the full classification of upstream, upstream+patch, and dh-original packages.
 
 ### What was NOT vendored
 
-- `cmd/root.go` - upstream CLI entrypoint (saved as `.ref` for reference)
+- `cmd/root.go` - upstream CLI entrypoint (dh uses its own `cmd/dh/main.go`)
 - `cmd/schema/` - JSON schema generator
 
 ### Module path rewrite

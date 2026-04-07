@@ -23,6 +23,7 @@ Current implementation note:
 - Upstream Go source đã được vendored vào `packages/opencode-core/` và build được qua `make build`.
 - 6 hook injection sites đã được wire vào runtime paths (provider, pre-tool-exec, pre-answer, session create, skill activation, MCP routing).
 - Bridge TS->Go đã có SQLite DecisionReader thật với integration tests (TS-write/Go-read) trong `packages/opencode-core/internal/bridge/integration_test.go`.
+- Hướng thực thi runtime hiện tại theo `docs/architecture/opencode-upstream-update-plan.md`: dua baseline upstream ve day du truoc, sau do moi ap patch DH theo tung nhom. Dieu nay khong thay doi ADR fork, chi thay doi cach cap nhat codebase.
 
 ## Context
 

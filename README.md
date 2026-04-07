@@ -2,6 +2,12 @@
 
 `dh` là một local-first AI coding assistant cho macOS và Linux.
 
+Current repository direction:
+
+- `dh` dang duoc dua ve baseline upstream OpenCode day du hon o lop runtime
+- sau do moi ap cac patch DH theo tung nhom thay doi co chu dich
+- execution plan hien tai nam o `docs/architecture/opencode-upstream-update-plan.md`
+
 Nó giúp bạn:
 
 - hiểu codebase bằng `ask`, `explain`, `trace`

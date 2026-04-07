@@ -68,14 +68,58 @@ Fork adapted from Go lineage candidate.
 
 ### Vendoring status
 
-- Source has NOT yet been vendored into `packages/opencode-core/`
-- Current code in this package is dh-original scaffold (bridge, hooks, cmd/dh)
-- Vendoring plan: see `docs/architecture/implementation-roadmap.md` Phase -1
+Source from upstream commit `73ee493` has been vendored and is operational. As of 2026-04-07:
 
-### Known reconciliation items for vendoring
+- All upstream `internal/` packages are vendored with module path rewrite to `github.com/duypham93/dh/packages/opencode-core`
+- Full upstream TUI (48 files) imported from upstream, replacing earlier stubs
+- Full upstream LSP client (16 files) imported from upstream, replacing earlier stubs
+- SQLite driver unified on `ncruces/go-sqlite3` (upstream choice)
+- 6 DH hook injection points wired into upstream runtime paths
+- Build and all tests pass on Go 1.26
 
-1. Upstream uses `ncruces/go-sqlite3` (WASM); current dh bridge uses `modernc.org/sqlite` -- needs reconciliation
-2. Upstream Go 1.24; dh environment has Go 1.26 -- forward compatible, minor API delta possible
-3. Upstream module path `github.com/opencode-ai/opencode` must be rewritten to dh module path
-4. Upstream `internal/tui/` may be partially dropped or heavily modified for dh's CLI-first approach
-5. Upstream has no hook/middleware system -- all 6 hooks must be injected as new code
+### Vendored upstream packages (module-path rewrite only, no behavioral changes)
+
+- `internal/completions/`
+- `internal/db/`
+- `internal/diff/`
+- `internal/fileutil/`
+- `internal/format/`
+- `internal/history/`
+- `internal/llm/models/`
+- `internal/llm/tools/` and `internal/llm/tools/shell/`
+- `internal/logging/`
+- `internal/lsp/` (full client, protocol, util, watcher)
+- `internal/message/`
+- `internal/permission/`
+- `internal/pubsub/`
+- `internal/tui/` (full componentized TUI: theme, components, layout, pages, styles, image, util)
+- `internal/version/`
+
+### Upstream packages with DH patches (behavioral changes beyond module path)
+
+- `internal/app/app.go` - calls `session.NewServiceWithDB()` for persistent DhSessionState
+- `internal/config/config.go` - `ensureDefaultAgents()` returns error; error messages reference `dh doctor`
+- `internal/llm/agent/agent.go` - hook injection for model override
+- `internal/llm/agent/mcp-tools.go` - `dhhooks.OnMcpRouting` + priority/blocked ordering + intent inference
+- `internal/llm/prompt/prompt.go` - `dhhooks.OnSkillActivation` injection
+- `internal/llm/provider/provider.go` - `dhhooks.OnModelOverride` in `NewProvider()`
+- `internal/session/session.go` - `applySessionStateHook()` in all Create paths + `DeleteDhSessionState` in Delete
+
+### DH-original packages (no upstream counterpart)
+
+- `cmd/dh/` - binary entrypoint, hook wiring, CLI delegation, self-update
+- `pkg/types/` - `ExecutionEnvelope`, `DhSessionState`, `HookInvocationLog`
+- `internal/bridge/` - TS-Go enforcement bridge (SQLite DecisionReader)
+- `internal/clibundle/` - embedded TS CLI bundle (go:embed + Node.js exec)
+- `internal/dhhooks/` - central hook dispatch registry
+- `internal/hooks/` - typed hook registry with bridge-wired defaults
+- DH-original files within `internal/session/`: `dh_state.go`, `dh_state_store.go`
+- DH-original files within `internal/llm/agent/`: `pre_tool_policy.go`, `pre_answer_*.go`, `mcp_intent_test.go`, `mcp_tools_order_test.go`
+
+### Known reconciliation items (resolved)
+
+1. ~~Upstream uses `ncruces/go-sqlite3`; dh bridge used `modernc.org/sqlite`~~ -> unified on ncruces
+2. ~~Upstream Go 1.24; dh Go 1.26~~ -> forward compatible, no issues
+3. ~~Module path rewrite~~ -> done
+4. ~~TUI may be dropped~~ -> full TUI imported from upstream
+5. ~~No hook system~~ -> 6 hooks injected

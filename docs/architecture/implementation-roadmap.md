@@ -26,6 +26,17 @@ Roadmap này bám trực tiếp vào các tài liệu sau:
 - `docs/architecture/runtime-state-schema.md`
 - `docs/architecture/model-routing-and-agent-config.md`
 - `docs/architecture/opencode-integration-decision.md`
+- `docs/architecture/opencode-upstream-update-plan.md`
+
+## Execution Note
+
+Từ 2026-04-07, hướng thực thi đang chuyển sang `upstream-first` cho các phần forked runtime:
+
+- ưu tiên kéo baseline upstream OpenCode về đầy đủ trước
+- sau đó mới áp các patch DH theo từng nhóm thay đổi nhỏ, có chủ đích
+- không port lại behavior cũ của DH chỉ vì nó từng tồn tại, trừ khi đó là yêu cầu sản phẩm rõ ràng
+
+Roadmap này cần được đọc cùng với `docs/architecture/opencode-upstream-update-plan.md` cho các phase cập nhật runtime hiện tại.
 
 ## Trạng thái hiện tại
 

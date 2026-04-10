@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import type { HookDecisionRecord } from "../../../opencode-sdk/src/index.js";
 import { resolveSqliteDbPath } from "../../../storage/src/sqlite/db.js";
 import { HookInvocationLogsRepo } from "../../../storage/src/sqlite/repositories/hook-invocation-logs-repo.js";
 import { ConfigRepo } from "../../../storage/src/sqlite/repositories/config-repo.js";
@@ -10,7 +11,7 @@ export type DebugDump = {
   repoRoot: string;
   sqlitePath: string;
   semanticMode: string;
-  latestSessionHookLogs: Record<string, unknown>[];
+  latestSessionHookLogs: HookDecisionRecord[];
   diagnostics: {
     chunkCount: number;
     embeddingCount: number;

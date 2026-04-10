@@ -1,4 +1,5 @@
 import type { AgentRole } from "./agent.js";
+import type { HookDecisionRecord } from "../../../opencode-sdk/src/index.js";
 
 export type ToolUsageAudit = {
   id: string;
@@ -31,15 +32,4 @@ export type McpRouteAudit = {
   timestamp: string;
 };
 
-export type HookInvocationLog = {
-  id: string;
-  sessionId: string;
-  envelopeId: string;
-  hookName: "model_override" | "pre_tool_exec" | "pre_answer" | "skill_activation" | "mcp_routing" | "session_state";
-  input: Record<string, unknown>;
-  output: Record<string, unknown>;
-  decision: "allow" | "block" | "modify";
-  reason: string;
-  durationMs: number;
-  timestamp: string;
-};
+export type HookInvocationLog = HookDecisionRecord;

@@ -1,18 +1,13 @@
 import type { HookInvocationLog } from "../../../../shared/src/types/audit.js";
+import {
+  deserializeBridgePayload,
+  normalizeToCamelCase,
+  serializeBridgePayload,
+  type HookDecisionRow,
+} from "../../../../opencode-sdk/src/index.js";
 import { openDhDatabase } from "../db.js";
 
-type RawHookLog = {
-  id: string;
-  session_id: string;
-  envelope_id: string;
-  hook_name: string;
-  input_json: string;
-  output_json: string;
-  decision: string;
-  reason: string;
-  duration_ms: number;
-  timestamp: string;
-};
+type RawHookLog = HookDecisionRow;
 
 function toHookLog(raw: RawHookLog): HookInvocationLog {
   return {
@@ -20,8 +15,8 @@ function toHookLog(raw: RawHookLog): HookInvocationLog {
     sessionId: raw.session_id,
     envelopeId: raw.envelope_id,
     hookName: raw.hook_name as HookInvocationLog["hookName"],
-    input: JSON.parse(raw.input_json) as Record<string, unknown>,
-    output: JSON.parse(raw.output_json) as Record<string, unknown>,
+    input: normalizeToCamelCase(deserializeBridgePayload(raw.input_json)),
+    output: normalizeToCamelCase(deserializeBridgePayload(raw.output_json)),
     decision: raw.decision as HookInvocationLog["decision"],
     reason: raw.reason,
     durationMs: raw.duration_ms,
@@ -43,8 +38,8 @@ export class HookInvocationLogsRepo {
       record.sessionId,
       record.envelopeId,
       record.hookName,
-      JSON.stringify(record.input),
-      JSON.stringify(record.output),
+      serializeBridgePayload(record.input),
+      serializeBridgePayload(record.output),
       record.decision,
       record.reason,
       record.durationMs,
@@ -66,11 +61,16 @@ export class HookInvocationLogsRepo {
     const row = database
       .prepare(
         `SELECT * FROM hook_invocation_logs
-         WHERE session_id = ? AND envelope_id = ? AND hook_name = ?
-         ORDER BY timestamp DESC
+         WHERE session_id = ?
+           AND hook_name = ?
+           AND (
+             (? <> '' AND envelope_id IN (?, session_id))
+             OR (? = '' AND envelope_id = session_id)
+           )
+         ORDER BY CASE WHEN envelope_id = ? THEN 0 ELSE 1 END, timestamp DESC
          LIMIT 1`,
       )
-      .get(sessionId, envelopeId, hookName) as RawHookLog | undefined;
+      .get(sessionId, hookName, envelopeId, envelopeId, envelopeId, envelopeId) as RawHookLog | undefined;
     return row ? toHookLog(row) : undefined;
   }
 

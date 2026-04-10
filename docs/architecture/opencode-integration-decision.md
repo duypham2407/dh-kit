@@ -12,7 +12,7 @@ Accepted
 
 ## Decision
 
-`dh` will fork the entire OpenCode runtime — both the Go core and the TypeScript SDK/client layer — into its own repository. `dh` will diverge completely from upstream OpenCode and own its runtime from this point forward. `dh` will be distributed as a pre-built binary for macOS and Linux.
+`dh` will fork the OpenCode runtime core (Go) and maintain a dh-owned TypeScript bridge SDK/client layer in-repo. `dh` will diverge completely from upstream OpenCode and own its runtime from this point forward. `dh` will be distributed as a pre-built binary for macOS and Linux.
 
 Current implementation note:
 
@@ -48,7 +48,7 @@ Fork both layers of OpenCode:
 | Layer | Language | Purpose in dh |
 |---|---|---|
 | `opencode-core` | Go | Process orchestration, tool execution runtime, LLM streaming, session management |
-| `opencode-sdk` | TypeScript | Client SDK, type definitions, protocol contracts |
+| `opencode-sdk` | TypeScript | dh-owned bridge SDK, type definitions, protocol contracts |
 
 Both layers will live under `packages/` in the `dh` monorepo.
 
@@ -180,7 +180,7 @@ Build pipeline:
 3. Release artifacts distributed via GitHub Releases
 4. Future: Homebrew tap for macOS, apt/rpm for Linux
 
-Users do **not** need Node.js, Go, or any other runtime installed. The binary is self-contained.
+Target packaging state: users will not need Node.js, Go, or other runtime installs once single-binary packaging is finalized for release.
 
 ### Package Layout Changes
 
@@ -197,7 +197,7 @@ packages/
     FORK_ORIGIN.md
     PATCHES.md
     Makefile
-  opencode-sdk/            <- Forked TypeScript SDK
+  opencode-sdk/            <- dh-owned internal bridge SDK
     src/
     package.json
     tsconfig.json

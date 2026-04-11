@@ -11,20 +11,26 @@ import { chunkFiles } from "../semantic/chunker.js";
 import { runEmbeddingPipeline, type EmbedPipelineResult } from "../semantic/embedding-pipeline.js";
 import { semanticSearch, semanticResultsToNormalized } from "../semantic/semantic-search.js";
 import { ChunksRepo } from "../../../storage/src/sqlite/repositories/chunks-repo.js";
+import type { ScanOptions } from "../../../intelligence/src/workspace/detect-projects.js";
 
 export async function runRetrieval(input: {
   repoRoot: string;
   query: string;
   mode: "ask" | "explain" | "trace";
   semanticMode?: "always" | "auto" | "off";
+  scanOptions?: ScanOptions;
 }) {
   const plan = buildRetrievalPlan({
     query: input.query,
     mode: input.mode,
     semanticMode: input.semanticMode,
   });
-  const workspaces = await detectProjects(input.repoRoot);
+  const workspaces = await detectProjects(input.repoRoot, input.scanOptions);
   const files = workspaces.flatMap((workspace) => workspace.files);
+  const reducedCoverage = workspaces.some((workspace) => workspace.scanMeta?.partial === true);
+  const scanStopReasons = [...new Set(workspaces
+    .map((workspace) => workspace.diagnostics?.stopReason ?? "none")
+    .filter((reason) => reason !== "none"))];
   const symbols = await extractSymbolsFromFiles(input.repoRoot, files);
   const edges = await extractImportEdges(input.repoRoot, files);
   const filesById = new Map(files.map((file) => [file.id, file.path]));
@@ -63,6 +69,10 @@ export async function runRetrieval(input: {
   return {
     plan,
     workspaces,
+    scanMeta: {
+      reducedCoverage,
+      stopReasons: scanStopReasons,
+    },
     symbols,
     edges,
     results: normalizedResults,

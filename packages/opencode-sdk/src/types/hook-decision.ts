@@ -58,4 +58,7 @@ export type SkillActivationPayload = {
 export type McpRoutingPayload = {
   mcps: string[];
   blocked?: string[];
+  warnings?: string[];
+  reasons?: Record<string, string[]>;
+  rejected?: Record<string, string[]>;
 };

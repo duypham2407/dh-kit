@@ -31,13 +31,16 @@ func BridgeSkillActivationHook(reader bridge.DecisionReader) SkillActivationHook
 
 // BridgeMcpRoutingHook currently falls back to default routing while preserving
 // a concrete bridge seam for later production policy transfer.
+// Note: decision.Warnings are intentionally not projected into runtime ordering.
+// They remain audit-visible in hook_invocation_logs until an approved runtime
+// surface consumes warnings explicitly.
 func BridgeMcpRoutingHook(reader bridge.DecisionReader) McpRoutingHook {
 	return func(envelope types.ExecutionEnvelope, intent string) ([]string, []string, error) {
-		mcps, found, err := reader.LatestMcps(envelope.SessionID, envelope.EnvelopeID)
+		decision, found, err := reader.LatestMcpRoutingDecision(envelope.SessionID, envelope.EnvelopeID)
 		if err != nil || !found {
 			return DefaultMcpRoutingHook(envelope, intent)
 		}
-		return mcps, []string{}, nil
+		return decision.Mcps, decision.Blocked, nil
 	}
 }
 

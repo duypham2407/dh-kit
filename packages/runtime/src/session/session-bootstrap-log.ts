@@ -59,6 +59,12 @@ export function recordSessionBootstrap(input: {
       lane: input.envelope.lane,
       role: input.envelope.role,
     },
-    payloadOut: { mcps: input.envelope.activeMcps },
+    payloadOut: {
+      mcps: input.envelope.activeMcps,
+      blocked: [],
+      warnings: [],
+      reasons: {},
+      rejected: {},
+    },
   });
 }

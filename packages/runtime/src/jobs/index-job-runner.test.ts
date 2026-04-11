@@ -98,6 +98,18 @@ describe("runIndexWorkflow", () => {
     expect(result.diagnostics.filesDiscovered).toBe(0);
   });
 
+  it("surfaces partial scan diagnostics and summary", async () => {
+    const repo = makeTmpRepo();
+    fs.writeFileSync(path.join(repo, "src", "a.ts"), "export const a = 1;\n", "utf8");
+    fs.writeFileSync(path.join(repo, "src", "b.ts"), "export const b = 1;\n", "utf8");
+
+    const result = await runIndexWorkflow(repo, { scanOptions: { maxFiles: 1 }, skipEmbedding: true });
+
+    expect(result.diagnostics.partialScan).toBe(true);
+    expect(result.diagnostics.scanStopReasons).toContain("max_files_reached");
+    expect(result.summary).toContain("scan=partial");
+  });
+
   it("does not re-chunk already-indexed files unless force=true", async () => {
     delete process.env.OPENAI_API_KEY;
 

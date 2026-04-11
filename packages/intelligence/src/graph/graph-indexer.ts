@@ -9,6 +9,7 @@ import { extractSymbolReferencesFromTree } from "./reference-tracker.js";
 import type { GraphIndexStats, GraphSymbol } from "../../../shared/src/types/graph.js";
 import { extractSymbolsFromFilesAST } from "../parser/ast-symbol-extractor.js";
 import type { IndexedEdge, IndexedFile, IndexedSymbol } from "../../../shared/src/types/indexing.js";
+import { normalizePathSlashes } from "../workspace/scan-paths.js";
 
 export class GraphIndexer {
   private readonly repo: GraphRepo;
@@ -23,19 +24,23 @@ export class GraphIndexer {
     const workspaces = await detectProjects(this.repoRoot);
     const files = workspaces.flatMap((workspace) => workspace.files)
       .filter((file) => ["typescript", "tsx", "javascript", "jsx"].includes(file.language));
+    const isPartialScan = workspaces.some((workspace) => workspace.scanMeta?.partial === true);
     const fileMapById = new Map(files.map((file) => [file.id, file]));
     const symbolCache = new Map<string, IndexedSymbol[]>();
 
     const mergedImportEdges = await this.buildMergedImportEdges(files);
     const importEdgesByFromId = groupImportEdgesByFromId(mergedImportEdges);
 
-    const currentRelPaths = new Set(files.map((file) => normalizePath(file.path)));
-    const existingNodes = this.repo.listNodes();
     let filesDeleted = 0;
-    for (const node of existingNodes) {
-      if (!currentRelPaths.has(normalizePath(node.path))) {
-        this.repo.deleteNode(node.id);
-        filesDeleted += 1;
+
+    if (!isPartialScan) {
+      const currentRelPaths = new Set(files.map((file) => normalizePathSlashes(file.path)));
+      const existingNodes = this.repo.listNodes();
+      for (const node of existingNodes) {
+        if (!currentRelPaths.has(normalizePathSlashes(node.path))) {
+          this.repo.deleteNode(node.id);
+          filesDeleted += 1;
+        }
       }
     }
 
@@ -55,7 +60,7 @@ export class GraphIndexer {
       }
 
       const contentHash = hashContent(content);
-      const normalizedPath = normalizePath(file.path);
+      const normalizedPath = normalizePathSlashes(file.path);
       const existingNode = this.repo.findNodeByPath(normalizedPath);
       const unchanged = existingNode && existingNode.contentHash === contentHash && !force;
       if (unchanged) {
@@ -89,7 +94,7 @@ export class GraphIndexer {
           .map((edge) => {
             const targetFile = fileMapById.get(edge.toId);
             if (!targetFile) return null;
-            const targetPath = normalizePath(targetFile.path);
+            const targetPath = normalizePathSlashes(targetFile.path);
             const existingTargetNode = this.repo.findNodeByPath(targetPath);
             const targetNode = existingTargetNode ?? this.repo.upsertNode({
               path: targetPath,
@@ -118,7 +123,7 @@ export class GraphIndexer {
           if (availableSymbols.length === 0) {
             const targetNode = this.repo.findNodeById(dep.toNodeId);
             if (!targetNode) continue;
-            const targetFile = files.find((candidate) => normalizePath(candidate.path) === normalizePath(targetNode.path));
+            const targetFile = files.find((candidate) => normalizePathSlashes(candidate.path) === normalizePathSlashes(targetNode.path));
             if (!targetFile) continue;
             const targetRawSymbols = await this.getRawSymbolsForFile(targetFile, symbolCache);
             const targetSymbolInputs = toGraphSymbolInputs(targetRawSymbols, await fs.readFile(path.join(this.repoRoot, targetFile.path), "utf8"));
@@ -287,8 +292,4 @@ function addToSymbolLookup(symbolLookup: Map<string, GraphSymbol[]>, symbol: Gra
 
 function toTempSymbolId(symbol: Omit<GraphSymbol, "id" | "nodeId">): string {
   return `temp:${symbol.name}`;
-}
-
-function normalizePath(filePath: string): string {
-  return filePath.replace(/\\/g, "/");
 }

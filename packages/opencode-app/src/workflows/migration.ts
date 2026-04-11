@@ -11,6 +11,7 @@ import { WorkItemsRepo } from "../../../storage/src/sqlite/repositories/work-ite
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
 import type { WorkItemState } from "../../../shared/src/types/work-item.js";
 import type { ChatProvider } from "../../../providers/src/chat/types.js";
+import { enforceMcpRoutingDetailed } from "../executor/enforce-mcp-routing.js";
 
 export async function runMigrationWorkflow(input: {
   sessionId: string;
@@ -106,12 +107,17 @@ export async function runMigrationWorkflow(input: {
   });
 
   const handoff = buildHandoff({ lane: "migration", fromRole: "architect", toRole: "implementer", stage: input.stage });
+  const mcpDecision = enforceMcpRoutingDetailed(input.envelope, input.objective);
 
   audit.recordRoleOutput(input.envelope, coordinator);
   audit.recordRoleOutput(input.envelope, architect);
   audit.recordRequiredTool(input.envelope, "workflow.migration", "migration_workflow", "called");
   audit.recordSkillActivation(input.envelope, "verification-before-completion", "Migration lane requires compatibility verification discipline.");
   audit.recordMcpRoute(input.envelope, "augment_context_engine", "Migration workflow needs codebase understanding before upgrade steps.");
+  for (const mcpName of mcpDecision.selected) {
+    const reasonCodes = mcpDecision.reasons[mcpName] ?? [];
+    audit.recordMcpRoute(input.envelope, mcpName, reasonCodes.join(",") || "selected");
+  }
   audit.recordHookDecision({
     envelope: input.envelope,
     hookName: "skill_activation",
@@ -126,7 +132,13 @@ export async function runMigrationWorkflow(input: {
     decision: "modify",
     reason: "Migration workflow prioritizes codebase understanding MCPs before upgrade actions.",
     payloadIn: { lane: "migration", role: input.envelope.role },
-    payloadOut: { mcps: input.envelope.activeMcps.length > 0 ? input.envelope.activeMcps : ["augment_context_engine"] },
+    payloadOut: {
+      mcps: mcpDecision.selected,
+      blocked: mcpDecision.blocked,
+      warnings: mcpDecision.warnings,
+      reasons: mcpDecision.reasons,
+      rejected: mcpDecision.rejected,
+    },
   });
   audit.recordHookDecision({
     envelope: input.envelope,

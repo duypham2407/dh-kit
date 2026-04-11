@@ -11,6 +11,9 @@ export function writeMcpRoutingDecision(
     intent: string;
     mcps: string[];
     blocked?: string[];
+    warnings?: string[];
+    reasons?: Record<string, string[]>;
+    rejected?: Record<string, string[]>;
     reason?: string;
   },
 ): BridgeResult<{ id: string }> {
@@ -31,6 +34,9 @@ export function writeMcpRoutingDecision(
     payloadOut: {
       mcps: input.mcps,
       blocked: input.blocked ?? [],
+      warnings: input.warnings ?? [],
+      reasons: input.reasons ?? {},
+      rejected: input.rejected ?? {},
     },
   });
 

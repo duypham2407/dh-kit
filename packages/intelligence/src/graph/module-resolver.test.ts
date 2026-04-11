@@ -40,4 +40,13 @@ describe("resolveModuleSpecifier", () => {
     const { fromFile } = makeRepo();
     expect(resolveModuleSpecifier("react", fromFile)).toBeNull();
   });
+
+  it("returns null when resolved target escapes workspace root", () => {
+    const { root, fromFile } = makeRepo();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "dh-module-resolve-outside-"));
+    const target = path.join(outside, "secret.ts");
+    fs.writeFileSync(target, "export const y = 2;\n", "utf8");
+
+    expect(resolveModuleSpecifier("../../../../secret", fromFile, root)).toBeNull();
+  });
 });

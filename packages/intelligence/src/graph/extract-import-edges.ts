@@ -4,6 +4,7 @@ import type { IndexedEdge, IndexedFile } from "../../../shared/src/types/indexin
 import { createId } from "../../../shared/src/utils/ids.js";
 import { parseSource, type TreeSitterNode } from "../parser/tree-sitter-init.js";
 import { resolveModuleSpecifier } from "./module-resolver.js";
+import { normalizePathSlashes } from "../workspace/scan-paths.js";
 
 const IMPORT_REGEX = /^\s*import\s+.*?from\s+["'](.+?)["'];?/gm;
 
@@ -44,11 +45,11 @@ export async function extractImportEdges(repoRoot: string, files: IndexedFile[])
       tree.delete();
 
       for (const specifier of specifiers) {
-        const resolvedAbs = resolveModuleSpecifier(specifier.value, absolutePath);
+        const resolvedAbs = resolveModuleSpecifier(specifier.value, absolutePath, repoRoot);
         if (!resolvedAbs) {
           continue;
         }
-        const rel = normalizeRelPath(path.relative(repoRoot, resolvedAbs));
+        const rel = normalizePathSlashes(path.relative(repoRoot, resolvedAbs));
         const target = fileByRelativePath.get(rel);
         if (!target) {
           continue;
@@ -148,5 +149,5 @@ function dedupeEdges(edges: IndexedEdge[]): IndexedEdge[] {
 }
 
 function normalizeRelPath(value: string): string {
-  return value.replace(/\\/g, "/");
+  return normalizePathSlashes(value);
 }

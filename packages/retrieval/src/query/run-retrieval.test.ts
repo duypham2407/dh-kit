@@ -43,6 +43,7 @@ describe("runRetrieval", () => {
     expect(result.plan.semanticMode).toBe("off");
     expect(result.results.length).toBeGreaterThan(0);
     expect(result.evidencePackets.length).toBeGreaterThan(0);
+    expect(result.scanMeta.reducedCoverage).toBe(false);
   });
 
   it("runs semantic retrieval path in always mode", async () => {
@@ -60,5 +61,22 @@ describe("runRetrieval", () => {
     expect(result.plan.semanticMode).toBe("always");
     expect(result.embeddingStats).toBeDefined();
     expect(result.evidencePackets.length).toBeGreaterThan(0);
+  });
+
+  it("surfaces reduced coverage metadata when scan is partial", async () => {
+    const repo = makeTmpRepo();
+    fs.writeFileSync(path.join(repo, "src", "a.ts"), "export const a = 1;\n", "utf8");
+    fs.writeFileSync(path.join(repo, "src", "b.ts"), "export const b = 1;\n", "utf8");
+
+    const result = await runRetrieval({
+      repoRoot: repo,
+      query: "find a",
+      mode: "ask",
+      semanticMode: "off",
+      scanOptions: { maxFiles: 1 },
+    });
+
+    expect(result.scanMeta.reducedCoverage).toBe(true);
+    expect(result.scanMeta.stopReasons).toContain("max_files_reached");
   });
 });

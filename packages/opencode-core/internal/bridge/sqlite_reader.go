@@ -194,6 +194,14 @@ func (r *SQLiteDecisionReader) LatestSkills(sessionID, envelopeID string) ([]str
 }
 
 func (r *SQLiteDecisionReader) LatestMcps(sessionID, envelopeID string) ([]string, bool, error) {
+	decision, found, err := r.LatestMcpRoutingDecision(sessionID, envelopeID)
+	if err != nil || !found {
+		return nil, false, err
+	}
+	return decision.Mcps, len(decision.Mcps) > 0, nil
+}
+
+func (r *SQLiteDecisionReader) LatestMcpRoutingDecision(sessionID, envelopeID string) (*McpRoutingDecisionRow, bool, error) {
 	output, err := r.LatestOutput(sessionID, envelopeID, "mcp_routing")
 	if err != nil || output == nil {
 		return nil, false, err
@@ -208,7 +216,24 @@ func (r *SQLiteDecisionReader) LatestMcps(sessionID, envelopeID string) ([]strin
 			mcps = append(mcps, mcp)
 		}
 	}
-	return mcps, len(mcps) > 0, nil
+
+	rawBlocked, _ := outputAnyArray(output, "blocked", "blocked_mcps")
+	blocked := make([]string, 0, len(rawBlocked))
+	for _, rawBlockedMcp := range rawBlocked {
+		if blockedMcp, ok := rawBlockedMcp.(string); ok {
+			blocked = append(blocked, blockedMcp)
+		}
+	}
+
+	rawWarnings, _ := outputAnyArray(output, "warnings")
+	warnings := make([]string, 0, len(rawWarnings))
+	for _, rawWarning := range rawWarnings {
+		if warning, ok := rawWarning.(string); ok {
+			warnings = append(warnings, warning)
+		}
+	}
+
+	return &McpRoutingDecisionRow{Mcps: mcps, Blocked: blocked, Warnings: warnings}, len(mcps) > 0 || len(blocked) > 0, nil
 }
 
 func (r *SQLiteDecisionReader) Close() error {

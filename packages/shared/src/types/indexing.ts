@@ -2,6 +2,9 @@ export type IndexedWorkspace = {
   root: string;
   type: string;
   files: IndexedFile[];
+  diagnostics?: WorkspaceScanDiagnostics;
+  markers?: WorkspaceMarkers;
+  scanMeta?: WorkspaceScanMeta;
 };
 
 export type IndexedFile = {
@@ -11,6 +14,33 @@ export type IndexedFile = {
   language: string;
   sizeBytes: number;
   status: "indexed" | "pending" | "ignored";
+  ignoredReason?: string;
+  workspaceRoot?: string;
+};
+
+export type WorkspaceMarkers = {
+  hasPackageJson: boolean;
+  hasGoMod: boolean;
+};
+
+export type ScanStopReason =
+  | "none"
+  | "max_files_reached"
+  | "max_depth_reached"
+  | "max_file_size_scan_stopped"
+  | "io_error";
+
+export type WorkspaceScanDiagnostics = {
+  filesVisited: number;
+  filesIndexed: number;
+  filesIgnored: number;
+  dirsSkipped: number;
+  errors: number;
+  stopReason: ScanStopReason;
+};
+
+export type WorkspaceScanMeta = {
+  partial: boolean;
 };
 
 export type IndexedSymbol = {

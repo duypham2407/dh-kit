@@ -1,30 +1,42 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+  canonicalizeAbsolutePath,
+  isPathWithinWorkspace,
+} from "../workspace/scan-paths.js";
 
 const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
-export function resolveModuleSpecifier(specifier: string, containingFileAbsPath: string): string | null {
+export function resolveModuleSpecifier(
+  specifier: string,
+  containingFileAbsPath: string,
+  workspaceRootAbs?: string,
+): string | null {
   if (!(specifier.startsWith("./") || specifier.startsWith("../"))) {
     return null;
   }
 
-  const base = path.resolve(path.dirname(containingFileAbsPath), specifier);
+  const base = canonicalizeAbsolutePath(path.resolve(path.dirname(containingFileAbsPath), specifier));
   const direct = resolveExisting(base);
-  if (direct) {
+  if (direct && isAllowed(direct, workspaceRootAbs)) {
     return direct;
   }
 
   for (const ext of EXTENSIONS) {
-    const candidate = `${base}${ext}`;
+    const candidate = canonicalizeAbsolutePath(`${base}${ext}`);
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-      return candidate;
+      if (isAllowed(candidate, workspaceRootAbs)) {
+        return candidate;
+      }
     }
   }
 
   for (const ext of EXTENSIONS) {
-    const indexCandidate = path.join(base, `index${ext}`);
+    const indexCandidate = canonicalizeAbsolutePath(path.join(base, `index${ext}`));
     if (fs.existsSync(indexCandidate) && fs.statSync(indexCandidate).isFile()) {
-      return indexCandidate;
+      if (isAllowed(indexCandidate, workspaceRootAbs)) {
+        return indexCandidate;
+      }
     }
   }
 
@@ -37,7 +49,14 @@ function resolveExisting(absPath: string): string | null {
   }
   const stat = fs.statSync(absPath);
   if (stat.isFile()) {
-    return absPath;
+    return canonicalizeAbsolutePath(absPath);
   }
   return null;
+}
+
+function isAllowed(absPath: string, workspaceRootAbs?: string): boolean {
+  if (!workspaceRootAbs) {
+    return true;
+  }
+  return isPathWithinWorkspace(workspaceRootAbs, absPath);
 }

@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeDhDatabase } from "../../../storage/src/sqlite/db.js";
 import { GraphRepo } from "../../../storage/src/sqlite/repositories/graph-repo.js";
 import { GraphIndexer } from "./graph-indexer.js";
+import * as workspaceScan from "../workspace/detect-projects.js";
 
 let tmpDirs: string[] = [];
 
@@ -67,5 +68,52 @@ describe("GraphIndexer", () => {
     fs.unlinkSync(bPath);
     const fourth = await indexer.indexProject();
     expect(fourth.filesDeleted).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not delete existing nodes when scan is partial", async () => {
+    const repo = makeRepo();
+    const aPath = path.join(repo, "src", "a.ts");
+    const bPath = path.join(repo, "src", "b.ts");
+    fs.writeFileSync(aPath, "export function a(){ return 1; }\n", "utf8");
+    fs.writeFileSync(bPath, "export function b(){ return 2; }\n", "utf8");
+
+    const indexer = new GraphIndexer(repo);
+    await indexer.indexProject();
+
+    const scanSpy = vi.spyOn(workspaceScan, "detectProjects").mockResolvedValue([
+      {
+        root: repo,
+        type: "node",
+        files: [
+          {
+            id: "file-a",
+            path: "src/a.ts",
+            extension: ".ts",
+            language: "typescript",
+            sizeBytes: 10,
+            status: "indexed",
+          },
+        ],
+        scanMeta: { partial: true },
+        diagnostics: {
+          filesVisited: 1,
+          filesIndexed: 1,
+          filesIgnored: 0,
+          dirsSkipped: 0,
+          errors: 0,
+          stopReason: "max_files_reached",
+        },
+      },
+    ]);
+
+    const partial = await indexer.indexProject();
+    expect(partial.filesDeleted).toBe(0);
+
+    const graph = new GraphRepo(repo);
+    const nodePaths = graph.listNodes().map((node) => node.path);
+    expect(nodePaths).toContain("src/a.ts");
+    expect(nodePaths).toContain("src/b.ts");
+
+    scanSpy.mockRestore();
   });
 });

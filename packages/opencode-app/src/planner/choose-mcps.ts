@@ -1,34 +1,85 @@
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
 import { DEFAULT_MCP_REGISTRY } from "../registry/mcp-registry.js";
+import { inferIntentTags, runtimeStatusFor, scoreRegistryEntry } from "../registry/mcp-routing-policy.js";
+import type {
+  McpReasonCode,
+  McpRoutingDecision,
+  McpRoutingDecisionOptions,
+} from "./mcp-routing-types.js";
 
 export function chooseMcps(envelope: ExecutionEnvelopeState, intent: string): string[] {
-  const tags = buildMcpTags(intent);
-  return DEFAULT_MCP_REGISTRY
-    .filter((entry) => entry.lanes.includes(envelope.lane) && entry.roles.includes(envelope.role) && entry.triggerTags.some((tag) => tags.includes(tag)))
-    .sort((left, right) => right.priority - left.priority)
-    .map((entry) => entry.mcpName);
+  return chooseMcpsDetailed(envelope, intent).selected;
 }
 
-function buildMcpTags(intent: string): string[] {
-  const normalized = intent.toLowerCase();
-  const tags = ["codebase"];
-  if (normalized.includes("trace")) {
-    tags.push("trace");
+export function chooseMcpsDetailed(
+  envelope: ExecutionEnvelopeState,
+  intent: string,
+  options?: McpRoutingDecisionOptions,
+): McpRoutingDecision {
+  const tags = inferIntentTags(intent);
+  const maxSelected = options?.maxSelected ?? 4;
+  const selected: string[] = [];
+  const reasons: Record<string, McpReasonCode[]> = {};
+  const rejected: Record<string, McpReasonCode[]> = {};
+  const blocked: string[] = [];
+  const warnings: string[] = [];
+
+  const candidates = DEFAULT_MCP_REGISTRY
+    .map((entry) => {
+      const entryReasons: McpReasonCode[] = [];
+
+      if (!entry.lanes.includes(envelope.lane)) {
+        rejected[entry.mcpName] = ["lane_mismatch"];
+        return null;
+      }
+      entryReasons.push("lane_match");
+
+      if (!entry.roles.includes(envelope.role)) {
+        rejected[entry.mcpName] = ["role_mismatch"];
+        return null;
+      }
+      entryReasons.push("role_match");
+
+      const scored = scoreRegistryEntry({
+        entry,
+        intentTags: tags,
+      });
+
+      const runtimeStatus = runtimeStatusFor(entry.mcpName, options?.runtimeSnapshot);
+      if (!runtimeStatus) {
+        entryReasons.push("no_runtime_status");
+      }
+
+      return {
+        entry,
+        score: scored.score,
+        reasons: [...entryReasons, ...scored.reasons],
+      };
+    })
+    .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
+    .sort((left, right) => right.score - left.score);
+
+  for (const candidate of candidates) {
+    if (selected.length >= maxSelected) {
+      rejected[candidate.entry.mcpName] = [...candidate.reasons, "deprioritized"];
+      continue;
+    }
+
+    selected.push(candidate.entry.mcpName);
+    reasons[candidate.entry.mcpName] = candidate.reasons;
   }
-  if (normalized.includes("impact")) {
-    tags.push("impact");
+
+  if (selected.length === 0) {
+    warnings.push("No MCP candidate selected by lane/role policy. Fallback to augment_context_engine.");
+    selected.push("augment_context_engine");
+    reasons.augment_context_engine = ["fallback_applied"];
   }
-  if (normalized.includes("bug") || normalized.includes("debug")) {
-    tags.push("bug");
-  }
-  if (normalized.includes("library") || normalized.includes("framework") || normalized.includes("api")) {
-    tags.push("library", "framework", "api");
-  }
-  if (normalized.includes("browser") || normalized.includes("ui") || normalized.includes("frontend")) {
-    tags.push("browser", "frontend", "ui-flow", "performance");
-  }
-  if (normalized.includes("migration") || normalized.includes("release")) {
-    tags.push("migration", "research", "release-notes", "ecosystem", "pattern");
-  }
-  return tags;
+
+  return {
+    selected,
+    blocked,
+    warnings,
+    reasons,
+    rejected,
+  };
 }

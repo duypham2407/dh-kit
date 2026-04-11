@@ -73,6 +73,8 @@ Lưu ý cập nhật quan trọng:
 
 Tài liệu chi tiết cho quyết định fork nằm ở `docs/architecture/opencode-integration-decision.md`.
 Tài liệu chi tiết cho hướng CLI-first nằm ở `docs/architecture/personal-cli-architecture.md`.
+Tài liệu nguyên tắc đọc hiểu code của DH nằm ở `docs/architecture/dh-code-understanding-principles-reference.md`.
+Tài liệu kỹ thuật structural/hybrid retrieval chi tiết nằm ở `docs/architecture/ai-code-understanding-structural-techniques.md`.
 
 ## Danh tính sản phẩm
 

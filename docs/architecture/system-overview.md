@@ -12,7 +12,7 @@ Tài liệu này mô tả kiến trúc tổng thể của `dh`, một AI softwar
 - trách nhiệm của từng khối
 - nguyên tắc thiết kế để AI có thể search, đọc hiểu và trace codebase chắc chắn
 
-Tài liệu này là overview cấp hệ thống. Chi tiết schema index nằm ở `docs/architecture/indexing-model.md`. Chi tiết retrieval pipeline nằm ở `docs/architecture/retrieval-strategy.md`. Chi tiết quyết định fork nằm ở `docs/architecture/opencode-integration-decision.md`.
+Tài liệu này là overview cấp hệ thống. Chi tiết schema index nằm ở `docs/architecture/indexing-model.md`. Chi tiết retrieval pipeline nằm ở `docs/architecture/retrieval-strategy.md`. Chi tiết quyết định fork nằm ở `docs/architecture/opencode-integration-decision.md`. Bản nguyên tắc đọc hiểu code của DH nằm ở `docs/architecture/dh-code-understanding-principles-reference.md`. Bản kỹ thuật structural/hybrid retrieval chi tiết nằm ở `docs/architecture/ai-code-understanding-structural-techniques.md`.
 
 Current implementation note:
 

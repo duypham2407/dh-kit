@@ -36,4 +36,53 @@ export class SessionsRepo {
       JSON.stringify(session.activeWorkItemIds),
     );
   }
+
+  findById(sessionId: string): SessionState | undefined {
+    const database = openDhDatabase(this.repoRoot);
+    const row = database.prepare(`
+      SELECT
+        session_id,
+        repo_root,
+        lane,
+        lane_locked,
+        current_stage,
+        status,
+        created_at,
+        updated_at,
+        semantic_mode,
+        tool_enforcement_level,
+        active_work_item_ids_json
+      FROM sessions
+      WHERE session_id = ?
+      LIMIT 1
+    `).get(sessionId) as {
+      session_id: string;
+      repo_root: string;
+      lane: SessionState["lane"];
+      lane_locked: number;
+      current_stage: SessionState["currentStage"];
+      status: SessionState["status"];
+      created_at: string;
+      updated_at: string;
+      semantic_mode: SessionState["semanticMode"];
+      tool_enforcement_level: SessionState["toolEnforcementLevel"];
+      active_work_item_ids_json: string;
+    } | undefined;
+    if (!row) {
+      return undefined;
+    }
+    return {
+      sessionId: row.session_id,
+      repoRoot: row.repo_root,
+      lane: row.lane,
+      laneLocked: true,
+      currentStage: row.current_stage,
+      status: row.status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      semanticMode: row.semantic_mode,
+      toolEnforcementLevel: row.tool_enforcement_level,
+      activeWorkItemIds: JSON.parse(row.active_work_item_ids_json) as string[],
+    };
+  }
 }

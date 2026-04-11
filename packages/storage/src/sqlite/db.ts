@@ -200,5 +200,73 @@ export function bootstrapDhDatabase(database: DatabaseSync): void {
     );
     CREATE INDEX IF NOT EXISTS idx_embeddings_chunk_id ON embeddings (chunk_id);
     CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings (model_name);
+
+    CREATE TABLE IF NOT EXISTS graph_nodes (
+      id TEXT PRIMARY KEY,
+      path TEXT NOT NULL UNIQUE,
+      kind TEXT NOT NULL DEFAULT 'module',
+      language TEXT,
+      content_hash TEXT,
+      mtime REAL NOT NULL DEFAULT 0,
+      parse_status TEXT NOT NULL DEFAULT 'pending',
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_graph_nodes_path ON graph_nodes (path);
+
+    CREATE TABLE IF NOT EXISTS graph_edges (
+      id TEXT PRIMARY KEY,
+      from_node_id TEXT NOT NULL,
+      to_node_id TEXT NOT NULL,
+      edge_type TEXT NOT NULL DEFAULT 'import',
+      line INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (from_node_id) REFERENCES graph_nodes (id) ON DELETE CASCADE,
+      FOREIGN KEY (to_node_id) REFERENCES graph_nodes (id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_graph_edges_from ON graph_edges (from_node_id);
+    CREATE INDEX IF NOT EXISTS idx_graph_edges_to ON graph_edges (to_node_id);
+
+    CREATE TABLE IF NOT EXISTS graph_symbols (
+      id TEXT PRIMARY KEY,
+      node_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'unknown',
+      is_export INTEGER NOT NULL DEFAULT 0,
+      line INTEGER NOT NULL DEFAULT 0,
+      start_line INTEGER,
+      end_line INTEGER,
+      signature TEXT,
+      doc_comment TEXT,
+      scope TEXT,
+      FOREIGN KEY (node_id) REFERENCES graph_nodes (id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_graph_symbols_node ON graph_symbols (node_id);
+    CREATE INDEX IF NOT EXISTS idx_graph_symbols_name ON graph_symbols (name);
+
+    CREATE TABLE IF NOT EXISTS graph_symbol_references (
+      id TEXT PRIMARY KEY,
+      symbol_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      line INTEGER NOT NULL,
+      col INTEGER NOT NULL DEFAULT 0,
+      kind TEXT NOT NULL DEFAULT 'usage',
+      FOREIGN KEY (symbol_id) REFERENCES graph_symbols (id) ON DELETE CASCADE,
+      FOREIGN KEY (node_id) REFERENCES graph_nodes (id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_graph_refs_symbol ON graph_symbol_references (symbol_id);
+    CREATE INDEX IF NOT EXISTS idx_graph_refs_node ON graph_symbol_references (node_id);
+
+    CREATE TABLE IF NOT EXISTS graph_calls (
+      id TEXT PRIMARY KEY,
+      caller_symbol_id TEXT NOT NULL,
+      callee_name TEXT NOT NULL,
+      callee_node_id TEXT,
+      callee_symbol_id TEXT,
+      line INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (caller_symbol_id) REFERENCES graph_symbols (id) ON DELETE CASCADE,
+      FOREIGN KEY (callee_node_id) REFERENCES graph_nodes (id) ON DELETE CASCADE,
+      FOREIGN KEY (callee_symbol_id) REFERENCES graph_symbols (id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_graph_calls_caller ON graph_calls (caller_symbol_id);
+    CREATE INDEX IF NOT EXISTS idx_graph_calls_callee ON graph_calls (callee_name);
   `);
 }

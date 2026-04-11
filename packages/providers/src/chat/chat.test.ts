@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import { createMockChatProvider } from "./mock-chat.js";
 import { createChatProvider } from "./create-chat-provider.js";
 import type { ChatRequest } from "./types.js";
+import { createRetryingChatProvider } from "../../../runtime/src/reliability/retrying-chat-provider.js";
+import { createChatProviderError } from "./types.js";
+import { vi } from "vitest";
 
 describe("createMockChatProvider", () => {
   it("returns deterministic response based on user message", async () => {
@@ -69,5 +72,45 @@ describe("createChatProvider", () => {
       variantId: "y",
     });
     expect(provider.providerId).toBe("mock");
+  });
+
+  it("supports retry wrapper with provider metadata", async () => {
+    let calls = 0;
+    const flaky = {
+      providerId: "flaky",
+      async chat() {
+        calls += 1;
+        if (calls === 1) {
+          throw createChatProviderError({
+            message: "retry me",
+            providerId: "flaky",
+            kind: "rate_limit",
+            statusCode: 429,
+            retryAfterMs: 1,
+          });
+        }
+        return {
+          content: "ok",
+          model: "mock",
+          finishReason: "stop" as const,
+          usage: {
+            promptTokens: 1,
+            completionTokens: 1,
+            totalTokens: 2,
+          },
+        };
+      },
+    };
+
+    const sleep = vi.fn(async () => {});
+    const wrapped = createRetryingChatProvider(flaky, { sleep, maxRetries: 2 });
+    const result = await wrapped.chat({
+      messages: [{ role: "user", content: "hello" }],
+      model: "mock",
+    });
+
+    expect(result.content).toBe("ok");
+    expect(calls).toBe(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
   });
 });

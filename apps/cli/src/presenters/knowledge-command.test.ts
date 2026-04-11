@@ -20,9 +20,29 @@ function makeReport(overrides?: Partial<KnowledgeCommandReport>): KnowledgeComma
 
 describe("knowledge command presenters", () => {
   it("renders text output", () => {
-    const text = renderKnowledgeCommandText(makeReport());
+    const text = renderKnowledgeCommandText(
+      makeReport({
+        sessionId: "knowledge-session-123",
+        resumed: true,
+        compaction: {
+          attempted: true,
+          overflow: true,
+          compacted: true,
+          continuationSummaryGeneratedInMemory: true,
+          continuationSummaryPersisted: true,
+        },
+        persistence: {
+          attempted: true,
+          persisted: true,
+        },
+      }),
+    );
     expect(text).toContain("command: ask");
     expect(text).toContain("evidence count: 2");
+    expect(text).toContain("session id: knowledge-session-123");
+    expect(text).toContain("compaction applied: true");
+    expect(text).toContain("continuation summary persisted: true");
+    expect(text).toContain("runtime persistence succeeded: true");
   });
 
   it("renders failure text output", () => {

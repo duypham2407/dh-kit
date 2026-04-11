@@ -10,6 +10,7 @@ import { WorkflowAuditService } from "../../../runtime/src/workflow/workflow-aud
 import { WorkItemsRepo } from "../../../storage/src/sqlite/repositories/work-items-repo.js";
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
 import type { WorkItemState } from "../../../shared/src/types/work-item.js";
+import type { ChatProvider } from "../../../providers/src/chat/types.js";
 
 export async function runMigrationWorkflow(input: {
   sessionId: string;
@@ -17,10 +18,11 @@ export async function runMigrationWorkflow(input: {
   stage: string;
   repoRoot: string;
   envelope: ExecutionEnvelopeState;
+  provider?: ChatProvider;
 }): Promise<{ summary: string[] }> {
   const audit = new WorkflowAuditService(input.repoRoot);
-  const coordinator = await runCoordinator({ lane: "migration", stage: input.stage, objective: input.objective });
-  const architect = await runArchitect({ sessionId: input.sessionId, lane: "migration", objective: input.objective });
+  const coordinator = await runCoordinator({ lane: "migration", stage: input.stage, objective: input.objective, provider: input.provider });
+  const architect = await runArchitect({ sessionId: input.sessionId, lane: "migration", objective: input.objective, provider: input.provider });
   const workItemsRepo = new WorkItemsRepo(input.repoRoot);
   for (const workItem of architect.workItems) {
     workItemsRepo.save(workItem);
@@ -33,10 +35,12 @@ export async function runMigrationWorkflow(input: {
       const implementer = await runImplementer({
         workItemId: workItem.id,
         summary: `${architect.solutionSummary} Preserve behavior while upgrading internals. Execute '${workItem.title}'.`,
+        provider: input.provider,
       });
       const reviewer = await runReviewer({
         changedAreas: implementer.changedAreas,
         implementerSummary: implementer.summary,
+        provider: input.provider,
       });
       const tester = await runTester({
         objective: `${input.objective}; ${workItem.title}`,
@@ -51,6 +55,7 @@ export async function runMigrationWorkflow(input: {
         requiredMcps: input.envelope.activeMcps,
         browserEvidencePolicy: requiresBrowserVerification(input.objective) ? "required" : "optional",
         browserVerificationRequired: requiresBrowserVerification(input.objective),
+        provider: input.provider,
       });
       const reviewGate = evaluateGate({
         workflow: {

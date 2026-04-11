@@ -6,7 +6,12 @@
  * - The response shape uses `content` blocks instead of `choices`.
  */
 
-import type { ChatProvider, ChatRequest, ChatResponse } from "./types.js";
+import {
+  createChatProviderError,
+  type ChatProvider,
+  type ChatRequest,
+  type ChatResponse,
+} from "./types.js";
 
 const DEFAULT_BASE_URL = "https://api.anthropic.com/v1";
 const DEFAULT_API_VERSION = "2023-06-01";
@@ -50,19 +55,40 @@ export function createAnthropicChatProvider(config?: AnthropicChatConfig): ChatP
 
       if (request.temperature !== undefined) body.temperature = request.temperature;
 
-      const response = await fetch(`${baseUrl}/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": apiVersion,
-        },
-        body: JSON.stringify(body),
-      });
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}/messages`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": apiVersion,
+          },
+          body: JSON.stringify(body),
+        });
+      } catch (error) {
+        throw createChatProviderError({
+          message: `Anthropic network error: ${(error as Error).message}`,
+          providerId: "anthropic",
+          kind: "network",
+          retryable: true,
+        });
+      }
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`Anthropic API error ${response.status}: ${text}`);
+        const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after-ms"));
+        const retryAfter = response.headers.get("retry-after") ?? undefined;
+        const kind = classifyAnthropicError(response.status, text);
+        throw createChatProviderError({
+          message: `Anthropic API error ${response.status}: ${text}`,
+          providerId: "anthropic",
+          statusCode: response.status,
+          kind,
+          retryable: kind === "rate_limit" || kind === "transient",
+          retryAfterMs,
+          retryAfter,
+        });
       }
 
       const json = (await response.json()) as {
@@ -92,6 +118,34 @@ export function createAnthropicChatProvider(config?: AnthropicChatConfig): ChatP
       };
     },
   };
+}
+
+function parseRetryAfterMs(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function classifyAnthropicError(status: number, text: string): "rate_limit" | "transient" | "semantic" | "auth" | "overflow" | "unknown" {
+  const message = text.toLowerCase();
+  if (status === 401 || status === 403) {
+    return "auth";
+  }
+  if (status === 429) {
+    return "rate_limit";
+  }
+  if (status >= 500) {
+    return "transient";
+  }
+  if (message.includes("maximum context") || message.includes("context window")) {
+    return "overflow";
+  }
+  if (status >= 400 && status < 500) {
+    return "semantic";
+  }
+  return "unknown";
 }
 
 function normalizeStopReason(

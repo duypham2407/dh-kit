@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { runLaneWorkflow } from "./run-lane-command.js";
 import { closeDhDatabase } from "../../../storage/src/sqlite/db.js";
+import { createChatProviderError, type ChatProvider } from "../../../providers/src/chat/types.js";
 
 let tmpDirs: string[] = [];
 
@@ -63,5 +64,66 @@ describe("runLaneWorkflow", () => {
     expect(report.exitCode).toBe(0);
     expect(report.lane).toBe("migration");
     expect(report.workflowSummary[0]).toContain("Migration mode preserves behavior by default.");
+  });
+
+  it("retries transient provider errors through shared retry wrapper", async () => {
+    const repo = makeTmpRepo();
+    let calls = 0;
+    const flakyProvider: ChatProvider = {
+      providerId: "flaky",
+      async chat() {
+        calls += 1;
+        if (calls === 1) {
+          throw createChatProviderError({
+            message: "rate limited",
+            providerId: "flaky",
+            kind: "rate_limit",
+            statusCode: 429,
+            retryAfterMs: 1,
+          });
+        }
+        return {
+          content: JSON.stringify({ summary: "ok" }),
+          model: "mock",
+          finishReason: "stop",
+          usage: {
+            promptTokens: 1,
+            completionTokens: 1,
+            totalTokens: 2,
+          },
+        };
+      },
+    };
+
+    const report = await runLaneWorkflow({
+      lane: "quick",
+      objective: "retry through provider wrapper",
+      repoRoot: repo,
+      provider: flakyProvider,
+    });
+
+    expect(report.exitCode).toBe(0);
+    expect(calls).toBeGreaterThan(1);
+  });
+
+  it("resumes existing session instead of creating a new one", async () => {
+    const repo = makeTmpRepo();
+
+    const first = await runLaneWorkflow({
+      lane: "quick",
+      objective: "initial run",
+      repoRoot: repo,
+    });
+
+    const resumed = await runLaneWorkflow({
+      lane: "quick",
+      objective: "resume run",
+      repoRoot: repo,
+      resumeSessionId: first.sessionId,
+    });
+
+    expect(first.exitCode).toBe(0);
+    expect(resumed.exitCode).toBe(0);
+    expect(resumed.sessionId).toBe(first.sessionId);
   });
 });

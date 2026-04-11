@@ -34,6 +34,43 @@ export type ChatResponse = {
   };
 };
 
+export type ChatProviderErrorKind =
+  | "network"
+  | "rate_limit"
+  | "transient"
+  | "overflow"
+  | "semantic"
+  | "auth"
+  | "unknown";
+
+export type ChatProviderError = Error & {
+  kind: ChatProviderErrorKind;
+  providerId: string;
+  retryable?: boolean;
+  statusCode?: number;
+  retryAfterMs?: number;
+  retryAfter?: string;
+};
+
+export function createChatProviderError(input: {
+  message: string;
+  providerId: string;
+  kind: ChatProviderErrorKind;
+  retryable?: boolean;
+  statusCode?: number;
+  retryAfterMs?: number;
+  retryAfter?: string;
+}): ChatProviderError {
+  const error = new Error(input.message) as ChatProviderError;
+  error.kind = input.kind;
+  error.providerId = input.providerId;
+  error.retryable = input.retryable;
+  error.statusCode = input.statusCode;
+  error.retryAfterMs = input.retryAfterMs;
+  error.retryAfter = input.retryAfter;
+  return error;
+}
+
 export type ChatProvider = {
   readonly providerId: string;
   chat(request: ChatRequest): Promise<ChatResponse>;

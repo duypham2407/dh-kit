@@ -7,6 +7,9 @@ import { WorkflowStateRepo } from "../../../storage/src/sqlite/repositories/work
 import { SessionStore } from "../../../storage/src/fs/session-store.js";
 import { writeWorkflowCompatibilityMirror } from "./workflow-state-mirror.js";
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
+import { SessionCheckpointsRepo } from "../../../storage/src/sqlite/repositories/session-checkpoints-repo.js";
+import { SessionRuntimeEventsRepo } from "../../../storage/src/sqlite/repositories/session-runtime-events-repo.js";
+import { SessionSummaryRepo } from "../../../storage/src/sqlite/repositories/session-summary-repo.js";
 
 export type StageTransitionResult = {
   session: SessionState;
@@ -17,11 +20,17 @@ export class StageRunner {
   private readonly sessionsRepo: SessionsRepo;
   private readonly workflowStateRepo: WorkflowStateRepo;
   private readonly sessionStore: SessionStore;
+  private readonly sessionCheckpointsRepo: SessionCheckpointsRepo;
+  private readonly sessionRuntimeEventsRepo: SessionRuntimeEventsRepo;
+  private readonly sessionSummaryRepo: SessionSummaryRepo;
 
   constructor(private readonly repoRoot: string) {
     this.sessionsRepo = new SessionsRepo(repoRoot);
     this.workflowStateRepo = new WorkflowStateRepo(repoRoot);
     this.sessionStore = new SessionStore(repoRoot);
+    this.sessionCheckpointsRepo = new SessionCheckpointsRepo(repoRoot);
+    this.sessionRuntimeEventsRepo = new SessionRuntimeEventsRepo(repoRoot);
+    this.sessionSummaryRepo = new SessionSummaryRepo(repoRoot);
   }
 
   async advance(input: {
@@ -55,6 +64,33 @@ export class StageRunner {
       gateStatus: "pending",
     };
 
+    const latestSummary = this.sessionSummaryRepo.findLatestBySession(input.session.sessionId);
+    const checkpoint = this.sessionCheckpointsRepo.save({
+      sessionId: input.session.sessionId,
+      checkpointType: "post_stage_advance",
+      lane: updatedSession.lane,
+      stage: updatedSession.currentStage,
+      summarySnapshotJson: latestSummary ? {
+        filesChanged: latestSummary.filesChanged,
+        additions: latestSummary.additions,
+        deletions: latestSummary.deletions,
+        lastDiffAt: latestSummary.lastDiffAt,
+        latestStage: latestSummary.latestStage,
+        latestCheckpointId: latestSummary.latestCheckpointId,
+        continuationSummary: latestSummary.continuationSummary,
+        continuationCreatedAt: latestSummary.continuationCreatedAt,
+      } : {},
+      workflowSnapshotJson: updatedWorkflow as Record<string, unknown>,
+      continuationJson: {
+        continuationSummary: latestSummary?.continuationSummary,
+      },
+      metadataJson: {
+        source: "stage-runner.advance",
+      },
+    });
+
+    updatedSession.latestCheckpointId = checkpoint.id;
+
     this.sessionsRepo.save(updatedSession);
     this.workflowStateRepo.save(updatedSession.sessionId, updatedWorkflow);
     await this.sessionStore.write({
@@ -67,6 +103,14 @@ export class StageRunner {
       session: updatedSession,
       workflow: updatedWorkflow,
       latestEnvelope: input.latestEnvelope,
+    });
+    this.sessionRuntimeEventsRepo.save({
+      sessionId: updatedSession.sessionId,
+      eventType: "checkpoint_created",
+      eventJson: {
+        checkpointId: checkpoint.id,
+        checkpointType: checkpoint.checkpointType,
+      },
     });
 
     return {

@@ -1,12 +1,22 @@
 import { renderKnowledgeCommandJson, renderKnowledgeCommandText } from "../presenters/knowledge-command.js";
 import { createRuntimeClient } from "../runtime-client.js";
+import { parseKnowledgeCommandArgs } from "./knowledge-command-args.js";
 
 export async function runTraceCommand(args: string[], repoRoot: string): Promise<number> {
-  const wantsJson = args.includes("--json");
-  const filteredArgs = args.filter((arg) => arg !== "--json");
+  const parsed = parseKnowledgeCommandArgs(args);
+  if (parsed.error) {
+    process.stderr.write(`${parsed.error}\n`);
+    return 1;
+  }
+
   const runtime = createRuntimeClient();
-  const report = await runtime.runKnowledge({ kind: "trace", input: filteredArgs.join(" ").trim(), repoRoot });
-  const output = wantsJson ? renderKnowledgeCommandJson(report) : renderKnowledgeCommandText(report);
+  const report = await runtime.runKnowledge({
+    kind: "trace",
+    input: parsed.queryInput,
+    repoRoot,
+    resumeSessionId: parsed.resumeSessionId,
+  });
+  const output = parsed.wantsJson ? renderKnowledgeCommandJson(report) : renderKnowledgeCommandText(report);
   if (report.exitCode === 0) {
     process.stdout.write(`${output}\n`);
   } else {

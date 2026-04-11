@@ -9,8 +9,9 @@ export class SessionsRepo {
     database.prepare(`
       INSERT INTO sessions (
         session_id, repo_root, lane, lane_locked, current_stage, status,
-        created_at, updated_at, semantic_mode, tool_enforcement_level, active_work_item_ids_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, semantic_mode, tool_enforcement_level, active_work_item_ids_json,
+        latest_summary_id, latest_checkpoint_id, latest_revert_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
         repo_root = excluded.repo_root,
         lane = excluded.lane,
@@ -21,7 +22,10 @@ export class SessionsRepo {
         updated_at = excluded.updated_at,
         semantic_mode = excluded.semantic_mode,
         tool_enforcement_level = excluded.tool_enforcement_level,
-        active_work_item_ids_json = excluded.active_work_item_ids_json
+        active_work_item_ids_json = excluded.active_work_item_ids_json,
+        latest_summary_id = excluded.latest_summary_id,
+        latest_checkpoint_id = excluded.latest_checkpoint_id,
+        latest_revert_id = excluded.latest_revert_id
     `).run(
       session.sessionId,
       session.repoRoot,
@@ -34,6 +38,9 @@ export class SessionsRepo {
       session.semanticMode,
       session.toolEnforcementLevel,
       JSON.stringify(session.activeWorkItemIds),
+      session.latestSummaryId ?? null,
+      session.latestCheckpointId ?? null,
+      session.latestRevertId ?? null,
     );
   }
 
@@ -51,7 +58,10 @@ export class SessionsRepo {
         updated_at,
         semantic_mode,
         tool_enforcement_level,
-        active_work_item_ids_json
+        active_work_item_ids_json,
+        latest_summary_id,
+        latest_checkpoint_id,
+        latest_revert_id
       FROM sessions
       WHERE session_id = ?
       LIMIT 1
@@ -67,6 +77,9 @@ export class SessionsRepo {
       semantic_mode: SessionState["semanticMode"];
       tool_enforcement_level: SessionState["toolEnforcementLevel"];
       active_work_item_ids_json: string;
+      latest_summary_id: string | null;
+      latest_checkpoint_id: string | null;
+      latest_revert_id: string | null;
     } | undefined;
     if (!row) {
       return undefined;
@@ -83,6 +96,9 @@ export class SessionsRepo {
       semanticMode: row.semantic_mode,
       toolEnforcementLevel: row.tool_enforcement_level,
       activeWorkItemIds: JSON.parse(row.active_work_item_ids_json) as string[],
+      latestSummaryId: row.latest_summary_id ?? undefined,
+      latestCheckpointId: row.latest_checkpoint_id ?? undefined,
+      latestRevertId: row.latest_revert_id ?? undefined,
     };
   }
 }

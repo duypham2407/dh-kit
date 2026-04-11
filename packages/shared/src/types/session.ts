@@ -15,4 +15,7 @@ export type SessionState = {
   activeWorkItemIds: string[];
   semanticMode: SemanticMode;
   toolEnforcementLevel: ToolEnforcementLevel;
+  latestSummaryId?: string;
+  latestCheckpointId?: string;
+  latestRevertId?: string;
 };

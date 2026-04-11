@@ -2,7 +2,12 @@
  * OpenAI chat completion provider — uses fetch directly, no SDK dependency.
  */
 
-import type { ChatProvider, ChatRequest, ChatResponse, ChatMessage } from "./types.js";
+import {
+  createChatProviderError,
+  type ChatProvider,
+  type ChatRequest,
+  type ChatResponse,
+} from "./types.js";
 
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 
@@ -33,18 +38,39 @@ export function createOpenAIChatProvider(config?: OpenAIChatConfig): ChatProvide
       if (request.temperature !== undefined) body.temperature = request.temperature;
       if (request.responseFormat) body.response_format = request.responseFormat;
 
-      const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(body),
-      });
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(body),
+        });
+      } catch (error) {
+        throw createChatProviderError({
+          message: `OpenAI network error: ${(error as Error).message}`,
+          providerId: "openai",
+          kind: "network",
+          retryable: true,
+        });
+      }
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`OpenAI API error ${response.status}: ${text}`);
+        const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after-ms"));
+        const retryAfter = response.headers.get("retry-after") ?? undefined;
+        const kind = classifyOpenAiError(response.status, text);
+        throw createChatProviderError({
+          message: `OpenAI API error ${response.status}: ${text}`,
+          providerId: "openai",
+          statusCode: response.status,
+          kind,
+          retryable: kind === "rate_limit" || kind === "transient",
+          retryAfterMs,
+          retryAfter,
+        });
       }
 
       const json = (await response.json()) as {
@@ -77,6 +103,34 @@ export function createOpenAIChatProvider(config?: OpenAIChatConfig): ChatProvide
       };
     },
   };
+}
+
+function parseRetryAfterMs(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function classifyOpenAiError(status: number, text: string): "rate_limit" | "transient" | "semantic" | "auth" | "overflow" | "unknown" {
+  const message = text.toLowerCase();
+  if (status === 401 || status === 403) {
+    return "auth";
+  }
+  if (status === 429) {
+    return "rate_limit";
+  }
+  if (status >= 500) {
+    return "transient";
+  }
+  if (message.includes("maximum context length") || message.includes("context_length_exceeded")) {
+    return "overflow";
+  }
+  if (status >= 400 && status < 500) {
+    return "semantic";
+  }
+  return "unknown";
 }
 
 function normalizeFinishReason(

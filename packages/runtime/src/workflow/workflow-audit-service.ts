@@ -9,6 +9,7 @@ import {
   type HookDecision,
   type HookName,
 } from "../../../opencode-sdk/src/index.js";
+import { SessionRuntimeEventsRepo } from "../../../storage/src/sqlite/repositories/session-runtime-events-repo.js";
 import { HookInvocationLogsRepo } from "../../../storage/src/sqlite/repositories/hook-invocation-logs-repo.js";
 import { McpRouteAuditRepo } from "../../../storage/src/sqlite/repositories/mcp-route-audit-repo.js";
 import { RoleOutputsRepo } from "../../../storage/src/sqlite/repositories/role-outputs-repo.js";
@@ -21,6 +22,7 @@ export class WorkflowAuditService {
   private readonly mcpRouteAuditRepo: McpRouteAuditRepo;
   private readonly hookInvocationLogsRepo: HookInvocationLogsRepo;
   private readonly roleOutputsRepo: RoleOutputsRepo;
+  private readonly sessionRuntimeEventsRepo: SessionRuntimeEventsRepo;
 
   constructor(private readonly repoRoot: string) {
     this.toolUsageAuditRepo = new ToolUsageAuditRepo(repoRoot);
@@ -28,6 +30,7 @@ export class WorkflowAuditService {
     this.mcpRouteAuditRepo = new McpRouteAuditRepo(repoRoot);
     this.hookInvocationLogsRepo = new HookInvocationLogsRepo(repoRoot);
     this.roleOutputsRepo = new RoleOutputsRepo(repoRoot);
+    this.sessionRuntimeEventsRepo = new SessionRuntimeEventsRepo(repoRoot);
   }
 
   recordRoleOutput(envelope: ExecutionEnvelopeState, payload: RoleOutputPayload): void {
@@ -105,6 +108,18 @@ export class WorkflowAuditService {
       durationMs: input.durationMs,
       id: createId("hook-log"),
       timestamp: nowIso(),
+    });
+  }
+
+  recordRuntimeEvent(input: {
+    sessionId: string;
+    eventType: "busy" | "idle" | "cancel" | "retry" | "retry_give_up" | "summary_updated" | "compaction" | "checkpoint_created" | "revert";
+    eventJson?: Record<string, unknown>;
+  }): void {
+    this.sessionRuntimeEventsRepo.save({
+      sessionId: input.sessionId,
+      eventType: input.eventType,
+      eventJson: input.eventJson,
     });
   }
 }

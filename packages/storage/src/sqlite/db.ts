@@ -67,7 +67,10 @@ export function bootstrapDhDatabase(database: DatabaseSync): void {
       updated_at TEXT NOT NULL,
       semantic_mode TEXT NOT NULL,
       tool_enforcement_level TEXT NOT NULL,
-      active_work_item_ids_json TEXT NOT NULL
+      active_work_item_ids_json TEXT NOT NULL,
+      latest_summary_id TEXT,
+      latest_checkpoint_id TEXT,
+      latest_revert_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS workflow_state (
@@ -173,6 +176,98 @@ export function bootstrapDhDatabase(database: DatabaseSync): void {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS session_runtime_events (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      event_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions (session_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_runtime_events_session_id ON session_runtime_events (session_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS session_summaries (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      files_changed INTEGER NOT NULL,
+      additions INTEGER NOT NULL,
+      deletions INTEGER NOT NULL,
+      last_diff_at TEXT,
+      latest_stage TEXT,
+      latest_checkpoint_id TEXT,
+      continuation_summary TEXT,
+      continuation_created_at TEXT,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions (session_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_summaries_session_id ON session_summaries (session_id, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS session_checkpoints (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      checkpoint_type TEXT NOT NULL,
+      lane TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      summary_snapshot_json TEXT NOT NULL,
+      workflow_snapshot_json TEXT NOT NULL,
+      continuation_json TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions (session_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_checkpoints_session_id ON session_checkpoints (session_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS session_reverts (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      checkpoint_id TEXT NOT NULL,
+      previous_checkpoint_id TEXT,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions (session_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_reverts_session_id ON session_reverts (session_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS knowledge_command_sessions (
+      session_id TEXT PRIMARY KEY,
+      repo_root TEXT NOT NULL,
+      status TEXT NOT NULL,
+      last_command_kind TEXT,
+      last_input TEXT,
+      last_compacted INTEGER NOT NULL,
+      last_run_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_knowledge_command_sessions_updated_at ON knowledge_command_sessions (updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS knowledge_command_runtime_events (
+      id TEXT PRIMARY KEY,
+      knowledge_session_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      event_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (knowledge_session_id) REFERENCES knowledge_command_sessions (session_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_knowledge_command_runtime_events_session_id
+      ON knowledge_command_runtime_events (knowledge_session_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS knowledge_command_summaries (
+      knowledge_session_id TEXT PRIMARY KEY,
+      last_command_kind TEXT,
+      last_run_at TEXT,
+      compaction_attempted INTEGER NOT NULL,
+      compaction_overflow INTEGER NOT NULL,
+      compaction_applied INTEGER NOT NULL,
+      continuation_summary TEXT,
+      continuation_created_at TEXT,
+      compaction_event_id TEXT,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (knowledge_session_id) REFERENCES knowledge_command_sessions (session_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_knowledge_command_summaries_updated_at
+      ON knowledge_command_summaries (updated_at DESC);
+
     CREATE TABLE IF NOT EXISTS chunks (
       id TEXT PRIMARY KEY,
       file_id TEXT NOT NULL,
@@ -269,4 +364,16 @@ export function bootstrapDhDatabase(database: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_graph_calls_caller ON graph_calls (caller_symbol_id);
     CREATE INDEX IF NOT EXISTS idx_graph_calls_callee ON graph_calls (callee_name);
   `);
+
+  ensureColumn(database, "sessions", "latest_summary_id", "TEXT");
+  ensureColumn(database, "sessions", "latest_checkpoint_id", "TEXT");
+  ensureColumn(database, "sessions", "latest_revert_id", "TEXT");
+}
+
+function ensureColumn(database: DatabaseSync, tableName: string, columnName: string, definition: string): void {
+  const rows = database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  const exists = rows.some((row) => row.name === columnName);
+  if (!exists) {
+    database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
 }

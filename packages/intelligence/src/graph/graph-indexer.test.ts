@@ -116,4 +116,48 @@ describe("GraphIndexer", () => {
 
     scanSpy.mockRestore();
   });
+
+  it("indexes segmented workspace files using workspaceRoot-aware paths", async () => {
+    const repo = makeRepo();
+    const workspaceRoot = path.join(repo, "packages", "app");
+    fs.mkdirSync(path.join(workspaceRoot, "src"), { recursive: true });
+    fs.writeFileSync(path.join(workspaceRoot, "src", "a.ts"), "export function a(){ return 1; }\n", "utf8");
+
+    const scanSpy = vi.spyOn(workspaceScan, "detectProjects").mockResolvedValue([
+      {
+        root: workspaceRoot,
+        type: "node",
+        files: [
+          {
+            id: "seg-a",
+            path: "src/a.ts",
+            extension: ".ts",
+            language: "typescript",
+            sizeBytes: 10,
+            status: "indexed",
+            workspaceRoot,
+          },
+        ],
+        scanMeta: { partial: false },
+        diagnostics: {
+          filesVisited: 1,
+          filesIndexed: 1,
+          filesIgnored: 0,
+          dirsSkipped: 0,
+          errors: 0,
+          stopReason: "none",
+        },
+      },
+    ]);
+
+    const indexer = new GraphIndexer(repo);
+    const stats = await indexer.indexProject();
+    expect(stats.filesIndexed).toBeGreaterThanOrEqual(1);
+
+    const graph = new GraphRepo(repo);
+    const nodePaths = graph.listNodes().map((node) => node.path);
+    expect(nodePaths).toContain("packages/app/src/a.ts");
+
+    scanSpy.mockRestore();
+  });
 });

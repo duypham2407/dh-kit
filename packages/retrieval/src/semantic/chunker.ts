@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
-import path from "node:path";
 import type { ChunkInput } from "../../../shared/src/types/embedding.js";
 import type { IndexedFile, IndexedSymbol } from "../../../shared/src/types/indexing.js";
+import { resolveIndexedFileAbsolutePath } from "../../../intelligence/src/workspace/scan-paths.js";
 
 const DEFAULT_CHUNK_MAX_LINES = 60;
 const DEFAULT_CHUNK_OVERLAP_LINES = 8;
@@ -36,7 +36,10 @@ export async function chunkFile(
   symbols: IndexedSymbol[],
   options?: ChunkerOptions,
 ): Promise<ChunkInput[]> {
-  const absolutePath = path.join(repoRoot, file.path);
+  const absolutePath = resolveIndexedFileAbsolutePath(repoRoot, file);
+  if (!absolutePath) {
+    return [];
+  }
   let content: string;
   try {
     content = await fs.readFile(absolutePath, "utf8");

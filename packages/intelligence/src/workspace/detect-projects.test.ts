@@ -75,4 +75,43 @@ describe("detectProjects", () => {
     expect(workspace!.scanMeta?.partial).toBe(true);
     expect(workspace!.diagnostics?.stopReason).toBe("max_file_size_scan_stopped");
   });
+
+  it("falls back to single-root workspace when no markers are present", async () => {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, "src", "a.ts"), "export const a = 1;\n", "utf8");
+
+    const workspaces = await detectProjects(repo);
+    expect(workspaces).toHaveLength(1);
+    expect(workspaces[0]!.root).toBe(path.resolve(repo).replace(/\\/g, "/"));
+    expect(workspaces[0]!.type).toBe("unknown");
+  });
+
+  it("emits segmented workspaces for marker roots and keeps leaf roots only", async () => {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, "packages", "a", "src"), { recursive: true });
+    fs.mkdirSync(path.join(repo, "packages", "a", "nested", "src"), { recursive: true });
+    fs.mkdirSync(path.join(repo, "services", "api", "src"), { recursive: true });
+
+    fs.writeFileSync(path.join(repo, "packages", "a", "package.json"), "{}\n", "utf8");
+    fs.writeFileSync(path.join(repo, "packages", "a", "nested", "go.mod"), "module nested\n", "utf8");
+    fs.writeFileSync(path.join(repo, "services", "api", "go.mod"), "module api\n", "utf8");
+
+    fs.writeFileSync(path.join(repo, "packages", "a", "src", "parent.ts"), "export const parent = 1;\n", "utf8");
+    fs.writeFileSync(path.join(repo, "packages", "a", "nested", "src", "leaf.ts"), "export const leaf = 1;\n", "utf8");
+    fs.writeFileSync(path.join(repo, "services", "api", "src", "svc.ts"), "export const svc = 1;\n", "utf8");
+
+    const workspaces = await detectProjects(repo);
+    const roots = workspaces.map((workspace) => workspace.root).sort();
+
+    expect(roots).toEqual([
+      path.resolve(repo, "packages", "a", "nested").replace(/\\/g, "/"),
+      path.resolve(repo, "services", "api").replace(/\\/g, "/"),
+    ]);
+
+    const nestedWorkspace = workspaces.find((workspace) => workspace.root.endsWith("packages/a/nested"));
+    expect(nestedWorkspace).toBeDefined();
+    expect(nestedWorkspace!.files.every((file) => file.workspaceRoot === nestedWorkspace!.root)).toBe(true);
+    expect(nestedWorkspace!.files.map((file) => file.path)).toContain("src/leaf.ts");
+    expect(nestedWorkspace!.files.map((file) => file.path)).not.toContain("src/parent.ts");
+  });
 });

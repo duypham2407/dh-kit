@@ -39,6 +39,12 @@ export type IndexJobResult = {
     /** Number of files whose chunks/embeddings were refreshed in this run. */
     filesRefreshed: number;
     filesUnchanged: number;
+    workspaceCount: number;
+    workspaceCoverage: Array<{
+      root: string;
+      partial: boolean;
+      stopReason: string;
+    }>;
     partialScan: boolean;
     scanStopReasons: string[];
   };
@@ -82,6 +88,8 @@ export async function runIndexWorkflow(
       filesSkipped: 0,
       filesRefreshed: 0,
       filesUnchanged: 0,
+      workspaceCount: workspaces.length,
+      workspaceCoverage: buildWorkspaceCoverage(workspaces),
       partialScan,
       scanStopReasons,
     });
@@ -131,6 +139,8 @@ export async function runIndexWorkflow(
       filesSkipped: filesUnchanged,
       filesRefreshed: filesToChunk.length,
       filesUnchanged,
+      workspaceCount: workspaces.length,
+      workspaceCoverage: buildWorkspaceCoverage(workspaces),
       partialScan,
       scanStopReasons,
     },
@@ -209,6 +219,7 @@ function makeResult(
   const scanSummary = diagnostics.partialScan
     ? ` scan=partial(${diagnostics.scanStopReasons.join(",") || "unknown"})`
     : " scan=complete";
+  const workspaceSummary = ` workspaces=${diagnostics.workspaceCount}`;
 
   return {
     workspaces,
@@ -219,7 +230,7 @@ function makeResult(
     chunksProduced,
     embedding,
     durationMs,
-    summary: `Indexed ${filesScanned} files (${diagnostics.filesRefreshed} refreshed, ${diagnostics.filesUnchanged} unchanged), ${symbolsExtracted} symbols, ${edgesExtracted} edges, ${callSitesExtracted} call-sites, ${chunksProduced} chunks.${embSummary}.${scanSummary} (${durationMs}ms)`,
+    summary: `Indexed ${filesScanned} files (${diagnostics.filesRefreshed} refreshed, ${diagnostics.filesUnchanged} unchanged), ${symbolsExtracted} symbols, ${edgesExtracted} edges, ${callSitesExtracted} call-sites, ${chunksProduced} chunks.${embSummary}.${scanSummary}.${workspaceSummary} (${durationMs}ms)`,
     diagnostics,
   };
 }
@@ -228,4 +239,16 @@ function uniqueStopReasons(workspaces: IndexedWorkspace[]): string[] {
   return [...new Set(workspaces
     .map((workspace) => workspace.diagnostics?.stopReason ?? "none")
     .filter((reason) => reason !== "none"))];
+}
+
+function buildWorkspaceCoverage(workspaces: IndexedWorkspace[]): Array<{
+  root: string;
+  partial: boolean;
+  stopReason: string;
+}> {
+  return workspaces.map((workspace) => ({
+    root: workspace.root,
+    partial: workspace.scanMeta?.partial === true,
+    stopReason: workspace.diagnostics?.stopReason ?? "none",
+  }));
 }

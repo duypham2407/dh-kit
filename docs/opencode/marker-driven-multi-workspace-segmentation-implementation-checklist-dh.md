@@ -38,24 +38,24 @@
 - [x] [Completed] Worktree/project subsystem parity vẫn deferred.
 
 ### Trạng thái mục tiêu
-- [ ] [Not started] `detect-projects` emit nhiều workspace khi marker roots hợp lệ.
-- [ ] [Not started] Root candidates được canonicalize, dedupe, và xử lý nested-root theo policy freeze.
-- [ ] [Not started] Downstream file readers không còn giả định `repoRoot + file.path`.
-- [ ] [Not started] Diagnostics/reporting thể hiện coverage theo từng workspace.
-- [ ] [Not started] Fallback single-root tiếp tục hoạt động ổn định.
+- [x] [Completed] `detect-projects` emit nhiều workspace khi marker roots hợp lệ.
+- [x] [Completed] Root candidates được canonicalize, dedupe, và xử lý nested-root theo policy freeze.
+- [x] [Completed] Downstream file readers không còn giả định `repoRoot + file.path`.
+- [x] [Completed] Diagnostics/reporting thể hiện coverage theo từng workspace.
+- [x] [Completed] Fallback single-root tiếp tục hoạt động ổn định.
 
 ---
 
 ## 3) Definition of Done (DoD)
 
-- [ ] [Not started] Hoàn tất baseline inventory về các giả định single-root hiện có.
-- [ ] [Not started] Freeze xong contract segmentation: marker set hỗ trợ + nested-root policy + dedupe policy.
-- [ ] [Not started] `detect-projects` trả segmented `IndexedWorkspace[]` khi có marker roots hợp lệ.
-- [ ] [Not started] Fallback single-root được giữ nguyên khi segmentation không áp dụng.
-- [ ] [Not started] Các consumer chính đã chuyển sang workspaceRoot-aware path resolution.
-- [ ] [Not started] Diagnostics/summary phản ánh được trạng thái partial/coverage theo workspace.
-- [ ] [Not started] Validation pass theo command của repo (`npm run check`, `npm run test`) hoặc ghi rõ thiếu bằng chứng nếu có.
-- [ ] [Not started] Tài liệu liên quan được cập nhật đúng phạm vi; không có thay đổi ngoài scope.
+- [x] [Completed] Hoàn tất baseline inventory về các giả định single-root hiện có.
+- [x] [Completed] Freeze xong contract segmentation: marker set hỗ trợ + nested-root policy + dedupe policy.
+- [x] [Completed] `detect-projects` trả segmented `IndexedWorkspace[]` khi có marker roots hợp lệ.
+- [x] [Completed] Fallback single-root được giữ nguyên khi segmentation không áp dụng.
+- [x] [Completed] Các consumer chính đã chuyển sang workspaceRoot-aware path resolution.
+- [x] [Completed] Diagnostics/summary phản ánh được trạng thái partial/coverage theo workspace.
+- [x] [Completed] Validation pass theo command của repo (`npm run check`, `npm run test`) hoặc ghi rõ thiếu bằng chứng nếu có.
+- [x] [Completed] Tài liệu liên quan được cập nhật đúng phạm vi; không có thay đổi ngoài scope.
 
 ---
 
@@ -80,56 +80,65 @@
 
 ## Phase 0 — Baseline inventory các giả định single-root hiện tại
 
-- [ ] [Not started] Liệt kê toàn bộ call-site/consumer còn giả định single-root path resolution.
+- [x] [Completed] Liệt kê toàn bộ call-site/consumer còn giả định single-root path resolution.
   - Evidence kỳ vọng: danh sách file + dòng logic cần đổi.
-- [ ] [Not started] Xác nhận semantics hiện tại của `IndexedFile.path` (workspace-relative) và `workspaceRoot`.
+  - Evidence thực tế: grep `path.join(repoRoot, file.path)` + các file đã cập nhật ở packages/intelligence/* và packages/retrieval/*.
+- [x] [Completed] Xác nhận semantics hiện tại của `IndexedFile.path` (workspace-relative) và `workspaceRoot`.
   - Evidence kỳ vọng: trích dẫn type + test hiện có.
-- [ ] [Not started] Chụp baseline behavior của `detect-projects` trên repo mẫu có/không có marker.
+  - Evidence thực tế: `packages/shared/src/types/indexing.ts`, test fallback/segmentation tại `packages/intelligence/src/workspace/detect-projects.test.ts`.
+- [x] [Completed] Chụp baseline behavior của `detect-projects` trên repo mẫu có/không có marker.
   - Evidence kỳ vọng: output workspace count + marker info.
-- [ ] [Not started] Xác nhận baseline diagnostics hiện có và điểm thiếu ở workspace-level reporting.
+  - Evidence thực tế: test `falls back to single-root...` và `emits segmented workspaces...` trong `detect-projects.test.ts`.
+- [x] [Completed] Xác nhận baseline diagnostics hiện có và điểm thiếu ở workspace-level reporting.
+  - Evidence thực tế: cập nhật `packages/runtime/src/jobs/index-job-runner.ts` + `index-job-runner.test.ts`.
 
 ## Phase 1 — Contract freeze cho segmentation rules và marker hỗ trợ
 
-- [ ] [Not started] Freeze marker set milestone-1: `package.json`, `go.mod`.
-- [ ] [Not started] Freeze policy canonicalization + dedupe root.
-- [ ] [Not started] Freeze nested-root policy: giữ leaf marker root, suppress ancestor marker root.
-- [ ] [Not started] Freeze fallback rule: không có root hợp lệ => emit đúng 1 workspace `repoRoot`.
-- [ ] [Not started] Freeze nguyên tắc tương thích: metadata mới chỉ additive/optional.
-- [ ] [Not started] Thêm/cập nhật test specification cho các rule trên trước khi code rộng.
+- [x] [Completed] Freeze marker set milestone-1: `package.json`, `go.mod`.
+- [x] [Completed] Freeze policy canonicalization + dedupe root.
+- [x] [Completed] Freeze nested-root policy: giữ leaf marker root, suppress ancestor marker root.
+- [x] [Completed] Freeze fallback rule: không có root hợp lệ => emit đúng 1 workspace `repoRoot`.
+- [x] [Completed] Freeze nguyên tắc tương thích: metadata mới chỉ additive/optional.
+- [x] [Completed] Thêm/cập nhật test specification cho các rule trên trước khi code rộng.
+  - Evidence: `packages/intelligence/src/workspace/detect-projects.ts`, `packages/intelligence/src/workspace/detect-projects.test.ts`.
 
 ## Phase 2 — Marker discovery + canonical root dedupe + nested-root policy
 
-- [ ] [Not started] Thêm discovery candidate roots theo traversal có guardrails/budget.
-- [ ] [Not started] Canonicalize mọi candidate root và reject out-of-repo roots.
-- [ ] [Not started] Loại duplicate/path-equivalent roots.
-- [ ] [Not started] Áp nested-root policy đã freeze để tránh overlap/contradictory emission.
-- [ ] [Not started] Đảm bảo logic root finalization được centralize (không rải path logic nhiều nơi).
-- [ ] [Not started] Bổ sung test case nested markers, duplicates, out-of-root.
+- [x] [Completed] Thêm discovery candidate roots theo traversal có guardrails/budget.
+- [x] [Completed] Canonicalize mọi candidate root và reject out-of-repo roots.
+- [x] [Completed] Loại duplicate/path-equivalent roots.
+- [x] [Completed] Áp nested-root policy đã freeze để tránh overlap/contradictory emission.
+- [x] [Completed] Đảm bảo logic root finalization được centralize (không rải path logic nhiều nơi).
+- [x] [Completed] Bổ sung test case nested markers, duplicates, out-of-root.
+  - Evidence: `discoverWorkspaceRootsByMarkers`, `finalizeWorkspaceRoots` + test `emits segmented workspaces...`.
 
 ## Phase 3 — detect-projects segmented output
 
-- [ ] [Not started] Emit nhiều `IndexedWorkspace` theo roots đã finalize.
-- [ ] [Not started] Thu thập file theo từng workspace root, giữ semantics path workspace-relative.
-- [ ] [Not started] Preserve fallback single-root behavior khi segmentation không đủ điều kiện.
-- [ ] [Not started] Gắn metadata/diagnostics cần thiết theo từng workspace (additive/optional).
-- [ ] [Not started] Cập nhật/đảm bảo test cho: multi-marker repo, single-root fallback, partial scan.
+- [x] [Completed] Emit nhiều `IndexedWorkspace` theo roots đã finalize.
+- [x] [Completed] Thu thập file theo từng workspace root, giữ semantics path workspace-relative.
+- [x] [Completed] Preserve fallback single-root behavior khi segmentation không đủ điều kiện.
+- [x] [Completed] Gắn metadata/diagnostics cần thiết theo từng workspace (additive/optional).
+- [x] [Completed] Cập nhật/đảm bảo test cho: multi-marker repo, single-root fallback, partial scan.
+  - Evidence: `packages/intelligence/src/workspace/detect-projects.ts`, `packages/intelligence/src/workspace/detect-projects.test.ts`.
 
 ## Phase 4 — Downstream consumer alignment (workspaceRoot-aware path resolution)
 
-- [ ] [Not started] Chuẩn hóa helper resolve absolute path từ `(workspaceRoot, file.path)`.
-- [ ] [Not started] Cập nhật graph/symbol/import/call extraction consumers để dùng helper workspace-aware.
-- [ ] [Not started] Cập nhật retrieval chunking/reader để bỏ giả định `repoRoot + file.path`.
-- [ ] [Not started] Xác nhận graph delete safety vẫn đúng khi partial scan ở multi-workspace.
-- [ ] [Not started] Thêm test regression cho path resolution đa workspace.
+- [x] [Completed] Chuẩn hóa helper resolve absolute path từ `(workspaceRoot, file.path)`.
+- [x] [Completed] Cập nhật graph/symbol/import/call extraction consumers để dùng helper workspace-aware.
+- [x] [Completed] Cập nhật retrieval chunking/reader để bỏ giả định `repoRoot + file.path`.
+- [x] [Completed] Xác nhận graph delete safety vẫn đúng khi partial scan ở multi-workspace.
+- [x] [Completed] Thêm test regression cho path resolution đa workspace.
+  - Evidence: `scan-paths.ts`, `graph-indexer.ts`, `extract-import-edges.ts`, `extract-call-edges.ts`, `extract-call-sites.ts`, `ast-symbol-extractor.ts`, `extract-symbols.ts`, `chunker.ts`, tests `graph-indexer.test.ts`, `extract-import-edges.test.ts`.
 
 ## Phase 5 — Diagnostics / validation / docs closure
 
-- [ ] [Not started] Bổ sung summary workspace-level: workspace count, partial/stopReason theo workspace.
-- [ ] [Not started] Xác minh reduced coverage signaling không gây hiểu nhầm whole-repo failure.
-- [ ] [Not started] Chạy `npm run check` và `npm run test` cho slice thay đổi.
-- [ ] [Not started] Đối chiếu từng AC trong scope/solution và đánh dấu pass/fail có evidence.
-- [ ] [Not started] Cập nhật docs vận hành/checklist/handoff notes cho session sau.
-- [ ] [Not started] Re-confirm: không mở rộng sang worktree/project subsystem parity.
+- [x] [Completed] Bổ sung summary workspace-level: workspace count, partial/stopReason theo workspace.
+- [x] [Completed] Xác minh reduced coverage signaling không gây hiểu nhầm whole-repo failure.
+- [x] [Completed] Chạy `npm run check` và `npm run test` cho slice thay đổi.
+- [x] [Completed] Đối chiếu từng AC trong scope/solution và đánh dấu pass/fail có evidence.
+- [x] [Completed] Cập nhật docs vận hành/checklist/handoff notes cho session sau.
+- [x] [Completed] Re-confirm: không mở rộng sang worktree/project subsystem parity.
+  - Evidence: `index-job-runner.ts`, `index-job-runner.test.ts`, `run-retrieval.ts` (reducedCoverage preserved), test + check command output.
 
 ---
 
@@ -152,16 +161,21 @@
 
 ## 7) Risks / watchouts
 
-- [ ] [Not started] **Nested marker ambiguity** gây double-index hoặc emit chồng lấn.
+- [x] [Completed] **Nested marker ambiguity** gây double-index hoặc emit chồng lấn.
   - Mitigation: freeze + test leaf-root policy trước khi rollout.
-- [ ] [Not started] **Hidden single-root assumptions** còn sót trong downstream readers.
+  - Evidence: leaf-root finalization + segmented tests.
+- [x] [Completed] **Hidden single-root assumptions** còn sót trong downstream readers.
   - Mitigation: grep/audit call-site + shared helper workspace-aware.
-- [ ] [Not started] **Path identity drift** làm lệch graph/retrieval identity.
+  - Evidence: workspace-aware helper adoption across all listed consumers.
+- [x] [Completed] **Path identity drift** làm lệch graph/retrieval identity.
   - Mitigation: giữ `IndexedFile.path` workspace-relative nhất quán; không đổi semantics tùy tiện.
-- [ ] [Not started] **Chi phí scan tăng** do multi-root collection.
+  - Evidence: `stableFileId(workspaceRoot, relativePath)` + repo-relative graph path normalization.
+- [x] [Completed] **Chi phí scan tăng** do multi-root collection.
   - Mitigation: giới hạn marker set milestone-1 + reuse discovery results.
-- [ ] [Not started] **Scope creep** sang parity project/worktree.
+  - Evidence: marker set giữ ở `package.json` và `go.mod`.
+- [x] [Completed] **Scope creep** sang parity project/worktree.
   - Mitigation: mọi đề xuất ngoài scope phải chuyển deferred/backlog, không merge trong task này.
+  - Evidence: không có thay đổi lifecycle/worktree/project subsystem.
 
 ---
 
@@ -217,4 +231,56 @@
 - [x] [Completed] Checklist đã được tạo đúng thư mục `docs/opencode/`.
 - [x] [Completed] Checklist đã bám đúng phạm vi hẹp marker-driven segmentation cho DH.
 - [x] [Completed] Đã phản ánh thực tế hiện tại: scan hardening complete, detect-projects single-root default, parity deferred.
-- [ ] [Not started] Triển khai kỹ thuật theo Phase 0.
+- [x] [Completed] Triển khai kỹ thuật theo Phase 0.
+
+### Progress Update — 2026-04-11 19:08
+- Session owner: Fullstack Agent
+- Phase đang làm: Phase 0 -> Phase 5 (full checklist execution)
+- Trạng thái tổng quan: [x] [Completed]
+
+#### Việc đã hoàn thành
+- [x] [Completed] Marker-driven segmentation với canonical root dedupe + leaf nested-root policy + single-root fallback.
+- [x] [Completed] Downstream readers chuyển sang workspaceRoot-aware absolute path resolution.
+- [x] [Completed] Giữ semantics path workspace-relative + partial-scan safety.
+- [x] [Completed] Bổ sung/cập nhật test regression cho segmentation + consumer alignment.
+- [x] [Completed] Cập nhật diagnostics workspace-level và xác nhận check/test pass.
+
+#### Việc đang làm
+- [ ] [In progress] Không còn.
+
+#### Blockers
+- [ ] [Blocked] Không có blocker mở.
+
+#### Quyết định / thay đổi contract (nếu có)
+- Milestone marker set giữ nguyên: `package.json`, `go.mod`.
+- Nested marker policy: giữ leaf root, suppress ancestor root.
+- Absolute file resolution phải dùng `(workspaceRoot, file.path)`.
+
+#### Việc tiếp theo (1-3 mục ưu tiên)
+1. Chuyển sang code-review/QA theo quy trình migration lane nếu cần.
+2. Theo dõi phản hồi về nested marker policy trên repo thực tế lớn hơn.
+3. Nếu cần phase sau: bàn riêng về project/worktree parity (deferred, ngoài scope task này).
+
+### Progress Update — 2026-04-11 19:29
+- Session owner: Fullstack Agent
+- Phase đang làm: follow-up fix sau code review (retrieval evidence path resolution)
+- Trạng thái tổng quan: [x] [Completed]
+
+#### Việc đã hoàn thành
+- [x] [Completed] Sửa finding quan trọng: chuẩn hóa `NormalizedRetrievalResult.filePath` về repo-relative trong `run-retrieval.ts` bằng workspaceRoot-aware resolution.
+- [x] [Completed] Đồng bộ graph expansion để match theo repo-relative path thay vì workspace-relative path mơ hồ.
+- [x] [Completed] Thêm regression tests cho segmented retrieval filePath + evidence packet read-path.
+- [x] [Completed] Chạy lại validation: `npm run check`, `npm run test`.
+
+#### Việc đang làm
+- [ ] [In progress] Không còn.
+
+#### Blockers
+- [ ] [Blocked] Không có blocker.
+
+#### Quyết định / thay đổi contract (nếu có)
+- Retrieval output contract thực tế được chốt: `result.filePath` mang repo-relative path để consumers (bao gồm evidence builder) đọc file ổn định trong multi-workspace.
+
+#### Việc tiếp theo (1-3 mục ưu tiên)
+1. Chuyển lại cho code review/QA closure.
+2. Theo dõi thêm các consumer ngoài retrieval nếu có nơi nào vẫn giả định workspace-relative trong kết quả hiển thị.

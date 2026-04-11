@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import {
   canonicalizeAbsolutePath,
+  isSameOrParentPath,
   isPathWithinWorkspace,
   toWorkspaceRelativePath,
 } from "./scan-paths.js";
@@ -45,17 +46,14 @@ export type ScanOptions = {
 export async function detectProjects(repoRoot: string, options?: ScanOptions): Promise<IndexedWorkspace[]> {
   const workspaceRoot = canonicalizeAbsolutePath(repoRoot);
   const scanOptions = resolveOptions(options);
-  const markers = await detectWorkspaceMarkers(workspaceRoot);
-  const scan = await collectFiles(workspaceRoot, workspaceRoot, scanOptions);
+  const candidateRoots = await discoverWorkspaceRootsByMarkers(workspaceRoot, scanOptions);
+  const workspaceRoots = finalizeWorkspaceRoots(workspaceRoot, candidateRoots);
 
-  return [{
-    root: workspaceRoot,
-    type: detectWorkspaceType(markers),
-    files: scan.files,
-    diagnostics: scan.diagnostics,
-    markers,
-    scanMeta: { partial: scan.diagnostics.stopReason !== "none" },
-  }];
+  if (workspaceRoots.length === 0) {
+    return [await buildWorkspace(workspaceRoot, scanOptions)];
+  }
+
+  return Promise.all(workspaceRoots.map((root) => buildWorkspace(root, scanOptions)));
 }
 
 async function collectFiles(root: string, currentPath: string, options: Required<ScanOptions>, depth = 0): Promise<{
@@ -156,7 +154,7 @@ async function collectFiles(root: string, currentPath: string, options: Required
       }
 
       files.push({
-        id: stableFileId(relativePath),
+        id: stableFileId(root, relativePath),
         path: relativePath,
         extension,
         language,
@@ -198,6 +196,82 @@ async function detectWorkspaceMarkers(root: string): Promise<WorkspaceMarkers> {
   return { hasPackageJson, hasGoMod };
 }
 
+async function buildWorkspace(workspaceRoot: string, options: Required<ScanOptions>): Promise<IndexedWorkspace> {
+  const markers = await detectWorkspaceMarkers(workspaceRoot);
+  const scan = await collectFiles(workspaceRoot, workspaceRoot, options);
+  return {
+    root: workspaceRoot,
+    type: detectWorkspaceType(markers),
+    files: scan.files,
+    diagnostics: scan.diagnostics,
+    markers,
+    scanMeta: { partial: scan.diagnostics.stopReason !== "none" },
+  };
+}
+
+async function discoverWorkspaceRootsByMarkers(repoRoot: string, options: Required<ScanOptions>): Promise<string[]> {
+  const ignoreDirs = new Set(options.ignoreDirs);
+  const discovered = new Set<string>();
+
+  async function walk(scanPath: string, depth = 0): Promise<void> {
+    if (depth > options.maxDepth) {
+      return;
+    }
+
+    if (!isPathWithinWorkspace(repoRoot, scanPath)) {
+      return;
+    }
+
+    const markers = await detectWorkspaceMarkers(scanPath);
+    if (markers.hasGoMod || markers.hasPackageJson) {
+      discovered.add(canonicalizeAbsolutePath(scanPath));
+    }
+
+    let entries;
+    try {
+      entries = await fs.readdir(scanPath, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.isSymbolicLink() && !options.followSymlinks) {
+        continue;
+      }
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      const entryName = String(entry.name);
+      if (ignoreDirs.has(entryName)) {
+        continue;
+      }
+
+      const absolutePath = path.join(scanPath, entryName);
+      if (!isPathWithinWorkspace(repoRoot, absolutePath)) {
+        continue;
+      }
+      await walk(absolutePath, depth + 1);
+    }
+  }
+
+  await walk(repoRoot, 0);
+  return [...discovered];
+}
+
+function finalizeWorkspaceRoots(repoRoot: string, roots: string[]): string[] {
+  const canonicalRepoRoot = canonicalizeAbsolutePath(repoRoot);
+  const inRepo = roots
+    .map((root) => canonicalizeAbsolutePath(root))
+    .filter((root) => isPathWithinWorkspace(canonicalRepoRoot, root));
+
+  const deduped = [...new Set(inRepo)].sort((left, right) => left.localeCompare(right));
+  const leafRoots = deduped.filter((candidate, _, all) => {
+    return !all.some((other) => other !== candidate && isSameOrParentPath(candidate, other));
+  });
+
+  return leafRoots.sort((left, right) => left.localeCompare(right));
+}
+
 function detectWorkspaceType(markers: WorkspaceMarkers): string {
   if (markers.hasPackageJson) {
     return "node";
@@ -217,7 +291,8 @@ async function markerExists(filePath: string): Promise<boolean> {
   }
 }
 
-function stableFileId(relativePath: string): string {
-  const hash = createHash("sha256").update(relativePath).digest("hex").slice(0, 12);
+function stableFileId(workspaceRoot: string, relativePath: string): string {
+  const identity = `${workspaceRoot}::${relativePath}`;
+  const hash = createHash("sha256").update(identity).digest("hex").slice(0, 12);
   return `file-${hash}`;
 }

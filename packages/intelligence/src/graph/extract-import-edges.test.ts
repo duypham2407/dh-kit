@@ -72,4 +72,36 @@ describe("extractImportEdges (AST)", () => {
       expect(regexTargets.has(`${edge.fromId}:${edge.toId}`)).toBe(true);
     }
   });
+
+  it("resolves file paths using workspaceRoot for segmented workspaces", async () => {
+    const repo = makeRepo();
+    const workspaceRoot = path.join(repo, "packages", "app");
+    fs.mkdirSync(path.join(workspaceRoot, "src"), { recursive: true });
+    fs.writeFileSync(path.join(workspaceRoot, "src", "dep.ts"), "export const dep = 1;\n", "utf8");
+    fs.writeFileSync(path.join(workspaceRoot, "src", "main.ts"), "import { dep } from './dep';\nvoid dep;\n", "utf8");
+
+    const segmentedFiles: IndexedFile[] = [
+      {
+        id: "seg-main",
+        path: "src/main.ts",
+        extension: ".ts",
+        language: "typescript",
+        sizeBytes: 1,
+        status: "indexed",
+        workspaceRoot,
+      },
+      {
+        id: "seg-dep",
+        path: "src/dep.ts",
+        extension: ".ts",
+        language: "typescript",
+        sizeBytes: 1,
+        status: "indexed",
+        workspaceRoot,
+      },
+    ];
+
+    const edges = await extractImportEdges(repo, segmentedFiles);
+    expect(edges.some((edge) => edge.fromId === "seg-main" && edge.toId === "seg-dep")).toBe(true);
+  });
 });

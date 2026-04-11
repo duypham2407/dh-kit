@@ -108,6 +108,10 @@ describe("runIndexWorkflow", () => {
     expect(result.diagnostics.partialScan).toBe(true);
     expect(result.diagnostics.scanStopReasons).toContain("max_files_reached");
     expect(result.summary).toContain("scan=partial");
+    expect(result.summary).toContain("workspaces=1");
+    expect(result.diagnostics.workspaceCount).toBe(1);
+    expect(result.diagnostics.workspaceCoverage[0]?.partial).toBe(true);
+    expect(result.diagnostics.workspaceCoverage[0]?.stopReason).toBe("max_files_reached");
   });
 
   it("does not re-chunk already-indexed files unless force=true", async () => {

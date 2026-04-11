@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 import { detectProjects } from "../workspace/detect-projects.js";
 import { parseSource, type TreeSitterNode } from "../parser/tree-sitter-init.js";
 import { extractImportEdges, extractImportEdgesRegex } from "./extract-import-edges.js";
@@ -9,7 +8,11 @@ import { extractSymbolReferencesFromTree } from "./reference-tracker.js";
 import type { GraphIndexStats, GraphSymbol } from "../../../shared/src/types/graph.js";
 import { extractSymbolsFromFilesAST } from "../parser/ast-symbol-extractor.js";
 import type { IndexedEdge, IndexedFile, IndexedSymbol } from "../../../shared/src/types/indexing.js";
-import { normalizePathSlashes } from "../workspace/scan-paths.js";
+import {
+  normalizePathSlashes,
+  resolveIndexedFileAbsolutePath,
+  toRepoRelativePath,
+} from "../workspace/scan-paths.js";
 
 export class GraphIndexer {
   private readonly repo: GraphRepo;
@@ -26,6 +29,14 @@ export class GraphIndexer {
       .filter((file) => ["typescript", "tsx", "javascript", "jsx"].includes(file.language));
     const isPartialScan = workspaces.some((workspace) => workspace.scanMeta?.partial === true);
     const fileMapById = new Map(files.map((file) => [file.id, file]));
+    const repoPathByFileId = new Map<string, string>();
+    for (const file of files) {
+      const absPath = resolveIndexedFileAbsolutePath(this.repoRoot, file);
+      if (!absPath) continue;
+      const repoRelativePath = toRepoRelativePath(this.repoRoot, absPath);
+      if (!repoRelativePath) continue;
+      repoPathByFileId.set(file.id, normalizePathSlashes(repoRelativePath));
+    }
     const symbolCache = new Map<string, IndexedSymbol[]>();
 
     const mergedImportEdges = await this.buildMergedImportEdges(files);
@@ -34,7 +45,7 @@ export class GraphIndexer {
     let filesDeleted = 0;
 
     if (!isPartialScan) {
-      const currentRelPaths = new Set(files.map((file) => normalizePathSlashes(file.path)));
+      const currentRelPaths = new Set(repoPathByFileId.values());
       const existingNodes = this.repo.listNodes();
       for (const node of existingNodes) {
         if (!currentRelPaths.has(normalizePathSlashes(node.path))) {
@@ -48,7 +59,10 @@ export class GraphIndexer {
     let filesSkipped = 0;
 
     for (const file of files) {
-      const absPath = path.join(this.repoRoot, file.path);
+      const absPath = resolveIndexedFileAbsolutePath(this.repoRoot, file);
+      if (!absPath) {
+        continue;
+      }
       let content: string;
       let statMtime = 0;
       try {
@@ -60,7 +74,10 @@ export class GraphIndexer {
       }
 
       const contentHash = hashContent(content);
-      const normalizedPath = normalizePathSlashes(file.path);
+      const normalizedPath = toRepoRelativePath(this.repoRoot, absPath);
+      if (!normalizedPath) {
+        continue;
+      }
       const existingNode = this.repo.findNodeByPath(normalizedPath);
       const unchanged = existingNode && existingNode.contentHash === contentHash && !force;
       if (unchanged) {
@@ -94,7 +111,14 @@ export class GraphIndexer {
           .map((edge) => {
             const targetFile = fileMapById.get(edge.toId);
             if (!targetFile) return null;
-            const targetPath = normalizePathSlashes(targetFile.path);
+            const targetAbsPath = resolveIndexedFileAbsolutePath(this.repoRoot, targetFile);
+            if (!targetAbsPath) {
+              return null;
+            }
+            const targetPath = repoPathByFileId.get(targetFile.id) ?? toRepoRelativePath(this.repoRoot, targetAbsPath);
+            if (!targetPath) {
+              return null;
+            }
             const existingTargetNode = this.repo.findNodeByPath(targetPath);
             const targetNode = existingTargetNode ?? this.repo.upsertNode({
               path: targetPath,
@@ -123,10 +147,15 @@ export class GraphIndexer {
           if (availableSymbols.length === 0) {
             const targetNode = this.repo.findNodeById(dep.toNodeId);
             if (!targetNode) continue;
-            const targetFile = files.find((candidate) => normalizePathSlashes(candidate.path) === normalizePathSlashes(targetNode.path));
+            const targetFile = files.find((candidate) => {
+              const candidatePath = repoPathByFileId.get(candidate.id);
+              return candidatePath ? normalizePathSlashes(candidatePath) === normalizePathSlashes(targetNode.path) : false;
+            });
             if (!targetFile) continue;
             const targetRawSymbols = await this.getRawSymbolsForFile(targetFile, symbolCache);
-            const targetSymbolInputs = toGraphSymbolInputs(targetRawSymbols, await fs.readFile(path.join(this.repoRoot, targetFile.path), "utf8"));
+            const targetAbsolutePath = resolveIndexedFileAbsolutePath(this.repoRoot, targetFile);
+            if (!targetAbsolutePath) continue;
+            const targetSymbolInputs = toGraphSymbolInputs(targetRawSymbols, await fs.readFile(targetAbsolutePath, "utf8"));
             if (targetSymbolInputs.length > 0) {
               availableSymbols = this.repo.replaceSymbolsForNode(dep.toNodeId, targetSymbolInputs);
             }

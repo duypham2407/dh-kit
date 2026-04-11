@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 import type { IndexedFile, IndexedSymbol } from "../../../shared/src/types/indexing.js";
+import { resolveIndexedFileAbsolutePath } from "../workspace/scan-paths.js";
 
 export type CallSite = {
   fileId: string;
@@ -25,7 +25,10 @@ export async function extractCallSites(
 
   const callSites: CallSite[] = [];
   for (const file of files) {
-    const absolutePath = path.join(repoRoot, file.path);
+    const absolutePath = resolveIndexedFileAbsolutePath(repoRoot, file);
+    if (!absolutePath) {
+      continue;
+    }
     let content: string;
     try {
       content = await fs.readFile(absolutePath, "utf8");

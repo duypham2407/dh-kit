@@ -91,6 +91,10 @@ export type TelemetrySummary = {
     avgDurationMs: number;
     strategyBreakdown: Record<string, number>;
   };
+  unresolvedPaths: {
+    semantic: number;
+    evidence: number;
+  };
 };
 
 /**
@@ -110,6 +114,8 @@ export function summarizeTelemetry(repoRoot: string): TelemetrySummary {
   const aTotalDur = annEvents.reduce((s, e) => s + e.metrics.durationMs, 0);
 
   const sTotalDur = searchEvents.reduce((s, e) => s + e.metrics.durationMs, 0);
+  const semanticPathUnresolvedCount = events.filter((e) => e.kind === "semantic_path_unresolved").length;
+  const evidencePathUnresolvedCount = events.filter((e) => e.kind === "evidence_path_unresolved").length;
   const strategyBreakdown: Record<string, number> = {};
   for (const e of searchEvents) {
     strategyBreakdown[e.metrics.strategy] = (strategyBreakdown[e.metrics.strategy] ?? 0) + 1;
@@ -134,6 +140,10 @@ export function summarizeTelemetry(repoRoot: string): TelemetrySummary {
       totalDurationMs: sTotalDur,
       avgDurationMs: searchEvents.length > 0 ? sTotalDur / searchEvents.length : 0,
       strategyBreakdown,
+    },
+    unresolvedPaths: {
+      semantic: semanticPathUnresolvedCount,
+      evidence: evidencePathUnresolvedCount,
     },
   };
 }

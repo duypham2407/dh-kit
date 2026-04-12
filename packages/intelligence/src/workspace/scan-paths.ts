@@ -75,3 +75,42 @@ export function toRepoRelativePath(repoRootAbs: string, absolutePath: string): s
   }
   return relative;
 }
+
+/**
+ * Normalize a candidate path to canonical repo-relative form.
+ *
+ * Supported inputs:
+ * - already repo-relative paths
+ * - absolute paths inside repoRoot
+ *
+ * Rejected inputs:
+ * - empty paths
+ * - absolute paths outside repoRoot
+ * - relative paths that escape repoRoot ("..")
+ */
+export function normalizeToRepoRelativePath(repoRootAbs: string, candidatePath: string): string | null {
+  const trimmed = candidatePath.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (path.isAbsolute(trimmed)) {
+    return toRepoRelativePath(repoRootAbs, trimmed);
+  }
+
+  const slashNormalized = normalizePathSlashes(trimmed).replace(/^\.\//, "");
+  const posixNormalized = path.posix.normalize(slashNormalized);
+  if (!posixNormalized || posixNormalized === ".") {
+    return null;
+  }
+  if (posixNormalized.startsWith("../") || posixNormalized === ".." || path.isAbsolute(posixNormalized)) {
+    return null;
+  }
+
+  const absolute = canonicalizeAbsolutePath(path.join(repoRootAbs, posixNormalized));
+  if (!isPathWithinWorkspace(repoRootAbs, absolute)) {
+    return null;
+  }
+
+  return toRepoRelativePath(repoRootAbs, absolute);
+}

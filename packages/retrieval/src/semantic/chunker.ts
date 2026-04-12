@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import type { ChunkInput } from "../../../shared/src/types/embedding.js";
 import type { IndexedFile, IndexedSymbol } from "../../../shared/src/types/indexing.js";
-import { resolveIndexedFileAbsolutePath } from "../../../intelligence/src/workspace/scan-paths.js";
+import { resolveIndexedFileAbsolutePath, toRepoRelativePath } from "../../../intelligence/src/workspace/scan-paths.js";
 
 const DEFAULT_CHUNK_MAX_LINES = 60;
 const DEFAULT_CHUNK_OVERLAP_LINES = 8;
@@ -40,6 +40,10 @@ export async function chunkFile(
   if (!absolutePath) {
     return [];
   }
+  const canonicalFilePath = toRepoRelativePath(repoRoot, absolutePath);
+  if (!canonicalFilePath) {
+    return [];
+  }
   let content: string;
   try {
     content = await fs.readFile(absolutePath, "utf8");
@@ -51,10 +55,10 @@ export async function chunkFile(
   const fileSymbols = symbols.filter((s) => s.fileId === file.id);
 
   if (fileSymbols.length > 0) {
-    return chunkBySymbols(file, lines, fileSymbols);
+    return chunkBySymbols(file, canonicalFilePath, lines, fileSymbols);
   }
 
-  return chunkByWindow(file, lines, options);
+  return chunkByWindow(file, canonicalFilePath, lines, options);
 }
 
 /**
@@ -63,6 +67,7 @@ export async function chunkFile(
  */
 function chunkBySymbols(
   file: IndexedFile,
+  canonicalFilePath: string,
   lines: string[],
   symbols: IndexedSymbol[],
 ): ChunkInput[] {
@@ -80,7 +85,7 @@ function chunkBySymbols(
       if (gapContent.trim().length > 0) {
         chunks.push({
           fileId: file.id,
-          filePath: file.path,
+          filePath: canonicalFilePath,
           lineStart: cursor + 1,
           lineEnd: symStart,
           content: gapContent,
@@ -94,7 +99,7 @@ function chunkBySymbols(
     if (symContent.trim().length > 0) {
       chunks.push({
         fileId: file.id,
-        filePath: file.path,
+        filePath: canonicalFilePath,
         symbolId: symbol.id,
         lineStart: symStart + 1,
         lineEnd: symEnd,
@@ -112,7 +117,7 @@ function chunkBySymbols(
     if (tailContent.trim().length > 0) {
       chunks.push({
         fileId: file.id,
-        filePath: file.path,
+        filePath: canonicalFilePath,
         lineStart: cursor + 1,
         lineEnd: lines.length,
         content: tailContent,
@@ -129,6 +134,7 @@ function chunkBySymbols(
  */
 function chunkByWindow(
   file: IndexedFile,
+  canonicalFilePath: string,
   lines: string[],
   options?: ChunkerOptions,
 ): ChunkInput[] {
@@ -144,7 +150,7 @@ function chunkByWindow(
     if (chunkContent.trim().length > 0) {
       chunks.push({
         fileId: file.id,
-        filePath: file.path,
+        filePath: canonicalFilePath,
         lineStart: start + 1,
         lineEnd: end,
         content: chunkContent,

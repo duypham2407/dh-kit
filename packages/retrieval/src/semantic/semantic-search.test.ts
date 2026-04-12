@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { cosineSimilarity, semanticSearch, semanticResultsToNormalized } from "./semantic-search.js";
+import { cosineSimilarity, semanticSearch, semanticResultsToNormalized, semanticResultsToNormalizedWithContext } from "./semantic-search.js";
 import { persistChunks, createEmbeddingProvider, embedAndPersist } from "./embedding-pipeline.js";
 import { closeDhDatabase } from "../../../storage/src/sqlite/db.js";
 import fs from "node:fs";
@@ -111,10 +111,11 @@ describe("semanticSearch", () => {
 });
 
 describe("semanticResultsToNormalized", () => {
-  it("converts semantic results to NormalizedRetrievalResult", () => {
-    const results = semanticResultsToNormalized([
+  it("throws when called without normalization context", () => {
+    expect(() => semanticResultsToNormalized([
       {
         chunkId: "chunk-1",
+        fileId: "file-1",
         filePath: "auth.ts",
         symbolId: undefined,
         lineStart: 1,
@@ -123,12 +124,56 @@ describe("semanticResultsToNormalized", () => {
         similarity: 0.85,
         language: "typescript",
       },
-    ]);
+    ])).toThrow(/requires normalization context/);
+  });
 
-    expect(results).toHaveLength(1);
-    expect(results[0]!.entityType).toBe("chunk");
-    expect(results[0]!.sourceTool).toBe("semantic_search");
-    expect(results[0]!.normalizedScore).toBe(0.85);
-    expect(results[0]!.matchReason).toContain("0.850");
+  it("keeps empty-result behavior for no-context helper", () => {
+    expect(semanticResultsToNormalized([])).toEqual([]);
+  });
+
+  it("normalizes absolute semantic chunk paths to repo-relative", () => {
+    const repo = path.resolve("/tmp/repo-root");
+    const results = semanticResultsToNormalizedWithContext([
+      {
+        chunkId: "chunk-1",
+        fileId: "file-1",
+        filePath: path.join(repo, "src", "auth.ts"),
+        symbolId: undefined,
+        lineStart: 1,
+        lineEnd: 10,
+        content: "function auth() {}",
+        similarity: 0.91,
+        language: "typescript",
+      },
+    ], {
+      repoRoot: repo,
+    });
+
+    expect(results[0]!.filePath).toBe("src/auth.ts");
+    expect(results[0]!.metadata.semanticPathNormalized).toBe(true);
+    expect(results[0]!.metadata.semanticPathUnresolved).toBe(false);
+  });
+
+  it("falls back to fileId path mapping for unresolved legacy semantic paths", () => {
+    const results = semanticResultsToNormalizedWithContext([
+      {
+        chunkId: "chunk-1",
+        fileId: "file-legacy",
+        filePath: "../legacy/auth.ts",
+        symbolId: undefined,
+        lineStart: 1,
+        lineEnd: 10,
+        content: "function auth() {}",
+        similarity: 0.75,
+        language: "typescript",
+      },
+    ], {
+      repoRoot: "/repo",
+      filePathById: new Map([["file-legacy", "packages/api/src/auth.ts"]]),
+    });
+
+    expect(results[0]!.filePath).toBe("packages/api/src/auth.ts");
+    expect(results[0]!.metadata.semanticPathNormalized).toBe(true);
+    expect(results[0]!.metadata.semanticPathUnresolved).toBe(false);
   });
 });

@@ -79,6 +79,7 @@ describe("chunkFile", () => {
     expect(chunks[0]!.lineEnd).toBe(60);
     // Second chunk overlaps
     expect(chunks[1]!.lineStart).toBe(53); // 60 - 8 + 1
+    expect(chunks.every((chunk) => chunk.filePath === "src/example.ts")).toBe(true);
   });
 
   it("chunks by symbol when symbols available", async () => {
@@ -118,6 +119,24 @@ describe("chunkFile", () => {
 
     // Trailing: line 11
     expect(chunks[2]!.lineStart).toBe(11);
+    expect(chunks.every((chunk) => chunk.filePath === "src/example.ts")).toBe(true);
+  });
+
+  it("writes canonical repo-relative filePath for segmented workspace files", async () => {
+    await setup();
+    const workspaceRoot = path.join(tmpDir, "packages", "api");
+    await fs.mkdir(path.join(workspaceRoot, "src"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "src", "auth.ts"), "export function login() { return 'ok'; }\n", "utf8");
+
+    const file = makeFile({
+      id: "workspace-file",
+      path: "src/auth.ts",
+      workspaceRoot,
+    });
+
+    const chunks = await chunkFile(tmpDir, file, []);
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks.every((chunk) => chunk.filePath === "packages/api/src/auth.ts")).toBe(true);
   });
 
   it("returns empty for missing file", async () => {

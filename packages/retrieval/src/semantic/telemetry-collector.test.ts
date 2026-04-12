@@ -113,9 +113,28 @@ describe("telemetry-collector", () => {
       metrics: { durationMs: 15, strategy: "db_scan", resultCount: 1, topK: 5, minSimilarity: 0, modelName: "m" },
     });
 
+    recordTelemetry(repo, {
+      kind: "semantic_path_unresolved",
+      details: {
+        chunkId: "chunk-1",
+        filePath: "../legacy/a.ts",
+        originalFilePath: "../legacy/a.ts",
+      },
+    });
+
+    recordTelemetry(repo, {
+      kind: "evidence_path_unresolved",
+      details: {
+        filePath: "../legacy/a.ts",
+        normalizedFilePath: null,
+        sourceTool: "semantic_search",
+        failureKind: "normalization_failed",
+      },
+    });
+
     const summary = summarizeTelemetry(repo);
 
-    expect(summary.totalEvents).toBe(5);
+    expect(summary.totalEvents).toBe(7);
     expect(summary.embeddingPipeline.runs).toBe(2);
     expect(summary.embeddingPipeline.totalTokens).toBe(300);
     expect(summary.embeddingPipeline.totalChunksEmbedded).toBe(13);
@@ -129,6 +148,8 @@ describe("telemetry-collector", () => {
     expect(summary.semanticSearch.totalDurationMs).toBe(20);
     expect(summary.semanticSearch.strategyBreakdown["hnsw"]).toBe(1);
     expect(summary.semanticSearch.strategyBreakdown["db_scan"]).toBe(1);
+    expect(summary.unresolvedPaths.semantic).toBe(1);
+    expect(summary.unresolvedPaths.evidence).toBe(1);
   });
 });
 

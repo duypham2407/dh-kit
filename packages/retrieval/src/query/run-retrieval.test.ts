@@ -63,6 +63,7 @@ describe("runRetrieval", () => {
     expect(result.plan.semanticMode).toBe("always");
     expect(result.embeddingStats).toBeDefined();
     expect(result.evidencePackets.length).toBeGreaterThan(0);
+    expect(result.results.every((entry) => !path.isAbsolute(entry.filePath))).toBe(true);
   });
 
   it("surfaces reduced coverage metadata when scan is partial", async () => {
@@ -122,4 +123,5 @@ describe("runRetrieval", () => {
     expect(packets).toHaveLength(1);
     expect(packets[0]!.snippet).not.toBe("Snippet unavailable.");
   });
+
 });

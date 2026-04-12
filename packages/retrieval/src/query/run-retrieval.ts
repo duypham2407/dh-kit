@@ -9,11 +9,12 @@ import { expandGraph } from "./expand-graph.js";
 import { searchDefinitions, searchReferences } from "./search-symbols.js";
 import { chunkFiles } from "../semantic/chunker.js";
 import { runEmbeddingPipeline, type EmbedPipelineResult } from "../semantic/embedding-pipeline.js";
-import { semanticSearch, semanticResultsToNormalized } from "../semantic/semantic-search.js";
+import { semanticSearch, semanticResultsToNormalizedWithContext } from "../semantic/semantic-search.js";
 import { ChunksRepo } from "../../../storage/src/sqlite/repositories/chunks-repo.js";
 import type { ScanOptions } from "../../../intelligence/src/workspace/detect-projects.js";
 import { resolveIndexedFileAbsolutePath, toRepoRelativePath } from "../../../intelligence/src/workspace/scan-paths.js";
 import type { IndexedFile } from "../../../shared/src/types/indexing.js";
+import { recordTelemetry } from "../semantic/telemetry-collector.js";
 
 export async function runRetrieval(input: {
   repoRoot: string;
@@ -68,7 +69,24 @@ export async function runRetrieval(input: {
 
     // 3. Semantic search against stored embeddings
     const searchResults = await semanticSearch(input.repoRoot, input.query);
-    semanticResults = semanticResultsToNormalized(searchResults);
+    semanticResults = semanticResultsToNormalizedWithContext(searchResults, {
+      repoRoot: input.repoRoot,
+      filePathById,
+    });
+
+    for (const result of semanticResults) {
+      const unresolved = result.metadata["semanticPathUnresolved"];
+      if (unresolved === true) {
+        recordTelemetry(input.repoRoot, {
+          kind: "semantic_path_unresolved",
+          details: {
+            chunkId: String(result.metadata["chunkId"] ?? "unknown"),
+            filePath: result.filePath,
+            originalFilePath: String(result.metadata["semanticOriginalFilePath"] ?? result.filePath),
+          },
+        });
+      }
+    }
   }
 
   const normalizedResults = rerankResults([...symbolResults, ...fileResults, ...expandedResults, ...semanticResults]);

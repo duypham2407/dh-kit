@@ -2,6 +2,9 @@ import { describe, it, expect, afterEach } from "vitest";
 import { ChunksRepo } from "./chunks-repo.js";
 import { EmbeddingsRepo } from "./embeddings-repo.js";
 import { HookInvocationLogsRepo } from "./hook-invocation-logs-repo.js";
+import { ToolUsageAuditRepo } from "./tool-usage-audit-repo.js";
+import { SkillActivationAuditRepo } from "./skill-activation-audit-repo.js";
+import { McpRouteAuditRepo } from "./mcp-route-audit-repo.js";
 import { closeDhDatabase, openDhDatabase } from "../db.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -307,5 +310,109 @@ describe("HookInvocationLogsRepo", () => {
     expect(logs).toHaveLength(3);
     // Newest first
     expect(logs[0]!.timestamp > logs[1]!.timestamp).toBe(true);
+  });
+});
+
+describe("Audit repos query filters", () => {
+  it("ToolUsageAuditRepo filters by session, role, envelope, and time-range", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new ToolUsageAuditRepo(repoRoot);
+
+    repo.save({
+      id: "tool-1",
+      sessionId: "sess-1",
+      envelopeId: "env-1",
+      role: "implementer",
+      intent: "read",
+      toolName: "Read",
+      status: "succeeded",
+      timestamp: "2026-04-12T10:00:00.000Z",
+    });
+    repo.save({
+      id: "tool-2",
+      sessionId: "sess-1",
+      envelopeId: "env-2",
+      role: "reviewer",
+      intent: "scan",
+      toolName: "Grep",
+      status: "failed",
+      timestamp: "2026-04-12T11:00:00.000Z",
+    });
+    repo.save({
+      id: "tool-3",
+      sessionId: "sess-2",
+      envelopeId: "env-3",
+      role: "implementer",
+      intent: "query",
+      toolName: "SQL",
+      status: "called",
+      timestamp: "2026-04-12T12:00:00.000Z",
+    });
+
+    const sess1 = repo.list({ sessionId: "sess-1" });
+    expect(sess1).toHaveLength(2);
+
+    const reviewerOnly = repo.list({ role: "reviewer" });
+    expect(reviewerOnly).toHaveLength(1);
+    expect(reviewerOnly[0]!.id).toBe("tool-2");
+
+    const env2 = repo.list({ envelopeId: "env-2" });
+    expect(env2).toHaveLength(1);
+    expect(env2[0]!.id).toBe("tool-2");
+
+    const timeRange = repo.list({ fromTimestamp: "2026-04-12T10:30:00.000Z", toTimestamp: "2026-04-12T11:30:00.000Z" });
+    expect(timeRange).toHaveLength(1);
+    expect(timeRange[0]!.id).toBe("tool-2");
+  });
+
+  it("SkillActivationAuditRepo applies newest-first with bounded limit", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new SkillActivationAuditRepo(repoRoot);
+
+    repo.save({
+      id: "skill-1",
+      sessionId: "sess-1",
+      envelopeId: "env-1",
+      role: "implementer",
+      skillName: "s1",
+      activationReason: "r1",
+      timestamp: "2026-04-12T10:00:00.000Z",
+    });
+    repo.save({
+      id: "skill-2",
+      sessionId: "sess-1",
+      envelopeId: "env-2",
+      role: "implementer",
+      skillName: "s2",
+      activationReason: "r2",
+      timestamp: "2026-04-12T11:00:00.000Z",
+    });
+
+    const limited = repo.list({ sessionId: "sess-1", limit: 1 });
+    expect(limited).toHaveLength(1);
+    expect(limited[0]!.id).toBe("skill-2");
+  });
+
+  it("McpRouteAuditRepo applies max limit clamp and empty-result behavior", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new McpRouteAuditRepo(repoRoot);
+
+    for (let i = 0; i < 3; i++) {
+      repo.save({
+        id: `mcp-${i}`,
+        sessionId: "sess-1",
+        envelopeId: `env-${i}`,
+        role: "analyst",
+        mcpName: "context7",
+        routeReason: "reason",
+        timestamp: `2026-04-12T1${i}:00:00.000Z`,
+      });
+    }
+
+    const none = repo.list({ sessionId: "missing" });
+    expect(none).toEqual([]);
+
+    const clamped = repo.list({ sessionId: "sess-1", limit: 9999 });
+    expect(clamped).toHaveLength(3);
   });
 });

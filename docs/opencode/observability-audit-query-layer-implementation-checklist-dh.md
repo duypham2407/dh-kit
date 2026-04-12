@@ -44,14 +44,22 @@ Nâng năng lực operator-facing inspection/query trên dữ liệu audit SQLit
 
 ## 3) Definition of Done (DoD)
 
-- [ ] [Not started] Query contract/filter chung được chốt và dùng nhất quán giữa các audit repos.
-- [ ] [Not started] `tool-usage-audit-repo.ts` có read/query methods (session/time-range/limit).
-- [ ] [Not started] `skill-activation-audit-repo.ts` có read/query methods (session/time-range/limit).
-- [ ] [Not started] `mcp-route-audit-repo.ts` có read/query methods (session/time-range/limit).
-- [ ] [Not started] Có runtime audit query/aggregation layer bounded phục vụ operator inspection.
-- [ ] [Not started] `debug-dump.ts` được mở rộng audit summary/query snapshot nhưng vẫn lightweight.
-- [ ] [Not started] Validation evidence cho session/time-range/no-data/bounded-output cases.
-- [ ] [Not started] Tài liệu xác nhận rõ đây là query/inspection layer only, không phải dashboard platform.
+- [x] [Completed] Query contract/filter chung được chốt và dùng nhất quán giữa các audit repos.
+  - Evidence: `packages/shared/src/types/audit.ts` thêm `AuditQueryFilter`, `DEFAULT_AUDIT_QUERY_LIMIT`, `MAX_AUDIT_QUERY_LIMIT`.
+- [x] [Completed] `tool-usage-audit-repo.ts` có read/query methods (session/time-range/limit).
+  - Evidence: `packages/storage/src/sqlite/repositories/tool-usage-audit-repo.ts` thêm `list(...)` và `listBySession(...)` với filter + bounded limit.
+- [x] [Completed] `skill-activation-audit-repo.ts` có read/query methods (session/time-range/limit).
+  - Evidence: `packages/storage/src/sqlite/repositories/skill-activation-audit-repo.ts` thêm `list(...)` và `listBySession(...)`.
+- [x] [Completed] `mcp-route-audit-repo.ts` có read/query methods (session/time-range/limit).
+  - Evidence: `packages/storage/src/sqlite/repositories/mcp-route-audit-repo.ts` thêm `list(...)` và `listBySession(...)`.
+- [x] [Completed] Có runtime audit query/aggregation layer bounded phục vụ operator inspection.
+  - Evidence: file mới `packages/runtime/src/diagnostics/audit-query-service.ts` với profile `latestSession` + `recentWindow`.
+- [x] [Completed] `debug-dump.ts` được mở rộng audit summary/query snapshot nhưng vẫn lightweight.
+  - Evidence: `packages/runtime/src/diagnostics/debug-dump.ts` thêm `auditInspection` dùng limit mặc định 25 và cửa sổ 24h.
+- [x] [Completed] Validation evidence cho session/time-range/no-data/bounded-output cases.
+  - Evidence: `npm run check`; `npm run test -- packages/storage/src/sqlite/repositories/repos.test.ts packages/runtime/src/diagnostics/audit-query-service.test.ts`.
+- [x] [Completed] Tài liệu xác nhận rõ đây là query/inspection layer only, không phải dashboard platform.
+  - Evidence: scope/solution nguồn giữ nguyên out-of-scope dashboard/alerting/external telemetry; implementation chỉ thêm query service + debug snapshot bounded.
 
 ---
 
@@ -75,63 +83,63 @@ Nâng năng lực operator-facing inspection/query trên dữ liệu audit SQLit
 ## 5) Phases / workstreams
 
 ### Phase 0 — Contract freeze
-- [ ] [Not started] Chốt use-cases query operator ưu tiên.
-- [ ] [Not started] Chốt filter contract chuẩn: `sessionId`, `role`, `envelopeId`, `from/to`, `limit`.
-- [ ] [Not started] Chốt default limits để đảm bảo bounded output.
+- [x] [Completed] Chốt use-cases query operator ưu tiên.
+- [x] [Completed] Chốt filter contract chuẩn: `sessionId`, `role`, `envelopeId`, `from/to`, `limit`.
+- [x] [Completed] Chốt default limits để đảm bảo bounded output.
 
 ### Phase 1 — Repository query enablement
-- [ ] [Not started] Thêm query methods cho `tool-usage-audit-repo.ts`.
-- [ ] [Not started] Thêm query methods cho `skill-activation-audit-repo.ts`.
-- [ ] [Not started] Thêm query methods cho `mcp-route-audit-repo.ts`.
-- [ ] [Not started] Đồng bộ sort/order và error handling giữa các repo.
+- [x] [Completed] Thêm query methods cho `tool-usage-audit-repo.ts`.
+- [x] [Completed] Thêm query methods cho `skill-activation-audit-repo.ts`.
+- [x] [Completed] Thêm query methods cho `mcp-route-audit-repo.ts`.
+- [x] [Completed] Đồng bộ sort/order và error handling giữa các repo.
 
 ### Phase 2 — Runtime aggregation layer
-- [ ] [Not started] Tạo audit query service tổng hợp đa-bảng.
-- [ ] [Not started] Định nghĩa output shape inspection dùng chung.
-- [ ] [Not started] Đảm bảo service fail-soft khi một nguồn dữ liệu trống/lỗi cục bộ.
+- [x] [Completed] Tạo audit query service tổng hợp đa-bảng.
+- [x] [Completed] Định nghĩa output shape inspection dùng chung.
+- [x] [Completed] Đảm bảo service fail-soft khi một nguồn dữ liệu trống/lỗi cục bộ.
 
 ### Phase 3 — Debug surface integration
-- [ ] [Not started] Mở rộng `createDebugDump(...)` để kèm audit summary.
-- [ ] [Not started] Thêm query snapshot mặc định cho latest session và time-window gần.
-- [ ] [Not started] Kiểm tra kích thước output không phình bất thường.
+- [x] [Completed] Mở rộng `createDebugDump(...)` để kèm audit summary.
+- [x] [Completed] Thêm query snapshot mặc định cho latest session và time-window gần.
+- [x] [Completed] Kiểm tra kích thước output không phình bất thường.
 
 ### Phase 4 — Validation + docs closure
-- [ ] [Not started] Chạy/ghi nhận kiểm tra cho session query correctness.
-- [ ] [Not started] Chạy/ghi nhận kiểm tra cho time-range filter.
-- [ ] [Not started] Chạy/ghi nhận kiểm tra cho no-data resilience.
-- [ ] [Not started] Chạy/ghi nhận kiểm tra bounded-output behavior.
-- [ ] [Not started] Cập nhật docs/handoff notes hoàn chỉnh.
+- [x] [Completed] Chạy/ghi nhận kiểm tra cho session query correctness.
+- [x] [Completed] Chạy/ghi nhận kiểm tra cho time-range filter.
+- [x] [Completed] Chạy/ghi nhận kiểm tra cho no-data resilience.
+- [x] [Completed] Chạy/ghi nhận kiểm tra bounded-output behavior.
+- [x] [Completed] Cập nhật docs/handoff notes hoàn chỉnh.
 
 ---
 
 ## 6) Detailed checklist items
 
 ### 6.1 Contract & API
-- [ ] [Not started] Định nghĩa `AuditQueryFilter` hoặc tương đương cho runtime/storage.
-- [ ] [Not started] Chốt quy ước timestamp và timezone handling.
-- [ ] [Not started] Chốt upper bound cho `limit` để tránh query quá nặng.
+- [x] [Completed] Định nghĩa `AuditQueryFilter` hoặc tương đương cho runtime/storage.
+- [x] [Completed] Chốt quy ước timestamp và timezone handling.
+- [x] [Completed] Chốt upper bound cho `limit` để tránh query quá nặng.
 
 ### 6.2 Storage repos
-- [ ] [Not started] Tool usage repo có list/query theo session + role + time range.
-- [ ] [Not started] Skill activation repo có list/query theo session + role + time range.
-- [ ] [Not started] MCP route repo có list/query theo session + role + time range.
-- [ ] [Not started] Mỗi repo có default newest-first sort và limit mặc định.
+- [x] [Completed] Tool usage repo có list/query theo session + role + time range.
+- [x] [Completed] Skill activation repo có list/query theo session + role + time range.
+- [x] [Completed] MCP route repo có list/query theo session + role + time range.
+- [x] [Completed] Mỗi repo có default newest-first sort và limit mặc định.
 
 ### 6.3 Runtime query layer
-- [ ] [Not started] Có hàm lấy timeline inspection cho một session.
-- [ ] [Not started] Có hàm lấy breakdown tool/skill/mcp bounded.
-- [ ] [Not started] Có normalize output shape để debug-dump dùng trực tiếp.
+- [x] [Completed] Có hàm lấy timeline inspection cho một session.
+- [x] [Completed] Có hàm lấy breakdown tool/skill/mcp bounded.
+- [x] [Completed] Có normalize output shape để debug-dump dùng trực tiếp.
 
 ### 6.4 Debug dump
-- [ ] [Not started] Bổ sung phần audit summary vào `DebugDump` type.
-- [ ] [Not started] Bảo toàn backward compatibility cho trường hiện có trong dump.
-- [ ] [Not started] Đảm bảo output không chứa payload nhạy cảm ngoài phạm vi cần thiết.
+- [x] [Completed] Bổ sung phần audit summary vào `DebugDump` type.
+- [x] [Completed] Bảo toàn backward compatibility cho trường hiện có trong dump.
+- [x] [Completed] Đảm bảo output không chứa payload nhạy cảm ngoài phạm vi cần thiết.
 
 ### 6.5 Validation evidence
-- [ ] [Not started] Evidence cho truy vấn session có dữ liệu.
-- [ ] [Not started] Evidence cho truy vấn session không dữ liệu.
-- [ ] [Not started] Evidence cho filter time-range.
-- [ ] [Not started] Evidence cho bounded limit.
+- [x] [Completed] Evidence cho truy vấn session có dữ liệu.
+- [x] [Completed] Evidence cho truy vấn session không dữ liệu.
+- [x] [Completed] Evidence cho filter time-range.
+- [x] [Completed] Evidence cho bounded limit.
 
 ---
 
@@ -146,16 +154,77 @@ Nâng năng lực operator-facing inspection/query trên dữ liệu audit SQLit
 
 ## 8) Risks / watchouts
 
-- [ ] [Not started] Scope creep sang dashboard/monitoring platform.
+- [x] [Completed] Scope creep sang dashboard/monitoring platform.
   - Mitigation: giữ strictly inspection-only, không thêm UI/alerting.
-- [ ] [Not started] Query không giới hạn làm chậm runtime/debug.
+- [x] [Completed] Query không giới hạn làm chậm runtime/debug.
   - Mitigation: bắt buộc `limit` mặc định và `maxLimit`.
-- [ ] [Not started] Inconsistent contract giữa repos gây khó dùng.
+- [x] [Completed] Inconsistent contract giữa repos gây khó dùng.
   - Mitigation: dùng filter type chung và checklist đồng bộ.
-- [ ] [Not started] Debug dump lộ dữ liệu quá mức cần thiết.
+- [x] [Completed] Debug dump lộ dữ liệu quá mức cần thiết.
   - Mitigation: review payload fields, ưu tiên summary thay vì raw bulk data.
-- [ ] [Not started] Output dump phình lớn theo thời gian.
+- [x] [Completed] Output dump phình lớn theo thời gian.
   - Mitigation: time window + bounded record count + profile mặc định.
+
+---
+
+### Progress Update — 2026-04-12 22:50
+- Session owner: Fullstack Agent
+- Phase đang làm: Phase 4 — Validation + docs closure
+- Trạng thái tổng quan: [x] [Completed]
+
+#### Việc đã hoàn thành
+- [x] [Completed] Bổ sung contract query bounded dùng chung cho audit repos.
+- [x] [Completed] Thêm query read path cho tool/skill/mcp audit repos.
+- [x] [Completed] Thêm runtime audit aggregation layer (`audit-query-service`).
+- [x] [Completed] Mở rộng `createDebugDump(...)` với `auditInspection` bounded profiles.
+- [x] [Completed] Thêm tests cho filter/time-range/no-data/limit + debug dump integration.
+- Evidence:
+  - `packages/shared/src/types/audit.ts`
+  - `packages/storage/src/sqlite/repositories/{tool-usage-audit-repo.ts,skill-activation-audit-repo.ts,mcp-route-audit-repo.ts}`
+  - `packages/runtime/src/diagnostics/{audit-query-service.ts,debug-dump.ts}`
+  - `packages/runtime/src/diagnostics/audit-query-service.test.ts`
+  - `packages/storage/src/sqlite/repositories/repos.test.ts`
+  - Command: `npm run check`
+  - Command: `npm run test -- packages/storage/src/sqlite/repositories/repos.test.ts packages/runtime/src/diagnostics/audit-query-service.test.ts`
+
+#### Việc đang làm
+- [x] [Completed] Cập nhật checklist và progress log.
+
+#### Blockers
+- [ ] [Blocked] Không có blocker kỹ thuật trong phạm vi slice đã phê duyệt.
+
+#### Việc tiếp theo (ưu tiên)
+1. Code review tập trung vào filter contract consistency và fail-soft behavior.
+2. QA verify `dh doctor --debug-dump` output thực tế trên repo có dữ liệu audit lớn hơn.
+3. Theo dõi nếu cần profile query inspection mới (vẫn giữ bounded scope).
+
+### Progress Update — 2026-04-12 22:59
+- Session owner: Fullstack Agent
+- Phase đang làm: Post-review fixes (important findings)
+- Trạng thái tổng quan: [x] [Completed]
+
+#### Việc đã hoàn thành
+- [x] [Completed] Làm rõ semantics summary: đổi `summary.total` -> `summary.timelineCount` để phản ánh đúng dữ liệu đã bị bounded.
+- [x] [Completed] Thêm signal rõ ràng khi profile không hỗ trợ hook query: `recentWindow` không có `sessionId` sẽ ghi `errors[]` với source `hook`.
+- [x] [Completed] Gộp helper query dùng chung cho 3 audit repos (`audit-query-utils.ts`).
+- [x] [Completed] Dọn fallback/style low-risk (`Math.trunc(limit)` khi đã guard type, bỏ lặp helper cục bộ).
+- Evidence:
+  - `packages/runtime/src/diagnostics/audit-query-service.ts`
+  - `packages/runtime/src/diagnostics/audit-query-service.test.ts`
+  - `packages/storage/src/sqlite/repositories/audit-query-utils.ts`
+  - `packages/storage/src/sqlite/repositories/{tool-usage-audit-repo.ts,skill-activation-audit-repo.ts,mcp-route-audit-repo.ts}`
+  - Command: `npm run check`
+  - Command: `npm run test -- packages/runtime/src/diagnostics/audit-query-service.test.ts packages/storage/src/sqlite/repositories/repos.test.ts`
+
+#### Việc đang làm
+- [x] [Completed] Cập nhật checklist/progress/evidence cho vòng sửa review.
+
+#### Blockers
+- [ ] [Blocked] Không có blocker kỹ thuật.
+
+#### Việc tiếp theo (ưu tiên)
+1. Code review xác nhận wording/semantics mới của `timelineCount`.
+2. QA xác nhận operator hiểu đúng limitation hook ở profile recentWindow.
 
 ---
 

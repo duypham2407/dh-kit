@@ -33,3 +33,15 @@ export type McpRouteAudit = {
 };
 
 export type HookInvocationLog = HookDecisionRecord;
+
+export type AuditQueryFilter = {
+  sessionId?: string;
+  role?: AgentRole;
+  envelopeId?: string;
+  fromTimestamp?: string;
+  toTimestamp?: string;
+  limit?: number;
+};
+
+export const DEFAULT_AUDIT_QUERY_LIMIT = 25;
+export const MAX_AUDIT_QUERY_LIMIT = 100;

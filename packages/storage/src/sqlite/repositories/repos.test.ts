@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { ChunksRepo } from "./chunks-repo.js";
 import { EmbeddingsRepo } from "./embeddings-repo.js";
 import { HookInvocationLogsRepo } from "./hook-invocation-logs-repo.js";
-import { closeDhDatabase } from "../db.js";
+import { closeDhDatabase, openDhDatabase } from "../db.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -91,6 +91,42 @@ describe("ChunksRepo", () => {
     repo.deleteByFileId("f1");
     expect(repo.listAll()).toHaveLength(1);
     expect(repo.listAll()[0]!.fileId).toBe("f2");
+  });
+
+  it("listPathInventory returns lightweight path rows", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new ChunksRepo(repoRoot);
+    const saved = repo.save({
+      fileId: "f1",
+      filePath: "src/a.ts",
+      symbolId: undefined,
+      lineStart: 1,
+      lineEnd: 10,
+      content: "a",
+      contentHash: "h-a",
+      tokenEstimate: 1,
+      language: "ts",
+    });
+
+    const inventory = repo.listPathInventory();
+    expect(inventory).toHaveLength(1);
+    expect(inventory[0]).toMatchObject({
+      id: saved.id,
+      fileId: "f1",
+      filePath: "src/a.ts",
+    });
+  });
+
+  it("updateFilePathsByChunkId updates only provided rows", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new ChunksRepo(repoRoot);
+    const c1 = repo.save({ fileId: "f1", filePath: "./src/a.ts", symbolId: undefined, lineStart: 1, lineEnd: 10, content: "a", contentHash: "ha-1", tokenEstimate: 1, language: "ts" });
+    const c2 = repo.save({ fileId: "f2", filePath: "src/b.ts", symbolId: undefined, lineStart: 1, lineEnd: 10, content: "b", contentHash: "ha-2", tokenEstimate: 1, language: "ts" });
+
+    const updated = repo.updateFilePathsByChunkId([{ chunkId: c1.id, filePath: "src/a.ts" }]);
+    expect(updated).toBe(1);
+    expect(repo.findById(c1.id)!.filePath).toBe("src/a.ts");
+    expect(repo.findById(c2.id)!.filePath).toBe("src/b.ts");
   });
 });
 
@@ -192,6 +228,25 @@ describe("EmbeddingsRepo", () => {
     ]);
     expect(rows).toHaveLength(2);
     expect(repo.countByModel("m")).toBe(2);
+  });
+
+  it("countOrphaned tracks orphan rows before and after cleanup", () => {
+    const repoRoot = makeTmpRepo();
+    const c1 = saveChunk(repoRoot, "c1");
+    const c2 = saveChunk(repoRoot, "c2");
+    const database = openDhDatabase(repoRoot);
+    const repo = new EmbeddingsRepo(repoRoot);
+    repo.save({ chunkId: c1.id, modelName: "m", vector: [1], vectorDim: 1 });
+    repo.save({ chunkId: c2.id, modelName: "m", vector: [2], vectorDim: 1 });
+
+    database.exec("PRAGMA foreign_keys = OFF");
+    database.prepare("DELETE FROM chunks WHERE id = ?").run(c1.id);
+    database.prepare("DELETE FROM chunks WHERE id = ?").run(c2.id);
+    database.exec("PRAGMA foreign_keys = ON");
+
+    expect(repo.countOrphaned()).toBe(2);
+    expect(repo.deleteOrphaned()).toBe(2);
+    expect(repo.countOrphaned()).toBe(0);
   });
 });
 

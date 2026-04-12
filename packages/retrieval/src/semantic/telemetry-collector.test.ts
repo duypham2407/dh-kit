@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { recordTelemetry, readTelemetryEvents, summarizeTelemetry } from "./telemetry-collector.js";
+import { recordTelemetry, readTelemetryEvents, summarizeTelemetry, summarizeTelemetryInWindow } from "./telemetry-collector.js";
 import { persistChunks, createEmbeddingProvider, embedAndPersist, runEmbeddingPipeline } from "./embedding-pipeline.js";
 import { semanticSearch } from "./semantic-search.js";
 import { closeDhDatabase } from "../../../storage/src/sqlite/db.js";
@@ -150,6 +150,37 @@ describe("telemetry-collector", () => {
     expect(summary.semanticSearch.strategyBreakdown["db_scan"]).toBe(1);
     expect(summary.unresolvedPaths.semantic).toBe(1);
     expect(summary.unresolvedPaths.evidence).toBe(1);
+  });
+
+  it("summarizes telemetry inside a time window", () => {
+    const repo = makeTmpRepo();
+
+    recordTelemetry(repo, {
+      kind: "semantic_path_unresolved",
+      details: {
+        chunkId: "chunk-old",
+        filePath: "../legacy/old.ts",
+        originalFilePath: "../legacy/old.ts",
+      },
+    });
+
+    const now = new Date();
+    const since = new Date(now.getTime() - 60_000).toISOString();
+    const until = new Date(now.getTime() + 60_000).toISOString();
+
+    recordTelemetry(repo, {
+      kind: "evidence_path_unresolved",
+      details: {
+        filePath: "../legacy/new.ts",
+        normalizedFilePath: null,
+        sourceTool: "semantic_search",
+        failureKind: "normalization_failed",
+      },
+    });
+
+    const windowed = summarizeTelemetryInWindow(repo, { sinceIso: since, untilIso: until });
+    expect(windowed.unresolvedPaths.evidence).toBe(1);
+    expect(windowed.unresolvedPaths.semantic).toBeLessThanOrEqual(1);
   });
 });
 

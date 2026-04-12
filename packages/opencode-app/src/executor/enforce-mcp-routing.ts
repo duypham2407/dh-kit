@@ -38,6 +38,8 @@ export function enforceMcpRoutingDetailed(
   const requiredCapabilities = options?.requiredCapabilities ?? [];
   const supportedContractVersions = options?.supportedContractVersions ?? ["v1"];
   const runtimeStateRepoRoot = options?.runtimeStateRepoRoot;
+  const staleRuntimeFailSafe = options?.staleRuntimeFailSafe ?? "degrade_or_fallback";
+  const missingRuntimeFailSafe = options?.missingRuntimeFailSafe ?? "degrade_or_fallback";
 
   const registryByName = new Map<string, McpRegistryEntry>(
     DEFAULT_MCP_REGISTRY.map((entry) => [entry.id, entry]),
@@ -107,12 +109,84 @@ export function enforceMcpRoutingDetailed(
 
     const runtimeRecord = runtimeRecordFor(mcpName, options?.runtimeSnapshot);
     if (!runtimeRecord) {
-      reasons[mcpName] = [...(reasons[mcpName] ?? []), "no_runtime_status"];
-      decisions[mcpName] = "allow";
-      warnings.push(`No runtime status for '${mcpName}', using metadata-only routing.`);
-      applyRuntimeStateTouch(entry, runtimeStateRepoRoot, runtimeStates, warnings);
-      selected.push(mcpName);
+      if (missingRuntimeFailSafe === "allow_with_warning") {
+        reasons[mcpName] = [...(reasons[mcpName] ?? []), "no_runtime_status"];
+        decisions[mcpName] = "allow";
+        warnings.push(`No runtime status for '${mcpName}', using metadata-only routing.`);
+        applyRuntimeStateTouch(entry, runtimeStateRepoRoot, runtimeStates, warnings);
+        selected.push(mcpName);
+      } else {
+        blockMcp(mcpName, "missing_runtime_signal");
+        if (reasons[mcpName]) {
+          delete reasons[mcpName];
+        }
+        const fallback = pickFallback(entry, blocked, options);
+        if (fallback) {
+          const fallbackEntry = registryByName.get(fallback);
+          selected.push(fallback);
+          decisions[fallback] = "modify";
+          reasons[fallback] = [...(reasons[fallback] ?? []), "fallback_applied", "missing_runtime_signal"];
+          warnings.push(`Fail-safe fallback applied: '${mcpName}' missing runtime signal -> '${fallback}'.`);
+          if (fallbackEntry) {
+            applyRuntimeStateTouch(fallbackEntry, runtimeStateRepoRoot, runtimeStates, warnings);
+          }
+        } else {
+          warnings.push(`MCP '${mcpName}' missing runtime signal and no fallback is available.`);
+        }
+      }
       continue;
+    }
+
+    if (runtimeRecord.signalMissing && missingRuntimeFailSafe === "degrade_or_fallback") {
+      blockMcp(mcpName, "missing_runtime_signal");
+      if (reasons[mcpName]) {
+        delete reasons[mcpName];
+      }
+      const fallback = pickFallback(entry, blocked, options);
+      if (fallback) {
+        const fallbackEntry = registryByName.get(fallback);
+        selected.push(fallback);
+        decisions[fallback] = "modify";
+        reasons[fallback] = [...(reasons[fallback] ?? []), "fallback_applied", "missing_runtime_signal"];
+        warnings.push(`Fail-safe fallback applied: '${mcpName}' missing runtime signal -> '${fallback}'.`);
+        if (fallbackEntry) {
+          applyRuntimeStateTouch(fallbackEntry, runtimeStateRepoRoot, runtimeStates, warnings);
+        }
+      } else {
+        warnings.push(`MCP '${mcpName}' missing runtime signal and no fallback is available.`);
+      }
+      continue;
+    }
+
+    if (runtimeRecord.stale && staleRuntimeFailSafe === "degrade_or_fallback") {
+      blockMcp(mcpName, "status_stale");
+      if (reasons[mcpName]) {
+        delete reasons[mcpName];
+      }
+      const fallback = pickFallback(entry, blocked, options);
+      if (fallback) {
+        const fallbackEntry = registryByName.get(fallback);
+        selected.push(fallback);
+        decisions[fallback] = "modify";
+        reasons[fallback] = [...(reasons[fallback] ?? []), "fallback_applied", "status_stale"];
+        warnings.push(`Fail-safe fallback applied: '${mcpName}' stale runtime status -> '${fallback}'.`);
+        if (fallbackEntry) {
+          applyRuntimeStateTouch(fallbackEntry, runtimeStateRepoRoot, runtimeStates, warnings);
+        }
+      } else {
+        warnings.push(`MCP '${mcpName}' runtime status is stale and no fallback is available.`);
+      }
+      continue;
+    }
+
+    if (runtimeRecord.signalMissing && missingRuntimeFailSafe === "allow_with_warning") {
+      reasons[mcpName] = [...(reasons[mcpName] ?? []), "missing_runtime_signal"];
+      warnings.push(`MCP '${mcpName}' runtime signal is missing; continuing with caution.`);
+    }
+
+    if (runtimeRecord.stale && staleRuntimeFailSafe === "allow_with_warning") {
+      reasons[mcpName] = [...(reasons[mcpName] ?? []), "status_stale"];
+      warnings.push(`MCP '${mcpName}' runtime status is stale; continuing with caution.`);
     }
 
     if (runtimeRecord.status === "unavailable") {
@@ -278,6 +352,8 @@ function pickFallback(
   options?: McpRoutingDecisionOptions,
 ): string | undefined {
   const fallbacks = fallbackTargets(entry);
+  const staleRuntimeFailSafe = options?.staleRuntimeFailSafe ?? "degrade_or_fallback";
+  const missingRuntimeFailSafe = options?.missingRuntimeFailSafe ?? "degrade_or_fallback";
   for (const fallback of fallbacks) {
     if (blocked.includes(fallback)) {
       continue;
@@ -300,9 +376,18 @@ function pickFallback(
 
     const runtime = runtimeRecordFor(fallback, options?.runtimeSnapshot);
     if (!runtime) {
+      if (missingRuntimeFailSafe === "degrade_or_fallback") {
+        continue;
+      }
       return fallback;
     }
     if (runtime.status === "unavailable" || runtime.status === "needs_auth") {
+      continue;
+    }
+    if (staleRuntimeFailSafe === "degrade_or_fallback" && runtime.stale) {
+      continue;
+    }
+    if (missingRuntimeFailSafe === "degrade_or_fallback" && runtime.signalMissing) {
       continue;
     }
 
@@ -332,6 +417,8 @@ function pickGlobalSafeFallback(
   const blockedSet = new Set(blocked);
   const requiredCapabilities = options?.requiredCapabilities ?? [];
   const supportedContractVersions = options?.supportedContractVersions ?? ["v1"];
+  const staleRuntimeFailSafe = options?.staleRuntimeFailSafe ?? "degrade_or_fallback";
+  const missingRuntimeFailSafe = options?.missingRuntimeFailSafe ?? "degrade_or_fallback";
 
   const orderedRegistry = [...DEFAULT_MCP_REGISTRY].sort((left, right) => {
     if (right.priority !== left.priority) {
@@ -354,7 +441,16 @@ function pickGlobalSafeFallback(
       continue;
     }
     const runtime = runtimeRecordFor(candidate.id, options?.runtimeSnapshot);
+    if (!runtime && missingRuntimeFailSafe === "degrade_or_fallback") {
+      continue;
+    }
     if (runtime && (runtime.status === "unavailable" || runtime.status === "needs_auth")) {
+      continue;
+    }
+    if (runtime && staleRuntimeFailSafe === "degrade_or_fallback" && runtime.stale) {
+      continue;
+    }
+    if (runtime && missingRuntimeFailSafe === "degrade_or_fallback" && runtime.signalMissing) {
       continue;
     }
     return candidate.id;

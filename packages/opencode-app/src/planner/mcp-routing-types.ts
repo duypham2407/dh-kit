@@ -15,6 +15,12 @@ export type McpRuntimeRecord = {
   status: McpRoutingStatus;
   serverKey?: string;
   authReady?: boolean;
+  observedAt?: string;
+  freshnessWindowMs?: number;
+  stale?: boolean;
+  transitionReason?: string;
+  transitionFrom?: McpRoutingStatus;
+  signalMissing?: boolean;
 };
 
 export type McpRuntimeSnapshot = Record<string, McpRuntimeRecord>;
@@ -35,4 +41,6 @@ export type McpRoutingDecisionOptions = {
   requiredCapabilities?: string[];
   supportedContractVersions?: ExtensionContractVersion[];
   runtimeStateRepoRoot?: string;
+  staleRuntimeFailSafe?: "allow_with_warning" | "degrade_or_fallback";
+  missingRuntimeFailSafe?: "allow_with_warning" | "degrade_or_fallback";
 };

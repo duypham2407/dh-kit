@@ -37,6 +37,47 @@ describe("chooseMcpsDetailed", () => {
     expect(hasNoRuntimeStatus).toBe(true);
   });
 
+  it("rejects missing runtime signal by default fail-safe", () => {
+    const decision = chooseMcpsDetailed(makeEnvelope({ role: "tester" }), "browser ui", {
+      runtimeSnapshot: {
+        "chrome-devtools": { status: "available", signalMissing: true },
+      },
+      missingRuntimeFailSafe: "degrade_or_fallback",
+      maxSelected: 10,
+    });
+
+    expect(decision.selected).not.toContain("chrome-devtools");
+    expect(decision.rejected["chrome-devtools"]).toContain("missing_runtime_signal");
+  });
+
+  it("rejects stale runtime records by default fail-safe", () => {
+    const decision = chooseMcpsDetailed(makeEnvelope({ role: "tester" }), "browser ui", {
+      runtimeSnapshot: {
+        "chrome-devtools": { status: "available", stale: true },
+      },
+      staleRuntimeFailSafe: "degrade_or_fallback",
+      maxSelected: 10,
+    });
+
+    expect(decision.selected).not.toContain("chrome-devtools");
+    expect(decision.rejected["chrome-devtools"]).toContain("status_stale");
+  });
+
+  it("allows stale/missing runtime records in warning mode", () => {
+    const decision = chooseMcpsDetailed(makeEnvelope({ role: "tester" }), "browser ui", {
+      runtimeSnapshot: {
+        "chrome-devtools": { status: "available", stale: true, signalMissing: true },
+      },
+      staleRuntimeFailSafe: "allow_with_warning",
+      missingRuntimeFailSafe: "allow_with_warning",
+      maxSelected: 10,
+    });
+
+    expect(decision.selected).toContain("chrome-devtools");
+    expect(decision.reasons["chrome-devtools"]).toContain("status_stale");
+    expect(decision.reasons["chrome-devtools"]).toContain("missing_runtime_signal");
+  });
+
   it("keeps legacy adapter output as string list", () => {
     const selected = chooseMcps(makeEnvelope(), "browser ui flow");
     expect(Array.isArray(selected)).toBe(true);

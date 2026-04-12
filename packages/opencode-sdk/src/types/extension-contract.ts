@@ -34,7 +34,9 @@ export type ExtensionReasonCode =
   | "no_auth_context"
   | "entry_missing"
   | "contract_version_mismatch"
-  | "compat_check_failed";
+  | "compat_check_failed"
+  | "status_stale"
+  | "missing_runtime_signal";
 
 export type ExtensionRuntimeState = "first" | "updated" | "same";
 

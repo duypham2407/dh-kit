@@ -27,6 +27,8 @@ export function chooseMcpsDetailed(
   const maxSelected = options?.maxSelected ?? 4;
   const requiredCapabilities = options?.requiredCapabilities ?? [];
   const supportedContractVersions = options?.supportedContractVersions ?? ["v1"];
+  const staleRuntimeFailSafe = options?.staleRuntimeFailSafe ?? "allow_with_warning";
+  const missingRuntimeFailSafe = options?.missingRuntimeFailSafe ?? "allow_with_warning";
   const selected: string[] = [];
   const reasons: Record<string, McpReasonCode[]> = {};
   const rejected: Record<string, McpReasonCode[]> = {};
@@ -75,7 +77,31 @@ export function chooseMcpsDetailed(
 
       const runtimeStatus = runtimeStatusFor(entry.id, options?.runtimeSnapshot);
       if (!runtimeStatus) {
-        entryReasons.push("no_runtime_status");
+        if (missingRuntimeFailSafe === "allow_with_warning") {
+          entryReasons.push("no_runtime_status");
+        } else {
+          rejected[entry.id] = [...entryReasons, "missing_runtime_signal"];
+          return null;
+        }
+      }
+
+      const runtimeRecord = options?.runtimeSnapshot?.[entry.id];
+      if (runtimeRecord?.signalMissing && missingRuntimeFailSafe === "degrade_or_fallback") {
+        rejected[entry.id] = [...entryReasons, "missing_runtime_signal"];
+        return null;
+      }
+
+      if (runtimeRecord?.signalMissing && missingRuntimeFailSafe === "allow_with_warning") {
+        entryReasons.push("missing_runtime_signal");
+      }
+
+      if (runtimeRecord?.stale && staleRuntimeFailSafe === "degrade_or_fallback") {
+        rejected[entry.id] = [...entryReasons, "status_stale"];
+        return null;
+      }
+
+      if (runtimeRecord?.stale && staleRuntimeFailSafe === "allow_with_warning") {
+        entryReasons.push("status_stale");
       }
 
       return {
@@ -131,6 +157,8 @@ function pickPlannerSafeFallback(
 ): string | undefined {
   const requiredCapabilities = options?.requiredCapabilities ?? [];
   const supportedContractVersions = options?.supportedContractVersions ?? ["v1"];
+  const staleRuntimeFailSafe = options?.staleRuntimeFailSafe ?? "allow_with_warning";
+  const missingRuntimeFailSafe = options?.missingRuntimeFailSafe ?? "allow_with_warning";
   const sorted = [...DEFAULT_MCP_REGISTRY].sort((left, right) => {
     if (right.priority !== left.priority) {
       return right.priority - left.priority;
@@ -154,6 +182,21 @@ function pickPlannerSafeFallback(
     if (!hasAllRequiredCapabilities(entry, requiredCapabilities)) {
       continue;
     }
+
+    const runtimeRecord = options?.runtimeSnapshot?.[entry.id];
+    if (!runtimeRecord && missingRuntimeFailSafe === "degrade_or_fallback") {
+      continue;
+    }
+    if (runtimeRecord?.signalMissing && missingRuntimeFailSafe === "degrade_or_fallback") {
+      continue;
+    }
+    if (runtimeRecord?.stale && staleRuntimeFailSafe === "degrade_or_fallback") {
+      continue;
+    }
+    if (runtimeRecord && (runtimeRecord.status === "unavailable" || runtimeRecord.status === "needs_auth")) {
+      continue;
+    }
+
     return entry.id;
   }
 

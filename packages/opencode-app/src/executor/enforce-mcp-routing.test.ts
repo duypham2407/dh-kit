@@ -52,6 +52,32 @@ describe("enforceMcpRoutingDetailed", () => {
     expect(decision.rejected["chrome-devtools"]).toContain("needs_auth");
   });
 
+  it("applies fail-safe fallback when runtime signal is missing", () => {
+    const decision = enforceMcpRoutingDetailed(makeEnvelope(), "browser ui", {
+      runtimeSnapshot: {
+        "chrome-devtools": { status: "available", signalMissing: true },
+        playwright: { status: "available", signalMissing: false },
+      },
+    });
+
+    expect(decision.blocked).toContain("chrome-devtools");
+    expect(decision.rejected["chrome-devtools"]).toContain("missing_runtime_signal");
+    expect(decision.selected).toContain("playwright");
+  });
+
+  it("applies fail-safe fallback when runtime status is stale", () => {
+    const decision = enforceMcpRoutingDetailed(makeEnvelope(), "browser ui", {
+      runtimeSnapshot: {
+        "chrome-devtools": { status: "available", stale: true },
+        playwright: { status: "available", stale: false },
+      },
+    });
+
+    expect(decision.blocked).toContain("chrome-devtools");
+    expect(decision.rejected["chrome-devtools"]).toContain("status_stale");
+    expect(decision.selected).toContain("playwright");
+  });
+
   it("allows degraded MCP with warning when policy permits", () => {
     const decision = enforceMcpRoutingDetailed(makeEnvelope(), "browser", {
       runtimeSnapshot: {
@@ -106,6 +132,19 @@ describe("enforceMcpRoutingDetailed", () => {
     const rejectedReasons = Object.values(decision.rejected).flat();
     expect(rejectedReasons).toContain("lane_mismatch");
     expect(rejectedReasons).toContain("capability_denied");
+  });
+
+  it("keeps metadata-only allowance when missing-signal fail-safe is allow_with_warning", () => {
+    const decision = enforceMcpRoutingDetailed(makeEnvelope(), "browser ui", {
+      missingRuntimeFailSafe: "allow_with_warning",
+      runtimeSnapshot: {
+        "chrome-devtools": { status: "available", signalMissing: true },
+      },
+    });
+
+    expect(decision.blocked).not.toContain("chrome-devtools");
+    expect(decision.selected).toContain("chrome-devtools");
+    expect(decision.reasons["chrome-devtools"]).toContain("missing_runtime_signal");
   });
 
   it("blocks missing entry metadata with stable reason code", () => {

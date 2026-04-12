@@ -45,15 +45,15 @@
 
 ## 3) Definition of Done (DoD)
 
-- [ ] [Not started] Có inventory baseline đầy đủ các touchpoint quyết định extension liên quan task này.
-- [ ] [Not started] Chốt và ghi rõ tập fingerprint input ổn định (không chứa dữ liệu transient).
-- [ ] [Not started] Chốt contract persisted record/store với version `v1`.
-- [ ] [Not started] Có JSON runtime-state store đọc/ghi được trong flow thực tế.
-- [ ] [Not started] Có API touch/classify trả đúng `first/same/updated`.
-- [ ] [Not started] Tích hợp vào executor theo hướng additive, không đổi semantics planner/policy cốt lõi.
-- [ ] [Not started] Bao phủ validation cho: `first`, `same`, `updated`, isolation đa extension id, failure degrade bounded.
-- [ ] [Not started] Chạy `npm run check` và `npm run test` pass cho thay đổi liên quan.
-- [ ] [Not started] Tài liệu/evidence được cập nhật, xác nhận không scope creep sang plugin parity/metadata subsystem rộng.
+- [x] [Completed] Có inventory baseline đầy đủ các touchpoint quyết định extension liên quan task này.
+- [x] [Completed] Chốt và ghi rõ tập fingerprint input ổn định (không chứa dữ liệu transient).
+- [x] [Completed] Chốt contract persisted record/store với version `v1`.
+- [x] [Completed] Có JSON runtime-state store đọc/ghi được trong flow thực tế.
+- [x] [Completed] Có API touch/classify trả đúng `first/same/updated`.
+- [x] [Completed] Tích hợp vào executor theo hướng additive, không đổi semantics planner/policy cốt lõi.
+- [x] [Completed] Bao phủ validation cho: `first`, `same`, `updated`, isolation đa extension id, failure degrade bounded.
+- [x] [Completed] Chạy `npm run check` và `npm run test` pass cho thay đổi liên quan.
+- [x] [Completed] Tài liệu/evidence được cập nhật, xác nhận không scope creep sang plugin parity/metadata subsystem rộng.
 
 ---
 
@@ -78,65 +78,65 @@
 
 ## Phase 0 — Baseline inventory touchpoints quyết định extension
 
-- [ ] [Not started] Lập bản đồ touchpoints hiện có ở:
+- [x] [Completed] Lập bản đồ touchpoints hiện có ở:
   - `packages/opencode-app/src/registry/mcp-registry.ts`
   - `packages/opencode-app/src/planner/choose-mcps.ts`
   - `packages/opencode-app/src/executor/enforce-mcp-routing.ts`
   - `packages/opencode-app/src/planner/mcp-routing-types.ts`
   - `packages/runtime/src/session/` (persistence precedent)
-- [ ] [Not started] Ghi rõ điểm chạm nào là nơi an toàn nhất để gọi touch runtime-state.
-- [ ] [Not started] Liệt kê dữ liệu extension hiện có phục vụ fingerprint (id, contractVersion, entry, capabilities, priority, lanes, roles).
-- [ ] [Not started] Xác nhận baseline reality trong notes: contract hardening đã hoàn tất; `ExtensionRuntimeState` mới ở type level.
+- [x] [Completed] Ghi rõ điểm chạm nào là nơi an toàn nhất để gọi touch runtime-state.
+- [x] [Completed] Liệt kê dữ liệu extension hiện có phục vụ fingerprint (id, contractVersion, entry, capabilities, priority, lanes, roles).
+- [x] [Completed] Xác nhận baseline reality trong notes: contract hardening đã hoàn tất; `ExtensionRuntimeState` mới ở type level.
 
 ## Phase 1 — Fingerprint input freeze + persisted record contract
 
-- [ ] [Not started] Chốt whitelist fingerprint inputs ổn định (không bao gồm available/degraded/needs_auth, timestamp, warning).
-- [ ] [Not started] Chốt quy tắc normalize deterministic (đặc biệt cho mảng capabilities/lanes/roles).
-- [ ] [Not started] Chốt schema `PersistedExtensionRuntimeRecord` tối thiểu:
+- [x] [Completed] Chốt whitelist fingerprint inputs ổn định (không bao gồm available/degraded/needs_auth, timestamp, warning).
+- [x] [Completed] Chốt quy tắc normalize deterministic (đặc biệt cho mảng capabilities/lanes/roles).
+- [x] [Completed] Chốt schema `PersistedExtensionRuntimeRecord` tối thiểu:
   - `version: "v1"`
   - `extensionId`
   - `fingerprint`
   - `lastSeenAt?`
   - `loadCount?`
-- [ ] [Not started] Chốt schema `ExtensionRuntimeStateStore`:
+- [x] [Completed] Chốt schema `ExtensionRuntimeStateStore`:
   - `version: "v1"`
   - `records: Record<string, PersistedExtensionRuntimeRecord>`
-- [ ] [Not started] Chốt quy tắc degrade khi store unreadable/malformed/unwritable (không làm gãy flow chính).
+- [x] [Completed] Chốt quy tắc degrade khi store unreadable/malformed/unwritable (không làm gãy flow chính).
 
 ## Phase 2 — Implement JSON runtime-state store
 
-- [ ] [Not started] Tạo module store runtime-state chuyên trách (runtime-owned).
-- [ ] [Not started] Implement read path có guard schema/version.
-- [ ] [Not started] Implement write path snapshot đầy đủ, tránh update rời rạc.
-- [ ] [Not started] Implement xử lý missing file / empty store / malformed JSON theo hướng bounded warning.
-- [ ] [Not started] Thêm unit tests cho read/write/version/malformed handling.
+- [x] [Completed] Tạo module store runtime-state chuyên trách (runtime-owned).
+- [x] [Completed] Implement read path có guard schema/version.
+- [x] [Completed] Implement write path snapshot đầy đủ, tránh update rời rạc.
+- [x] [Completed] Implement xử lý missing file / empty store / malformed JSON theo hướng bounded warning.
+- [x] [Completed] Thêm unit tests cho read/write/version/malformed handling.
 
 ## Phase 3 — State classification / touch path (`first` / `same` / `updated`)
 
-- [ ] [Not started] Tạo module fingerprint derivation từ dữ liệu extension đã freeze.
-- [ ] [Not started] Tạo API touch thống nhất (derive -> read prior -> classify -> persist -> return result).
-- [ ] [Not started] Logic classify bắt buộc:
+- [x] [Completed] Tạo module fingerprint derivation từ dữ liệu extension đã freeze.
+- [x] [Completed] Tạo API touch thống nhất (derive -> read prior -> classify -> persist -> return result).
+- [x] [Completed] Logic classify bắt buộc:
   - Không có prior record -> `first`
   - Có prior và fingerprint giống -> `same`
   - Có prior và fingerprint khác -> `updated`
-- [ ] [Not started] Bảo đảm isolation theo `extensionId` (không ghi đè chéo giữa extension).
-- [ ] [Not started] Trả warning có cấu trúc khi persistence lỗi, không throw phá vỡ main path.
-- [ ] [Not started] Thêm tests cho 3 trạng thái + multi-extension isolation + failure degrade.
+- [x] [Completed] Bảo đảm isolation theo `extensionId` (không ghi đè chéo giữa extension).
+- [x] [Completed] Trả warning có cấu trúc khi persistence lỗi, không throw phá vỡ main path.
+- [x] [Completed] Thêm tests cho 3 trạng thái + multi-extension isolation + failure degrade.
 
 ## Phase 4 — Additive executor/report integration
 
-- [ ] [Not started] Chèn touch runtime-state tại điểm enforcement ổn định trong executor.
-- [ ] [Not started] Surface kết quả runtime-state ở dạng additive (warning/audit/report field), không đổi planner scoring.
-- [ ] [Not started] Giữ backward compatibility với output hiện có của executor/caller.
-- [ ] [Not started] Bổ sung/regression test cho executor integration.
+- [x] [Completed] Chèn touch runtime-state tại điểm enforcement ổn định trong executor.
+- [x] [Completed] Surface kết quả runtime-state ở dạng additive (warning/audit/report field), không đổi planner scoring.
+- [x] [Completed] Giữ backward compatibility với output hiện có của executor/caller.
+- [x] [Completed] Bổ sung/regression test cho executor integration.
 
 ## Phase 5 — Validation + docs closure
 
-- [ ] [Not started] Chạy `npm run check` và lưu evidence.
-- [ ] [Not started] Chạy `npm run test` và lưu evidence.
-- [ ] [Not started] Đối chiếu AC trong scope/solution, đánh dấu pass/fail từng tiêu chí.
-- [ ] [Not started] Cập nhật docs evidence: input freeze, store schema, classify behavior, failure handling.
-- [ ] [Not started] Xác nhận rõ không có thay đổi ngoài phạm vi (không plugin parity, không metadata subsystem rộng).
+- [x] [Completed] Chạy `npm run check` và lưu evidence.
+- [x] [Completed] Chạy `npm run test` và lưu evidence.
+- [x] [Completed] Đối chiếu AC trong scope/solution, đánh dấu pass/fail từng tiêu chí.
+- [x] [Completed] Cập nhật docs evidence: input freeze, store schema, classify behavior, failure handling.
+- [x] [Completed] Xác nhận rõ không có thay đổi ngoài phạm vi (không plugin parity, không metadata subsystem rộng).
 
 ---
 
@@ -159,25 +159,25 @@
 
 ## 7) Risks / watchouts
 
-- [ ] [Not started] **Fingerprint drift do input không ổn định**.
+- [x] [Completed] **Fingerprint drift do input không ổn định**.
   - Mitigation: chỉ dùng stable declared fields + normalize thứ tự mảng.
-- [ ] [Not started] **Race/overwrite khi ghi JSON store**.
+- [x] [Completed] **Race/overwrite khi ghi JSON store**.
   - Mitigation: serialize write trong một helper duy nhất, snapshot write toàn store.
-- [ ] [Not started] **Persistence lỗi làm hỏng core flow**.
+- [x] [Completed] **Persistence lỗi làm hỏng core flow**.
   - Mitigation: bounded warning/fallback, không fail hard execution path.
-- [ ] [Not started] **Scope creep sang metadata subsystem rộng hoặc plugin-platform parity**.
+- [x] [Completed] **Scope creep sang metadata subsystem rộng hoặc plugin-platform parity**.
   - Mitigation: review gate theo out-of-scope list, reject mở rộng không thuộc task.
-- [ ] [Not started] **Runtime-state vô tình tác động planner semantics**.
+- [x] [Completed] **Runtime-state vô tình tác động planner semantics**.
   - Mitigation: chỉ consume tại executor/report dạng additive.
 
 ---
 
 ## 8) Blocker register (khởi tạo)
 
-- [ ] [Blocked] Chưa có blocker tại thời điểm khởi tạo checklist.
-  - Owner: TBD
-  - ETA: TBD
-  - Workaround: TBD
+- [x] [Completed] Chưa có blocker tại thời điểm khởi tạo checklist.
+  - Owner: N/A
+  - ETA: N/A
+  - Workaround: N/A
 
 ---
 
@@ -212,6 +212,52 @@
 3.
 ```
 
+### Progress Update — 2026-04-12 16:30
+- Session owner: Fullstack Agent
+- Phase đang làm: Phase 5 — Validation + docs closure
+- Trạng thái tổng quan: [x] [Completed]
+
+#### Việc đã hoàn thành
+- [x] [Completed] Phase 0 baseline inventory + freeze fingerprint/store contracts.
+- [x] [Completed] Phase 1-3 implementation: fingerprint derivation, JSON store `v1`, touch/classify `first|same|updated`, bounded warnings.
+- [x] [Completed] Phase 4 additive integration tại executor/report boundary, giữ nguyên planner semantics.
+- [x] [Completed] Phase 5 validation + evidence capture.
+- Evidence:
+  - Files: 
+    - `packages/runtime/src/extensions/extension-fingerprint.ts`
+    - `packages/runtime/src/extensions/extension-runtime-state-store.ts`
+    - `packages/runtime/src/extensions/touch-extension-state.ts`
+    - `packages/opencode-app/src/executor/enforce-mcp-routing.ts`
+    - `packages/opencode-app/src/planner/mcp-routing-types.ts`
+    - `packages/opencode-app/src/workflows/delivery.ts`
+    - `packages/opencode-app/src/workflows/migration.ts`
+  - Tests:
+    - `packages/runtime/src/extensions/extension-fingerprint.test.ts`
+    - `packages/runtime/src/extensions/extension-runtime-state-store.test.ts`
+    - `packages/runtime/src/extensions/touch-extension-state.test.ts`
+    - `packages/opencode-app/src/executor/enforce-mcp-routing.test.ts`
+  - Commands:
+    - `npm run check` (pass)
+    - `npm run test` (pass, 304 passed / 4 skipped)
+  - Workflow evidence records:
+    - `ev-min-ext-runtime-check-20260412`
+    - `ev-min-ext-runtime-test-20260412`
+    - `ev-min-ext-runtime-rule-scan-unavailable-20260412`
+
+#### Việc đang làm
+- [x] [Completed] Không còn item in-progress.
+
+#### Blockers
+- [x] [Completed] Không có blocker active.
+
+#### Rủi ro mới phát sinh
+- Không phát sinh rủi ro mới ngoài risk đã theo dõi trong checklist.
+
+#### Việc tiếp theo (1-3 mục ưu tiên)
+1. Chuyển sang code review/QA theo workflow lane nếu được yêu cầu.
+2. Theo dõi phản hồi QA cho failure-path edge cases nếu cần tăng cường.
+3. Giữ phạm vi: không mở rộng sang plugin parity/metadata subsystem.
+
 ---
 
 ## 10) Resume quick-start (cho session kế tiếp)
@@ -230,8 +276,8 @@
 
 ## 11) Snapshot khởi tạo trạng thái
 
-- Trạng thái tổng thể task: `[ ] [In progress]`
-- Phase đang active: `Phase 0 — Baseline inventory touchpoints quyết định extension`
+- Trạng thái tổng thể task: `[x] [Completed]`
+- Phase đang active: `Phase 5 — Validation + docs closure (completed)`
 - Ghi chú thực tế DH:
   - Extension contract hardening đã complete.
   - `ExtensionRuntimeState` hiện tồn tại ở type level, chưa có persisted runtime wiring.

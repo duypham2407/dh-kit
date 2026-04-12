@@ -103,7 +103,9 @@ export async function runDeliveryWorkflow(input: {
   });
 
   const handoff = buildHandoff({ lane: "delivery", fromRole: "architect", toRole: "implementer", stage: input.stage });
-  const mcpDecision = enforceMcpRoutingDetailed(input.envelope, input.objective);
+  const mcpDecision = enforceMcpRoutingDetailed(input.envelope, input.objective, {
+    runtimeStateRepoRoot: input.repoRoot,
+  });
 
   audit.recordRoleOutput(input.envelope, coordinator);
   audit.recordRoleOutput(input.envelope, analyst);
@@ -136,6 +138,7 @@ export async function runDeliveryWorkflow(input: {
       decisions: mcpDecision.decisions,
       reasons: mcpDecision.reasons,
       rejected: mcpDecision.rejected,
+      runtimeStates: mcpDecision.runtimeStates,
     },
   });
   audit.recordHookDecision({

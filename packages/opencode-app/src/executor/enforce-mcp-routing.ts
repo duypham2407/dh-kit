@@ -1,4 +1,5 @@
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
+import type { ExtensionSpec } from "../../../opencode-sdk/src/index.js";
 import { chooseMcpsDetailed } from "../planner/choose-mcps.js";
 import { DEFAULT_MCP_REGISTRY } from "../registry/mcp-registry.js";
 import {
@@ -13,6 +14,7 @@ import type {
   McpRoutingDecision,
   McpRoutingDecisionOptions,
 } from "../planner/mcp-routing-types.js";
+import { touchExtensionState } from "../../../runtime/src/extensions/touch-extension-state.js";
 
 export function enforceMcpRouting(envelope: ExecutionEnvelopeState, intent: string): string[] {
   return enforceMcpRoutingDetailed(envelope, intent, {
@@ -32,8 +34,10 @@ export function enforceMcpRoutingDetailed(
   const blocked = [...planned.blocked];
   const warnings = [...planned.warnings];
   const selected: string[] = [];
+  const runtimeStates: Record<string, { state: "first" | "updated" | "same"; fingerprint: string }> = {};
   const requiredCapabilities = options?.requiredCapabilities ?? [];
   const supportedContractVersions = options?.supportedContractVersions ?? ["v1"];
+  const runtimeStateRepoRoot = options?.runtimeStateRepoRoot;
 
   const registryByName = new Map<string, McpRegistryEntry>(
     DEFAULT_MCP_REGISTRY.map((entry) => [entry.id, entry]),
@@ -106,6 +110,7 @@ export function enforceMcpRoutingDetailed(
       reasons[mcpName] = [...(reasons[mcpName] ?? []), "no_runtime_status"];
       decisions[mcpName] = "allow";
       warnings.push(`No runtime status for '${mcpName}', using metadata-only routing.`);
+      applyRuntimeStateTouch(entry, runtimeStateRepoRoot, runtimeStates, warnings);
       selected.push(mcpName);
       continue;
     }
@@ -117,10 +122,14 @@ export function enforceMcpRoutingDetailed(
       }
       const fallback = pickFallback(entry, blocked, options);
       if (fallback) {
+        const fallbackEntry = registryByName.get(fallback);
         selected.push(fallback);
         decisions[fallback] = "modify";
         reasons[fallback] = [...(reasons[fallback] ?? []), "fallback_applied", "status_unavailable"];
         warnings.push(`Fallback applied: '${mcpName}' unavailable -> '${fallback}'.`);
+        if (fallbackEntry) {
+          applyRuntimeStateTouch(fallbackEntry, runtimeStateRepoRoot, runtimeStates, warnings);
+        }
       } else {
         warnings.push(`No fallback available for unavailable MCP '${mcpName}'.`);
       }
@@ -134,10 +143,14 @@ export function enforceMcpRoutingDetailed(
       }
       const fallback = pickFallback(entry, blocked, options);
       if (fallback) {
+        const fallbackEntry = registryByName.get(fallback);
         selected.push(fallback);
         decisions[fallback] = "modify";
         reasons[fallback] = [...(reasons[fallback] ?? []), "fallback_applied", "needs_auth"];
         warnings.push(`Fallback applied: '${mcpName}' needs auth -> '${fallback}'.`);
+        if (fallbackEntry) {
+          applyRuntimeStateTouch(fallbackEntry, runtimeStateRepoRoot, runtimeStates, warnings);
+        }
       } else {
         warnings.push(`MCP '${mcpName}' needs auth and has no fallback.`);
       }
@@ -151,10 +164,14 @@ export function enforceMcpRoutingDetailed(
       }
       const fallback = pickFallback(entry, blocked, options);
       if (fallback) {
+        const fallbackEntry = registryByName.get(fallback);
         selected.push(fallback);
         decisions[fallback] = "modify";
         reasons[fallback] = [...(reasons[fallback] ?? []), "fallback_applied", "requires_auth"];
         warnings.push(`Fallback applied: '${mcpName}' auth not ready -> '${fallback}'.`);
+        if (fallbackEntry) {
+          applyRuntimeStateTouch(fallbackEntry, runtimeStateRepoRoot, runtimeStates, warnings);
+        }
       } else {
         warnings.push(`MCP '${mcpName}' requires auth and no non-auth fallback is available.`);
       }
@@ -186,6 +203,7 @@ export function enforceMcpRoutingDetailed(
     }
 
     decisions[mcpName] = decisions[mcpName] ?? "allow";
+    applyRuntimeStateTouch(entry, runtimeStateRepoRoot, runtimeStates, warnings);
     selected.push(mcpName);
   }
 
@@ -197,6 +215,10 @@ export function enforceMcpRoutingDetailed(
       dedupSelected.push(safeFallback);
       decisions[safeFallback] = "modify";
       reasons[safeFallback] = [...(reasons[safeFallback] ?? []), "fallback_applied"];
+      const fallbackEntry = registryByName.get(safeFallback);
+      if (fallbackEntry) {
+        applyRuntimeStateTouch(fallbackEntry, runtimeStateRepoRoot, runtimeStates, warnings);
+      }
     } else {
       warnings.push("All selected MCPs were blocked and no safe fallback is available.");
     }
@@ -209,6 +231,44 @@ export function enforceMcpRoutingDetailed(
     decisions,
     reasons,
     rejected,
+    runtimeStates,
+  };
+}
+
+function applyRuntimeStateTouch(
+  entry: McpRegistryEntry,
+  repoRoot: string | undefined,
+  runtimeStates: Record<string, { state: "first" | "updated" | "same"; fingerprint: string }>,
+  warnings: string[],
+): void {
+  if (!repoRoot) {
+    return;
+  }
+  if (runtimeStates[entry.id]) {
+    return;
+  }
+  const result = touchExtensionState({
+    repoRoot,
+    spec: toExtensionSpec(entry),
+  });
+  runtimeStates[entry.id] = {
+    state: result.state,
+    fingerprint: result.fingerprint,
+  };
+  if (result.warning) {
+    warnings.push(result.warning);
+  }
+}
+
+function toExtensionSpec(entry: McpRegistryEntry): ExtensionSpec {
+  return {
+    id: entry.id,
+    contractVersion: entry.contractVersion,
+    entry: entry.entry,
+    capabilities: entry.capabilities,
+    priority: entry.priority,
+    lanes: entry.lanes,
+    roles: entry.roles,
   };
 }
 

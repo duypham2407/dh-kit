@@ -107,7 +107,9 @@ export async function runMigrationWorkflow(input: {
   });
 
   const handoff = buildHandoff({ lane: "migration", fromRole: "architect", toRole: "implementer", stage: input.stage });
-  const mcpDecision = enforceMcpRoutingDetailed(input.envelope, input.objective);
+  const mcpDecision = enforceMcpRoutingDetailed(input.envelope, input.objective, {
+    runtimeStateRepoRoot: input.repoRoot,
+  });
 
   audit.recordRoleOutput(input.envelope, coordinator);
   audit.recordRoleOutput(input.envelope, architect);
@@ -139,6 +141,7 @@ export async function runMigrationWorkflow(input: {
       decisions: mcpDecision.decisions,
       reasons: mcpDecision.reasons,
       rejected: mcpDecision.rejected,
+      runtimeStates: mcpDecision.runtimeStates,
     },
   });
   audit.recordHookDecision({

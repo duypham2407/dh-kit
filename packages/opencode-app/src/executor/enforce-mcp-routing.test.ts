@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { enforceMcpRouting, enforceMcpRoutingDetailed } from "./enforce-mcp-routing.js";
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
 import { DEFAULT_MCP_REGISTRY } from "../registry/mcp-registry.js";
@@ -135,5 +138,39 @@ describe("enforceMcpRoutingDetailed", () => {
     });
     expect(decision.decisions["chrome-devtools"]).toBe("block");
     expect(decision.decisions.playwright).toBe("modify");
+  });
+
+  it("adds runtime-state observability without changing routing semantics", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "dh-mcp-runtime-state-"));
+    fs.mkdirSync(path.join(repo, ".dh"), { recursive: true });
+
+    try {
+      const base = enforceMcpRoutingDetailed(makeEnvelope(), "codebase", {
+        runtimeSnapshot: {
+          augment_context_engine: { status: "available" },
+        },
+      });
+
+      const withRuntimeState = enforceMcpRoutingDetailed(makeEnvelope(), "codebase", {
+        runtimeSnapshot: {
+          augment_context_engine: { status: "available" },
+        },
+        runtimeStateRepoRoot: repo,
+      });
+
+      expect(withRuntimeState.selected).toEqual(base.selected);
+      expect(withRuntimeState.runtimeStates?.augment_context_engine?.state).toBe("first");
+
+      const second = enforceMcpRoutingDetailed(makeEnvelope(), "codebase", {
+        runtimeSnapshot: {
+          augment_context_engine: { status: "available" },
+        },
+        runtimeStateRepoRoot: repo,
+      });
+      expect(second.selected).toEqual(base.selected);
+      expect(second.runtimeStates?.augment_context_engine?.state).toBe("same");
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

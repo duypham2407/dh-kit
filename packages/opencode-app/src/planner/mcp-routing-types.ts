@@ -2,6 +2,7 @@ import type {
   ExtensionContractVersion,
   ExtensionDecisionKind,
   ExtensionReasonCode,
+  ExtensionRuntimeState,
 } from "../../../opencode-sdk/src/index.js";
 
 export type McpRoutingStatus = "available" | "degraded" | "needs_auth" | "unavailable";
@@ -25,6 +26,7 @@ export type McpRoutingDecision = {
   decisions: Record<string, ExtensionDecisionKind>;
   reasons: Record<string, McpReasonCode[]>;
   rejected: Record<string, McpReasonCode[]>;
+  runtimeStates?: Record<string, { state: ExtensionRuntimeState; fingerprint: string }>;
 };
 
 export type McpRoutingDecisionOptions = {
@@ -32,4 +34,5 @@ export type McpRoutingDecisionOptions = {
   maxSelected?: number;
   requiredCapabilities?: string[];
   supportedContractVersions?: ExtensionContractVersion[];
+  runtimeStateRepoRoot?: string;
 };

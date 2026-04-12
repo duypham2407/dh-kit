@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { enforceMcpRouting, enforceMcpRoutingDetailed } from "./enforce-mcp-routing.js";
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
+import { DEFAULT_MCP_REGISTRY } from "../registry/mcp-registry.js";
 
 function makeEnvelope(overrides?: Partial<ExecutionEnvelopeState>): ExecutionEnvelopeState {
   return {
@@ -62,5 +63,77 @@ describe("enforceMcpRoutingDetailed", () => {
     const selected = enforceMcpRouting(makeEnvelope(), "codebase");
     expect(Array.isArray(selected)).toBe(true);
     expect(selected.every((item) => typeof item === "string")).toBe(true);
+  });
+
+  it("blocks unsupported contract versions with stable reason code", () => {
+    const decision = enforceMcpRoutingDetailed(makeEnvelope(), "codebase", {
+      supportedContractVersions: [],
+      runtimeSnapshot: {
+        augment_context_engine: { status: "available" },
+      },
+    });
+    const rejectedReasons = Object.values(decision.rejected).flat();
+    expect(rejectedReasons).toContain("contract_version_mismatch");
+    expect(Object.values(decision.decisions).length).toBe(0);
+  });
+
+  it("enforces capability guardrails before final selection", () => {
+    const decision = enforceMcpRoutingDetailed(makeEnvelope(), "codebase", {
+      supportedContractVersions: ["v1"],
+      requiredCapabilities: ["nonexistent_capability"],
+      runtimeSnapshot: {
+        augment_context_engine: { status: "available" },
+      },
+    });
+    expect(decision.selected).toEqual([]);
+    const rejectedReasons = Object.values(decision.rejected).flat();
+    expect(rejectedReasons).toContain("capability_denied");
+    expect(Object.values(decision.decisions).length).toBe(0);
+  });
+
+  it("enforces lane and role guardrails with stable reason codes", () => {
+    const decision = enforceMcpRoutingDetailed(makeEnvelope(), "codebase", {
+      supportedContractVersions: ["v1"],
+      requiredCapabilities: ["release_notes"],
+      runtimeSnapshot: {
+        augment_context_engine: { status: "available" },
+        websearch: { status: "available" },
+      },
+    });
+    const rejectedReasons = Object.values(decision.rejected).flat();
+    expect(rejectedReasons).toContain("lane_mismatch");
+    expect(rejectedReasons).toContain("capability_denied");
+  });
+
+  it("blocks missing entry metadata with stable reason code", () => {
+    const target = DEFAULT_MCP_REGISTRY.find((entry) => entry.id === "augment_context_engine");
+    expect(target).toBeDefined();
+    const originalEntry = target!.entry;
+
+    try {
+      target!.entry = "";
+      const decision = enforceMcpRoutingDetailed(makeEnvelope(), "codebase", {
+        supportedContractVersions: ["v1"],
+        runtimeSnapshot: {
+          augment_context_engine: { status: "available" },
+        },
+      });
+      expect(decision.selected).not.toContain("augment_context_engine");
+      expect(decision.rejected.augment_context_engine).toContain("entry_missing");
+    } finally {
+      target!.entry = originalEntry;
+    }
+  });
+
+  it("normalizes final decisions with allow/block/modify", () => {
+    const decision = enforceMcpRoutingDetailed(makeEnvelope(), "browser frontend", {
+      supportedContractVersions: ["v1"],
+      runtimeSnapshot: {
+        "chrome-devtools": { status: "unavailable", authReady: false },
+        playwright: { status: "available", authReady: true },
+      },
+    });
+    expect(decision.decisions["chrome-devtools"]).toBe("block");
+    expect(decision.decisions.playwright).toBe("modify");
   });
 });

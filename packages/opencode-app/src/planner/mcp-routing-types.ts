@@ -1,25 +1,14 @@
+import type {
+  ExtensionContractVersion,
+  ExtensionDecisionKind,
+  ExtensionReasonCode,
+} from "../../../opencode-sdk/src/index.js";
+
 export type McpRoutingStatus = "available" | "degraded" | "needs_auth" | "unavailable";
 
 export type McpHealthClass = "critical" | "standard" | "best_effort";
 
-export type McpReasonCode =
-  | "lane_match"
-  | "lane_mismatch"
-  | "role_match"
-  | "role_mismatch"
-  | "intent_match"
-  | "intent_no_match"
-  | "capability_match"
-  | "priority_boost"
-  | "deprioritized"
-  | "requires_auth"
-  | "needs_auth"
-  | "status_unavailable"
-  | "status_degraded"
-  | "fallback_applied"
-  | "blocked_by_precondition"
-  | "no_runtime_status"
-  | "no_auth_context";
+export type McpReasonCode = ExtensionReasonCode;
 
 export type McpRuntimeRecord = {
   status: McpRoutingStatus;
@@ -33,6 +22,7 @@ export type McpRoutingDecision = {
   selected: string[];
   blocked: string[];
   warnings: string[];
+  decisions: Record<string, ExtensionDecisionKind>;
   reasons: Record<string, McpReasonCode[]>;
   rejected: Record<string, McpReasonCode[]>;
 };
@@ -40,4 +30,6 @@ export type McpRoutingDecision = {
 export type McpRoutingDecisionOptions = {
   runtimeSnapshot?: McpRuntimeSnapshot;
   maxSelected?: number;
+  requiredCapabilities?: string[];
+  supportedContractVersions?: ExtensionContractVersion[];
 };

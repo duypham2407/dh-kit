@@ -1,3 +1,8 @@
+import type {
+  ExtensionDecisionKind,
+  ExtensionReasonCode,
+} from "./extension-contract.js";
+
 export type HookName =
   | "model_override"
   | "pre_tool_exec"
@@ -59,6 +64,7 @@ export type McpRoutingPayload = {
   mcps: string[];
   blocked?: string[];
   warnings?: string[];
-  reasons?: Record<string, string[]>;
-  rejected?: Record<string, string[]>;
+  decisions?: Record<string, ExtensionDecisionKind>;
+  reasons?: Record<string, ExtensionReasonCode[]>;
+  rejected?: Record<string, ExtensionReasonCode[]>;
 };

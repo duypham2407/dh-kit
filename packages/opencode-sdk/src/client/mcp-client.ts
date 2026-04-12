@@ -1,4 +1,8 @@
 import type { HookInvocationLogsRepo } from "../../../storage/src/sqlite/repositories/hook-invocation-logs-repo.js";
+import type {
+  ExtensionDecisionKind,
+  ExtensionReasonCode,
+} from "../types/extension-contract.js";
 import { buildBridgeEnvelopeContext } from "../protocol/envelope-contract.js";
 import type { BridgeResult } from "../protocol/error-envelope.js";
 import { writeHookDecision } from "./decision-writer.js";
@@ -12,8 +16,9 @@ export function writeMcpRoutingDecision(
     mcps: string[];
     blocked?: string[];
     warnings?: string[];
-    reasons?: Record<string, string[]>;
-    rejected?: Record<string, string[]>;
+    decisions?: Record<string, ExtensionDecisionKind>;
+    reasons?: Record<string, ExtensionReasonCode[]>;
+    rejected?: Record<string, ExtensionReasonCode[]>;
     reason?: string;
   },
 ): BridgeResult<{ id: string }> {
@@ -35,6 +40,7 @@ export function writeMcpRoutingDecision(
       mcps: input.mcps,
       blocked: input.blocked ?? [],
       warnings: input.warnings ?? [],
+      decisions: input.decisions ?? {},
       reasons: input.reasons ?? {},
       rejected: input.rejected ?? {},
     },

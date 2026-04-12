@@ -1,23 +1,24 @@
-import type { AgentRole } from "../../../shared/src/types/agent.js";
-import type { WorkflowLane } from "../../../shared/src/types/lane.js";
+import type {
+  ExtensionContractVersion,
+  ExtensionSpec,
+} from "../../../opencode-sdk/src/index.js";
 import type { McpHealthClass } from "../planner/mcp-routing-types.js";
 
-export type McpRegistryEntry = {
-  mcpName: string;
+export type McpRegistryEntry = ExtensionSpec & {
   description: string;
-  lanes: WorkflowLane[];
-  roles: Array<AgentRole | "quick">;
   triggerTags: string[];
-  capabilities: string[];
-  priority: number;
   requiresAuth?: boolean;
   degradeTo?: string[];
   healthClass?: McpHealthClass;
 };
 
+const MCP_EXTENSION_CONTRACT_VERSION: ExtensionContractVersion = "v1";
+
 export const DEFAULT_MCP_REGISTRY: McpRegistryEntry[] = [
   {
-    mcpName: "augment_context_engine",
+    id: "augment_context_engine",
+    contractVersion: MCP_EXTENSION_CONTRACT_VERSION,
+    entry: "tool:augment_context_engine",
     description: "Semantic workspace code search",
     lanes: ["quick", "delivery", "migration"],
     roles: ["quick", "analyst", "architect", "implementer", "reviewer"],
@@ -27,7 +28,9 @@ export const DEFAULT_MCP_REGISTRY: McpRegistryEntry[] = [
     healthClass: "critical",
   },
   {
-    mcpName: "context7",
+    id: "context7",
+    contractVersion: MCP_EXTENSION_CONTRACT_VERSION,
+    entry: "tool:context7",
     description: "Official docs and snippets",
     lanes: ["quick", "delivery", "migration"],
     roles: ["quick", "analyst", "architect", "reviewer"],
@@ -37,7 +40,9 @@ export const DEFAULT_MCP_REGISTRY: McpRegistryEntry[] = [
     healthClass: "standard",
   },
   {
-    mcpName: "grep_app",
+    id: "grep_app",
+    contractVersion: MCP_EXTENSION_CONTRACT_VERSION,
+    entry: "tool:grep_app",
     description: "Real-world GitHub examples",
     lanes: ["delivery", "migration"],
     roles: ["analyst", "architect"],
@@ -47,7 +52,9 @@ export const DEFAULT_MCP_REGISTRY: McpRegistryEntry[] = [
     healthClass: "best_effort",
   },
   {
-    mcpName: "websearch",
+    id: "websearch",
+    contractVersion: MCP_EXTENSION_CONTRACT_VERSION,
+    entry: "tool:websearch",
     description: "External research and release notes",
     lanes: ["delivery", "migration"],
     roles: ["analyst", "architect", "tester"],
@@ -57,7 +64,9 @@ export const DEFAULT_MCP_REGISTRY: McpRegistryEntry[] = [
     healthClass: "best_effort",
   },
   {
-    mcpName: "chrome-devtools",
+    id: "chrome-devtools",
+    contractVersion: MCP_EXTENSION_CONTRACT_VERSION,
+    entry: "tool:chrome-devtools",
     description: "Browser diagnostics",
     lanes: ["quick", "delivery", "migration"],
     roles: ["quick", "tester"],
@@ -69,7 +78,9 @@ export const DEFAULT_MCP_REGISTRY: McpRegistryEntry[] = [
     healthClass: "standard",
   },
   {
-    mcpName: "playwright",
+    id: "playwright",
+    contractVersion: MCP_EXTENSION_CONTRACT_VERSION,
+    entry: "tool:playwright",
     description: "Browser automation",
     lanes: ["quick", "delivery", "migration"],
     roles: ["quick", "tester"],

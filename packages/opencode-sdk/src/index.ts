@@ -14,6 +14,16 @@ export type {
   McpRoutingPayload,
 } from "./types/hook-decision.js";
 export type {
+  ExtensionContractVersion,
+  ExtensionDecision,
+  ExtensionDecisionKind,
+  ExtensionLane,
+  ExtensionReasonCode,
+  ExtensionRole,
+  ExtensionRuntimeState,
+  ExtensionSpec,
+} from "./types/extension-contract.js";
+export type {
   BridgeEnvelopeContext,
   ExecutionEnvelopeBridge,
   ExecutionEnvelopeIdentity,

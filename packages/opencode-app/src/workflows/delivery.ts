@@ -133,6 +133,7 @@ export async function runDeliveryWorkflow(input: {
       mcps: mcpDecision.selected,
       blocked: mcpDecision.blocked,
       warnings: mcpDecision.warnings,
+      decisions: mcpDecision.decisions,
       reasons: mcpDecision.reasons,
       rejected: mcpDecision.rejected,
     },

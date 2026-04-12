@@ -82,3 +82,7 @@ export function canUseDegraded(entry: McpRegistryEntry): boolean {
   }
   return entry.healthClass !== "critical";
 }
+
+export function hasAllRequiredCapabilities(entry: McpRegistryEntry, requiredCapabilities: string[]): boolean {
+  return requiredCapabilities.every((capability) => entry.capabilities.includes(capability));
+}

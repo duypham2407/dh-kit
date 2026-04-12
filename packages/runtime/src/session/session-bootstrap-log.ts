@@ -1,6 +1,7 @@
 import { WorkflowAuditService } from "../workflow/workflow-audit-service.js";
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
 import type { SessionState } from "../../../shared/src/types/session.js";
+import type { ExtensionDecisionKind } from "../../../opencode-sdk/src/index.js";
 
 export function recordSessionBootstrap(input: {
   repoRoot: string;
@@ -63,6 +64,10 @@ export function recordSessionBootstrap(input: {
       mcps: input.envelope.activeMcps,
       blocked: [],
       warnings: [],
+      decisions: input.envelope.activeMcps.reduce<Record<string, ExtensionDecisionKind>>((acc, mcp) => {
+        acc[mcp] = "allow";
+        return acc;
+      }, {}),
       reasons: {},
       rejected: {},
     },

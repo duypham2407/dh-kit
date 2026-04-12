@@ -8,7 +8,7 @@ import { runMigrationWorkflow } from "./migration.js";
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
 import { SessionsRepo } from "../../../storage/src/sqlite/repositories/sessions-repo.js";
 import type { SessionState } from "../../../shared/src/types/session.js";
-import { enforceMcpRouting } from "../executor/enforce-mcp-routing.js";
+import { enforceMcpRouting, enforceMcpRoutingDetailed } from "../executor/enforce-mcp-routing.js";
 
 function makeRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "dh-workflow-"));
@@ -120,5 +120,20 @@ describe("workflow lanes", () => {
 
     const testerLine = result.summary.find((line) => line.startsWith("Tester:")) ?? "";
     expect(testerLine).toContain("Browser verification evidence available.");
+  });
+
+  it("workflow consumers can use normalized MCP decision payload", () => {
+    const decision = enforceMcpRoutingDetailed(makeEnvelope("delivery", "delivery_solution"), "browser ui", {
+      runtimeSnapshot: {
+        "chrome-devtools": { status: "unavailable", authReady: false },
+        playwright: { status: "available", authReady: true },
+      },
+      supportedContractVersions: ["v1"],
+    });
+
+    expect(Array.isArray(decision.selected)).toBe(true);
+    expect(typeof decision.decisions).toBe("object");
+    expect(typeof decision.reasons).toBe("object");
+    expect(typeof decision.rejected).toBe("object");
   });
 });

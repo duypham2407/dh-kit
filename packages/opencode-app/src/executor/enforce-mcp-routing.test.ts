@@ -199,6 +199,8 @@ describe("enforceMcpRoutingDetailed", () => {
 
       expect(withRuntimeState.selected).toEqual(base.selected);
       expect(withRuntimeState.runtimeStates?.augment_context_engine?.state).toBe("first");
+      expect(withRuntimeState.runtimeStateDrift).toBeDefined();
+      expect(withRuntimeState.runtimeStateDrift?.summary.classifiedExtensionCount).toBeGreaterThanOrEqual(1);
 
       const second = enforceMcpRoutingDetailed(makeEnvelope(), "codebase", {
         runtimeSnapshot: {
@@ -208,6 +210,34 @@ describe("enforceMcpRoutingDetailed", () => {
       });
       expect(second.selected).toEqual(base.selected);
       expect(second.runtimeStates?.augment_context_engine?.state).toBe("same");
+      expect(second.runtimeStateDrift?.summary.sameCount).toBeGreaterThanOrEqual(1);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps drift reporting additive to routing decision policy", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "dh-mcp-drift-additive-"));
+    fs.mkdirSync(path.join(repo, ".dh"), { recursive: true });
+
+    try {
+      const withoutRepo = enforceMcpRoutingDetailed(makeEnvelope(), "codebase", {
+        runtimeSnapshot: {
+          augment_context_engine: { status: "available" },
+        },
+      });
+
+      const withRepo = enforceMcpRoutingDetailed(makeEnvelope(), "codebase", {
+        runtimeSnapshot: {
+          augment_context_engine: { status: "available" },
+        },
+        runtimeStateRepoRoot: repo,
+      });
+
+      expect(withRepo.selected).toEqual(withoutRepo.selected);
+      expect(withRepo.blocked).toEqual(withoutRepo.blocked);
+      expect(withRepo.decisions).toEqual(withoutRepo.decisions);
+      expect(withRepo.runtimeStateDrift).toBeDefined();
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

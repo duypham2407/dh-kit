@@ -4,6 +4,7 @@ import type {
   ExtensionReasonCode,
   ExtensionRuntimeState,
 } from "../../../opencode-sdk/src/index.js";
+import type { ExtensionStateDriftReport } from "../../../runtime/src/extensions/extension-drift-report.js";
 
 export type McpRoutingStatus = "available" | "degraded" | "needs_auth" | "unavailable";
 
@@ -33,6 +34,7 @@ export type McpRoutingDecision = {
   reasons: Record<string, McpReasonCode[]>;
   rejected: Record<string, McpReasonCode[]>;
   runtimeStates?: Record<string, { state: ExtensionRuntimeState; fingerprint: string }>;
+  runtimeStateDrift?: ExtensionStateDriftReport;
 };
 
 export type McpRoutingDecisionOptions = {

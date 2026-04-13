@@ -175,5 +175,10 @@ describe("createDebugDump", () => {
     expect(dump.auditInspection.latestSession.query.limit).toBe(25);
     expect(dump.auditInspection.latestSession.summary.toolCount).toBe(1);
     expect(dump.auditInspection.recentWindow.query.fromTimestamp).toBeDefined();
+    expect(dump.extensionStateDrift).toBeDefined();
+    expect(dump.extensionStateDrift.summary.persistedExtensionCount).toBeGreaterThanOrEqual(0);
+    expect(dump.extensionStateDrift.summary.updatedCount).toBeGreaterThanOrEqual(0);
+    expect(Array.isArray(dump.extensionStateDrift.extensions)).toBe(true);
+    expect(Array.isArray(dump.extensionStateDrift.warnings)).toBe(true);
   });
 });

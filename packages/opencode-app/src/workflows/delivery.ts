@@ -139,6 +139,7 @@ export async function runDeliveryWorkflow(input: {
       reasons: mcpDecision.reasons,
       rejected: mcpDecision.rejected,
       runtimeStates: mcpDecision.runtimeStates,
+      runtimeStateDrift: mcpDecision.runtimeStateDrift,
     },
   });
   audit.recordHookDecision({

@@ -15,6 +15,7 @@ import type {
   McpRoutingDecisionOptions,
 } from "../planner/mcp-routing-types.js";
 import { touchExtensionState } from "../../../runtime/src/extensions/touch-extension-state.js";
+import { buildExtensionStateDriftReport } from "../../../runtime/src/extensions/extension-drift-report.js";
 
 export function enforceMcpRouting(envelope: ExecutionEnvelopeState, intent: string): string[] {
   return enforceMcpRoutingDetailed(envelope, intent, {
@@ -282,6 +283,15 @@ export function enforceMcpRoutingDetailed(
   }
 
   const dedupSelected = dedupeExcluding(selected, blocked);
+  const runtimeStateDrift = runtimeStateRepoRoot
+    ? buildExtensionStateDriftReport({
+        repoRoot: runtimeStateRepoRoot,
+        runtimeStates,
+      })
+    : undefined;
+  if (runtimeStateDrift?.warnings.length) {
+    warnings.push(...runtimeStateDrift.warnings);
+  }
   if (dedupSelected.length === 0) {
     const safeFallback = pickGlobalSafeFallback(blocked, options);
     if (safeFallback) {
@@ -306,6 +316,7 @@ export function enforceMcpRoutingDetailed(
     reasons,
     rejected,
     runtimeStates,
+    runtimeStateDrift,
   };
 }
 

@@ -10,6 +10,8 @@ import { resolveDhPaths } from "../../../shared/src/utils/path.js";
 import { AuditQueryService } from "./audit-query-service.js";
 import { evaluateOperatorSafeProjectWorktree } from "../workspace/operator-safe-project-worktree-utils.js";
 import { detectProjects } from "../../../intelligence/src/workspace/detect-projects.js";
+import { buildExtensionStateDriftReport } from "../extensions/extension-drift-report.js";
+import type { ExtensionStateDriftReport } from "../extensions/extension-drift-report.js";
 
 export type DebugDump = {
   repoRoot: string;
@@ -24,6 +26,9 @@ export type DebugDump = {
     blockingCount: number;
     recommendedAction: string;
   };
+  // Drift snapshot is persisted-state oriented; `state` may be undefined when
+  // no in-flight runtime touch data exists for this debug-dump request.
+  extensionStateDrift: ExtensionStateDriftReport;
   diagnostics: {
     chunkCount: number;
     embeddingCount: number;
@@ -60,6 +65,9 @@ export async function createDebugDump(repoRoot: string): Promise<DebugDump> {
   const chunksRepo = new ChunksRepo(repoRoot);
   const embeddingsRepo = new EmbeddingsRepo(repoRoot);
   const paths = resolveDhPaths(repoRoot);
+  const extensionStateDrift = buildExtensionStateDriftReport({
+    repoRoot,
+  });
   const chunkCount = chunksRepo.count();
   const embeddingCount = embeddingsRepo.countByModel(configRepo.read<string>("embedding.provider.modelName") ?? "text-embedding-3-small");
 
@@ -76,6 +84,7 @@ export async function createDebugDump(repoRoot: string): Promise<DebugDump> {
       blockingCount: operatorSafeWorktreeCheck.blockingReasons.length,
       recommendedAction: operatorSafeWorktreeCheck.recommendedAction,
     },
+    extensionStateDrift,
     diagnostics: {
       chunkCount,
       embeddingCount,

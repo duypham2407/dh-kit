@@ -8,6 +8,8 @@ import { ChunksRepo } from "../../../storage/src/sqlite/repositories/chunks-repo
 import { EmbeddingsRepo } from "../../../storage/src/sqlite/repositories/embeddings-repo.js";
 import { resolveDhPaths } from "../../../shared/src/utils/path.js";
 import { AuditQueryService } from "./audit-query-service.js";
+import { evaluateOperatorSafeProjectWorktree } from "../workspace/operator-safe-project-worktree-utils.js";
+import { detectProjects } from "../../../intelligence/src/workspace/detect-projects.js";
 
 export type DebugDump = {
   repoRoot: string;
@@ -15,6 +17,13 @@ export type DebugDump = {
   semanticMode: string;
   latestSessionHookLogs: HookDecisionRecord[];
   auditInspection: AuditInspectionProfiles;
+  operatorSafeWorktree: {
+    mode: "check" | "dry_run";
+    allowed: boolean;
+    warningCount: number;
+    blockingCount: number;
+    recommendedAction: string;
+  };
   diagnostics: {
     chunkCount: number;
     embeddingCount: number;
@@ -34,10 +43,19 @@ export async function createDebugDump(repoRoot: string): Promise<DebugDump> {
   const hookLogsRepo = new HookInvocationLogsRepo(repoRoot);
   const latestSessionHookLogs = hookLogsRepo.listBySession(latestSessionId);
   const auditQueryService = new AuditQueryService(repoRoot);
+  const workspaces = await detectProjects(repoRoot);
   const auditInspection = auditQueryService.getInspectionProfiles({
     latestSessionId,
     limit: 25,
     recentWindowHours: 24,
+  });
+  const operatorSafeWorktreeCheck = await evaluateOperatorSafeProjectWorktree({
+    mode: "dry_run",
+    operation: "index_workspace",
+    repoRoot,
+    targetPath: repoRoot,
+    requireVcs: false,
+    knownWorkspaces: workspaces,
   });
   const chunksRepo = new ChunksRepo(repoRoot);
   const embeddingsRepo = new EmbeddingsRepo(repoRoot);
@@ -51,6 +69,13 @@ export async function createDebugDump(repoRoot: string): Promise<DebugDump> {
     semanticMode,
     latestSessionHookLogs,
     auditInspection,
+    operatorSafeWorktree: {
+      mode: "dry_run",
+      allowed: operatorSafeWorktreeCheck.allowed,
+      warningCount: operatorSafeWorktreeCheck.warnings.length,
+      blockingCount: operatorSafeWorktreeCheck.blockingReasons.length,
+      recommendedAction: operatorSafeWorktreeCheck.recommendedAction,
+    },
     diagnostics: {
       chunkCount,
       embeddingCount,

@@ -5,6 +5,7 @@
  */
 
 import { detectProjects } from "../../../intelligence/src/workspace/detect-projects.js";
+import { evaluateOperatorSafeProjectWorktree } from "../workspace/operator-safe-project-worktree-utils.js";
 import { extractCallEdges } from "../../../intelligence/src/graph/extract-call-edges.js";
 import { extractCallSites } from "../../../intelligence/src/graph/extract-call-sites.js";
 import { extractSymbolsFromFiles } from "../../../intelligence/src/symbols/extract-symbols.js";
@@ -47,6 +48,13 @@ export type IndexJobResult = {
     }>;
     partialScan: boolean;
     scanStopReasons: string[];
+    operatorSafety: {
+      mode: "check" | "dry_run" | "execute";
+      allowed: boolean;
+      warningCount: number;
+      blockingCount: number;
+      recommendedAction: string;
+    };
   };
 };
 
@@ -77,6 +85,14 @@ export async function runIndexWorkflow(
 
   // ── Step 1: Scan workspace ──────────────────────────────────────
   const workspaces = await detectProjects(repoRoot, opts.scanOptions);
+  const operatorSafety = await evaluateOperatorSafeProjectWorktree({
+    mode: "check",
+    operation: "index_workspace",
+    repoRoot,
+    targetPath: repoRoot,
+    requireVcs: false,
+    knownWorkspaces: workspaces,
+  });
   const files = workspaces.flatMap((ws) => ws.files);
 
   if (files.length === 0) {
@@ -92,6 +108,13 @@ export async function runIndexWorkflow(
       workspaceCoverage: buildWorkspaceCoverage(workspaces),
       partialScan,
       scanStopReasons,
+      operatorSafety: {
+        mode: operatorSafety.mode,
+        allowed: operatorSafety.allowed,
+        warningCount: operatorSafety.warnings.length,
+        blockingCount: operatorSafety.blockingReasons.length,
+        recommendedAction: operatorSafety.recommendedAction,
+      },
     });
   }
 
@@ -99,6 +122,8 @@ export async function runIndexWorkflow(
   const scanStopReasons = uniqueStopReasons(workspaces);
 
   // ── Step 2: Extract symbols ─────────────────────────────────────
+  // check-mode operator safety is advisory-only in this runner.
+  // We always continue indexing while surfacing diagnostics for operator review.
   const symbols = await extractSymbolsFromFiles(repoRoot, files);
 
   // ── Step 3: Extract import edges ────────────────────────────────
@@ -143,6 +168,13 @@ export async function runIndexWorkflow(
       workspaceCoverage: buildWorkspaceCoverage(workspaces),
       partialScan,
       scanStopReasons,
+      operatorSafety: {
+        mode: operatorSafety.mode,
+        allowed: operatorSafety.allowed,
+        warningCount: operatorSafety.warnings.length,
+        blockingCount: operatorSafety.blockingReasons.length,
+        recommendedAction: operatorSafety.recommendedAction,
+      },
     },
   );
 }
@@ -219,6 +251,7 @@ function makeResult(
   const scanSummary = diagnostics.partialScan
     ? ` scan=partial(${diagnostics.scanStopReasons.join(",") || "unknown"})`
     : " scan=complete";
+  const safetySummary = ` operator-safety=${diagnostics.operatorSafety.allowed ? "allow" : "block"}(${diagnostics.operatorSafety.recommendedAction})`;
   const workspaceSummary = ` workspaces=${diagnostics.workspaceCount}`;
 
   return {
@@ -230,7 +263,7 @@ function makeResult(
     chunksProduced,
     embedding,
     durationMs,
-    summary: `Indexed ${filesScanned} files (${diagnostics.filesRefreshed} refreshed, ${diagnostics.filesUnchanged} unchanged), ${symbolsExtracted} symbols, ${edgesExtracted} edges, ${callSitesExtracted} call-sites, ${chunksProduced} chunks.${embSummary}.${scanSummary}.${workspaceSummary} (${durationMs}ms)`,
+    summary: `Indexed ${filesScanned} files (${diagnostics.filesRefreshed} refreshed, ${diagnostics.filesUnchanged} unchanged), ${symbolsExtracted} symbols, ${edgesExtracted} edges, ${callSitesExtracted} call-sites, ${chunksProduced} chunks.${embSummary}.${scanSummary}.${safetySummary}.${workspaceSummary} (${durationMs}ms)`,
     diagnostics,
   };
 }

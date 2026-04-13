@@ -168,6 +168,9 @@ describe("createDebugDump", () => {
 
     const dump = await createDebugDump(repoRoot);
     expect(dump.auditInspection).toBeDefined();
+    expect(dump.operatorSafeWorktree).toBeDefined();
+    expect(dump.operatorSafeWorktree.mode).toBe("dry_run");
+    expect(dump.operatorSafeWorktree.allowed).toBe(true);
     expect(dump.auditInspection.latestSession.query.sessionId).toBe("sess-debug");
     expect(dump.auditInspection.latestSession.query.limit).toBe(25);
     expect(dump.auditInspection.latestSession.summary.toolCount).toBe(1);

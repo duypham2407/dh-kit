@@ -20,6 +20,12 @@
 - Mọi operation trong phạm vi slice đi qua preflight check trước.
 - `execute` chỉ áp dụng cho thao tác nhẹ đã được allow rõ trong contract.
 
+### AD-3a: `check` là advisory-only, không phải hard gate
+- Trong slice này, `mode: "check"` có nhiệm vụ **đánh giá và ghi nhận trạng thái an toàn**, không tự động chặn runtime flow đang tồn tại.
+- `allowed=false` ở `check` vẫn phải trả `blockingReasons[]` và `recommendedAction`, nhưng ý nghĩa là **operator advisory / diagnostics signal**, không phải lệnh abort bắt buộc tại mọi callsite.
+- Hard blocking chỉ nên được áp dụng khi callsite đang thực sự chuẩn bị quyết định thao tác tiếp theo theo semantics `dry_run` hoặc `execute`.
+- Với integration hẹp tại `index-job-runner.ts`, `check` chỉ dùng để làm rõ safety state và định hướng bước tiếp theo; không được đổi slice này thành gate làm fail indexing flow hiện tại chỉ vì preflight báo `allowed=false`.
+
 ### AD-4: Explainable result envelope
 - Kết quả utility phải có cấu trúc nhất quán cho operator:
   - `allowed`
@@ -30,6 +36,8 @@
 ### AD-5: Safety by default, bounded diagnostics
 - Mặc định chặn thao tác khi thiếu điều kiện an toàn.
 - Debug/diagnostics chỉ thêm summary cần thiết, không biến thành event/reporting subsystem mới.
+
+**Làm rõ để tránh hiểu sai:** nguyên tắc “mặc định chặn” áp dụng cho **quyết định thao tác thực thi** trong utility contract, không biến `check` thành enforced stop ở integration runtime hẹp của slice này.
 
 ---
 
@@ -61,6 +69,10 @@
 1. Chốt danh sách operation được hỗ trợ trong slice (hẹp).
 2. Chốt mode vận hành: `check`, `dry_run`, `execute`.
 3. Chốt reason codes cho case block/warn.
+4. Chốt semantics mode:
+   - `check`: advisory-only assessment, không side effects, không tự block runtime flow hiện có.
+   - `dry_run`: preview của decision surface; trả về allow/block/warning rõ để operator biết nếu tiếp tục thì điều gì sẽ xảy ra.
+   - `execute`: chỉ được tiếp tục khi preflight cho phép trong contract bounded của slice.
 
 ### Phase 1 — Utility core
 1. Tạo module utility operator-safe project/worktree.
@@ -73,7 +85,7 @@
 
 ### Phase 2 — Runtime integration (bounded)
 1. Gắn preflight utility vào `index-job-runner.ts` ở điểm phù hợp.
-2. Đảm bảo behavior không làm vỡ flow indexing hiện tại.
+2. Đảm bảo behavior không làm vỡ flow indexing hiện tại; `mode: "check"` tại callsite này chỉ ghi nhận diagnostics/advisory, không trở thành hard gate mới.
 3. Mở rộng `debug-dump.ts` để phản ánh summary utility checks.
 
 ### Phase 3 — Validation + docs closure
@@ -91,13 +103,14 @@ Chiến lược validation ưu tiên hành vi operator-safe:
    - Input hợp lệ trong boundary -> `allowed=true`.
 
 2. **Block path**
-   - Input ngoài boundary/không hợp lệ -> `allowed=false`, reason code đúng.
+    - Input ngoài boundary/không hợp lệ -> `allowed=false`, reason code đúng.
+   - Với `mode: "check"`, kết quả này phải được hiểu là advisory signal cho diagnostics/follow-up, không phải implicit abort của runtime flow hiện hữu.
 
 3. **Dry-run explainability**
-   - `dry_run` phải trả warning/blocking/recommendedAction rõ ràng, không side effects.
+   - `dry_run` phải trả warning/blocking/recommendedAction rõ ràng, không side effects, và phản ánh decision surface mà callsite có thể dùng để chặn bước thực thi tiếp theo.
 
 4. **Runtime compatibility**
-   - `index-job-runner` vẫn trả diagnostics chuẩn, không regression luồng scan/index.
+   - `index-job-runner` vẫn trả diagnostics chuẩn, không regression luồng scan/index chỉ vì `check` báo `allowed=false`.
 
 5. **Diagnostics boundedness**
    - `debug-dump` chỉ thêm summary hẹp, không phình payload bất thường.

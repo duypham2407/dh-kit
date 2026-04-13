@@ -6,6 +6,7 @@ import { runTester } from "../team/tester.js";
 import { evaluateGate } from "../../../runtime/src/workflow/gate-evaluator.js";
 import { buildHandoff } from "../../../runtime/src/workflow/handoff-manager.js";
 import { planWorkItems } from "../../../runtime/src/workflow/work-item-planner.js";
+import { buildWorkflowQualityGateReport } from "../../../runtime/src/workflow/quality-gates-runtime.js";
 import { WorkflowAuditService } from "../../../runtime/src/workflow/workflow-audit-service.js";
 import { WorkItemsRepo } from "../../../storage/src/sqlite/repositories/work-items-repo.js";
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
@@ -105,6 +106,31 @@ export async function runMigrationWorkflow(input: {
   const browserEvidenceAvailable = executionReports.some((report) => {
     return report.tester.evidence.some((item) => item.toLowerCase().includes("browser verification evidence"));
   });
+  const qualityGates = buildWorkflowQualityGateReport({
+    repoRoot: input.repoRoot,
+    lane: "migration",
+    workflowGate: {
+      pass: aggregateReviewPass && aggregateVerificationPass,
+      reason: aggregateReviewPass && aggregateVerificationPass
+        ? "Migration review and verification gates passed across all work items."
+        : "One or more migration review/verification gates failed.",
+    },
+    localVerification: {
+      pass: aggregateVerificationPass,
+      reason: aggregateVerificationPass
+        ? "Tester evidence recorded for all migration work items."
+        : "One or more migration work items did not produce verification evidence.",
+      evidence: executionReports.flatMap((report) => report.tester.evidence),
+      limitations: executionReports.flatMap((report) => report.tester.limitations),
+    },
+    browserVerification: {
+      required: requiresBrowserVerification(input.objective),
+      pass: browserEvidenceAvailable,
+      executedChecks: executionReports.flatMap((report) => report.tester.executedChecks.filter((check) => check.toLowerCase().includes("browser"))),
+      evidence: executionReports.flatMap((report) => report.tester.evidence.filter((item) => item.toLowerCase().includes("browser"))),
+      limitations: executionReports.flatMap((report) => report.tester.limitations),
+    },
+  });
 
   const handoff = buildHandoff({ lane: "migration", fromRole: "architect", toRole: "implementer", stage: input.stage });
   const mcpDecision = enforceMcpRoutingDetailed(input.envelope, input.objective, {
@@ -114,6 +140,25 @@ export async function runMigrationWorkflow(input: {
   audit.recordRoleOutput(input.envelope, coordinator);
   audit.recordRoleOutput(input.envelope, architect);
   audit.recordRequiredTool(input.envelope, "workflow.migration", "migration_workflow", "called");
+  for (const result of qualityGates.results) {
+    audit.recordQualityGate(input.envelope, {
+      gateId: result.gateId,
+      availability: qualityGates.availability.gates[result.gateId].availability,
+      result: result.status,
+      reason: result.reason,
+      evidence: result.evidence,
+      limitations: result.limitations,
+    });
+    if (result.gateId === "rule_scan" || result.gateId === "security_scan") {
+      const availability = qualityGates.availability.gates[result.gateId].availability;
+      audit.recordRequiredTool(
+        input.envelope,
+        result.gateId,
+        `${result.gateId}_quality_gate`,
+        availability === "available" ? "called" : "required_but_missing",
+      );
+    }
+  }
   audit.recordSkillActivation(input.envelope, "verification-before-completion", "Migration lane requires compatibility verification discipline.");
   audit.recordMcpRoute(input.envelope, "augment_context_engine", "Migration workflow needs codebase understanding before upgrade steps.");
   for (const mcpName of mcpDecision.selected) {
@@ -182,6 +227,7 @@ export async function runMigrationWorkflow(input: {
       reviewPass: aggregateReviewPass,
       verificationPass: aggregateVerificationPass,
       browserEvidenceAvailable,
+      qualityGates,
     },
   });
 
@@ -198,7 +244,9 @@ export async function runMigrationWorkflow(input: {
       `Handoff: ${handoff.notes.join(" ")}`,
       `Implementer: ${aggregateWorkItemStatus(executionReports.map((report) => report.implementer.status))}`,
       `Reviewer: ${aggregateReviewPass ? "PASS" : "FAIL"} (${executionReports.filter((report) => report.reviewGate.pass).length}/${executionReports.length} passed)`,
-      `Tester: ${aggregateVerificationPass ? "PASS" : "FAIL"} (${executionReports.filter((report) => report.verificationGate.pass).length}/${executionReports.length} passed${browserEvidenceAvailable ? "; Browser verification evidence available." : ""})`,
+      `Tester: ${aggregateVerificationPass ? "PASS" : "FAIL"} (${executionReports.filter((report) => report.verificationGate.pass).length}/${executionReports.length} passed${requiresBrowserVerification(input.objective)
+        ? (browserEvidenceAvailable ? "; Browser verification evidence available." : "; Browser verification evidence missing.")
+        : ""})`,
     ],
   };
 }

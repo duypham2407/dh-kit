@@ -11,6 +11,7 @@ import { ChunksRepo } from "../../../storage/src/sqlite/repositories/chunks-repo
 import { isEmbeddingKeyAvailable } from "../../../retrieval/src/semantic/embedding-pipeline.js";
 import { DEFAULT_EMBEDDING_CONFIG } from "../../../shared/src/types/embedding.js";
 import type { EmbeddingProviderConfig } from "../../../shared/src/types/embedding.js";
+import { getQualityGateAvailabilitySnapshot } from "../workflow/quality-gates-runtime.js";
 import fsSync from "node:fs";
 import path from "node:path";
 
@@ -28,6 +29,14 @@ export type DoctorReport = {
       providersWithoutModels: string[];
       totalProviders: number;
       totalModels: number;
+    };
+    verificationHealth: {
+      contractVersion: string;
+      availableCount: number;
+      unavailableCount: number;
+      notConfiguredCount: number;
+      ruleScanAvailability: "available" | "unavailable" | "not_configured";
+      securityScanAvailability: "available" | "unavailable" | "not_configured";
     };
   };
   /** Machine-readable snapshot for CI/monitoring ingestion. */
@@ -52,6 +61,12 @@ export type DoctorSnapshot = {
   sqliteBridgeReady: boolean;
   hookLogsPresent: boolean;
   workflowMirrorPresent: boolean;
+  qualityGateContractVersion: string;
+  qualityGateAvailableCount: number;
+  qualityGateUnavailableCount: number;
+  qualityGateNotConfiguredCount: number;
+  ruleScanAvailability: "available" | "unavailable" | "not_configured";
+  securityScanAvailability: "available" | "unavailable" | "not_configured";
   actionCount: number;
 };
 
@@ -73,6 +88,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     "tool_usage_audit",
     "skill_activation_audit",
     "mcp_route_audit",
+    "quality_gate_audit",
     "hook_invocation_logs",
     "role_outputs",
     "chunks",
@@ -128,6 +144,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   }
 
   const sqliteBridgeReady = availableTables.has("hook_invocation_logs") && goBinaryReady;
+  const qualityGateAvailability = getQualityGateAvailabilitySnapshot(repoRoot);
 
   const statusOk = missingTables.length === 0 && providers.length > 0 && DEFAULT_AGENT_REGISTRY.length > 0 && integrityResult.ok;
 
@@ -190,6 +207,12 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     "Workflow:",
     `  mirror: ${workflowMirrorExists ? "yes" : "no"}`,
     "",
+    "Verification health:",
+    `  contract: ${qualityGateAvailability.contractVersion}`,
+    `  gates: available=${qualityGateAvailability.summary.availableCount}, unavailable=${qualityGateAvailability.summary.unavailableCount}, not_configured=${qualityGateAvailability.summary.notConfiguredCount}`,
+    `  rule_scan: ${qualityGateAvailability.gates.rule_scan.availability}`,
+    `  security_scan: ${qualityGateAvailability.gates.security_scan.availability}`,
+    "",
     "Hooks:",
     `  go binary: ${goBinaryReady ? "yes" : "no"}`,
     `  sqlite bridge: ${sqliteBridgeReady ? "ready" : "not ready"}`,
@@ -224,6 +247,14 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
         totalProviders: providers.length,
         totalModels,
       },
+      verificationHealth: {
+        contractVersion: qualityGateAvailability.contractVersion,
+        availableCount: qualityGateAvailability.summary.availableCount,
+        unavailableCount: qualityGateAvailability.summary.unavailableCount,
+        notConfiguredCount: qualityGateAvailability.summary.notConfiguredCount,
+        ruleScanAvailability: qualityGateAvailability.gates.rule_scan.availability,
+        securityScanAvailability: qualityGateAvailability.gates.security_scan.availability,
+      },
     },
     snapshot: {
       timestamp: new Date().toISOString(),
@@ -249,6 +280,12 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
       sqliteBridgeReady,
       hookLogsPresent,
       workflowMirrorPresent: workflowMirrorExists,
+      qualityGateContractVersion: qualityGateAvailability.contractVersion,
+      qualityGateAvailableCount: qualityGateAvailability.summary.availableCount,
+      qualityGateUnavailableCount: qualityGateAvailability.summary.unavailableCount,
+      qualityGateNotConfiguredCount: qualityGateAvailability.summary.notConfiguredCount,
+      ruleScanAvailability: qualityGateAvailability.gates.rule_scan.availability,
+      securityScanAvailability: qualityGateAvailability.gates.security_scan.availability,
       actionCount: actions.length,
     },
   };

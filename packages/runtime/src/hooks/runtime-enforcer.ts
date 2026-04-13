@@ -6,6 +6,7 @@ import type { AgentRole } from "../../../shared/src/types/agent.js";
 import { evaluateBashCommand } from "./bash-guard.js";
 import { evaluateEvidence } from "./evidence-gate.js";
 import { EnforcementWriter } from "./enforcement-writer.js";
+import { normalizeStructuralEvidenceResult } from "../workflow/quality-gates-runtime.js";
 
 export class RuntimeEnforcer {
   private readonly sessionsRepo: SessionsRepo;
@@ -87,6 +88,14 @@ export class RuntimeEnforcer {
       evidenceScore: input.evidenceScore,
       threshold: 0.5,
     });
+    const structuralEvidence = normalizeStructuralEvidenceResult({
+      evaluated: true,
+      allowed: decision.allowed,
+      reason: decision.reason,
+      suggestion: decision.suggestion,
+      toolsUsed: input.toolsUsed,
+      evidenceScore: input.evidenceScore,
+    });
 
     this.writer.writeEvidenceGateDecision({
       sessionId: input.sessionId,
@@ -94,7 +103,10 @@ export class RuntimeEnforcer {
       intent: input.intentText,
       toolsUsed: input.toolsUsed,
       evidenceScore: input.evidenceScore,
-      result: decision,
+      result: {
+        ...decision,
+        qualityGate: structuralEvidence,
+      },
     });
 
     return {

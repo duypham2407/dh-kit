@@ -153,6 +153,20 @@ export function bootstrapDhDatabase(database: DatabaseSync): void {
       timestamp TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS quality_gate_audit (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      envelope_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      gate_id TEXT NOT NULL,
+      availability TEXT NOT NULL,
+      result TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      evidence_json TEXT NOT NULL,
+      limitations_json TEXT NOT NULL,
+      timestamp TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS hook_invocation_logs (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,

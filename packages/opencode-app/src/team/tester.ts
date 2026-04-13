@@ -74,12 +74,18 @@ function fallbackTester(input?: TesterInput): TesterOutputState {
     limitations.push(...browser.limitations);
   }
 
+  const status: TesterOutputState["status"] = browser.required && !browser.pass ? "PARTIAL" : "PASS";
+  const unmetCriteria = browser.required && !browser.pass
+    ? ["Required browser verification did not produce routed browser evidence."]
+    : [];
+  const nextAction: TesterOutputState["nextAction"] = browser.required && !browser.pass ? "implementer" : "complete";
+
   return {
-    status: "PASS",
+    status,
     executedChecks,
     evidence,
-    unmetCriteria: [],
+    unmetCriteria,
     limitations,
-    nextAction: "complete",
+    nextAction,
   };
 }

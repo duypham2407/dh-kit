@@ -5,6 +5,7 @@ import { HookInvocationLogsRepo } from "./hook-invocation-logs-repo.js";
 import { ToolUsageAuditRepo } from "./tool-usage-audit-repo.js";
 import { SkillActivationAuditRepo } from "./skill-activation-audit-repo.js";
 import { McpRouteAuditRepo } from "./mcp-route-audit-repo.js";
+import { QualityGateAuditRepo } from "./quality-gate-audit-repo.js";
 import { closeDhDatabase, openDhDatabase } from "../db.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -414,5 +415,87 @@ describe("Audit repos query filters", () => {
 
     const clamped = repo.list({ sessionId: "sess-1", limit: 9999 });
     expect(clamped).toHaveLength(3);
+  });
+
+  it("QualityGateAuditRepo stores and lists quality-gate records", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new QualityGateAuditRepo(repoRoot);
+
+    repo.save({
+      id: "qg-1",
+      sessionId: "sess-1",
+      envelopeId: "env-1",
+      role: "tester",
+      gateId: "rule_scan",
+      availability: "not_configured",
+      result: "not_run",
+      reason: "Semgrep config missing.",
+      evidence: [],
+      limitations: ["No config"],
+      timestamp: "2026-04-13T10:00:00.000Z",
+    });
+    repo.save({
+      id: "qg-2",
+      sessionId: "sess-1",
+      envelopeId: "env-1",
+      role: "tester",
+      gateId: "workflow_gate",
+      availability: "available",
+      result: "pass",
+      reason: "Workflow gate passed.",
+      evidence: ["verification evidence recorded"],
+      limitations: [],
+      timestamp: "2026-04-13T10:01:00.000Z",
+    });
+
+    const rows = repo.listBySession("sess-1", 10);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.id).toBe("qg-2");
+    expect(rows[0]!.evidence).toContain("verification evidence recorded");
+    expect(rows[1]!.availability).toBe("not_configured");
+  });
+
+  it("QualityGateAuditRepo list(filter) supports role/envelope/time filtering", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new QualityGateAuditRepo(repoRoot);
+
+    repo.save({
+      id: "qg-f-1",
+      sessionId: "sess-f",
+      envelopeId: "env-f-1",
+      role: "tester",
+      gateId: "browser_verification",
+      availability: "available",
+      result: "fail",
+      reason: "missing evidence",
+      evidence: [],
+      limitations: ["missing routed MCP"],
+      timestamp: "2026-04-13T10:00:00.000Z",
+    });
+    repo.save({
+      id: "qg-f-2",
+      sessionId: "sess-f",
+      envelopeId: "env-f-2",
+      role: "implementer",
+      gateId: "workflow_gate",
+      availability: "available",
+      result: "pass",
+      reason: "ok",
+      evidence: ["workflow ok"],
+      limitations: [],
+      timestamp: "2026-04-13T10:01:00.000Z",
+    });
+
+    const roleFiltered = repo.list({ role: "tester" });
+    expect(roleFiltered).toHaveLength(1);
+    expect(roleFiltered[0]!.id).toBe("qg-f-1");
+
+    const envFiltered = repo.list({ envelopeId: "env-f-2" });
+    expect(envFiltered).toHaveLength(1);
+    expect(envFiltered[0]!.id).toBe("qg-f-2");
+
+    const timeFiltered = repo.list({ fromTimestamp: "2026-04-13T10:00:30.000Z" });
+    expect(timeFiltered).toHaveLength(1);
+    expect(timeFiltered[0]!.id).toBe("qg-f-2");
   });
 });

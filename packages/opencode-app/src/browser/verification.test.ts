@@ -35,6 +35,19 @@ describe("runBrowserVerification", () => {
     });
 
     expect(result.required).toBe(true);
+    expect(result.pass).toBe(false);
+    expect(result.outcome).toBe("insufficient_evidence");
     expect(result.limitations.length).toBeGreaterThan(0);
+    expect(result.evidence.some((item) => item.includes("browser verification evidence recorded"))).toBe(false);
+  });
+
+  it("marks not_required outcome when browser verification is not required", () => {
+    const result = runBrowserVerification({
+      objective: "backend refactor",
+      routedMcps: [],
+      evidencePolicy: "optional",
+    });
+
+    expect(result.outcome).toBe("not_required");
   });
 });

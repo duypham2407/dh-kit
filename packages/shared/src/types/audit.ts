@@ -32,6 +32,20 @@ export type McpRouteAudit = {
   timestamp: string;
 };
 
+export type QualityGateAudit = {
+  id: string;
+  sessionId: string;
+  envelopeId: string;
+  role: AgentRole;
+  gateId: "rule_scan" | "security_scan" | "workflow_gate" | "local_verification" | "structural_evidence" | "browser_verification";
+  availability: "available" | "unavailable" | "not_configured";
+  result: "pass" | "fail" | "not_run";
+  reason: string;
+  evidence: string[];
+  limitations: string[];
+  timestamp: string;
+};
+
 export type HookInvocationLog = HookDecisionRecord;
 
 export type AuditQueryFilter = {

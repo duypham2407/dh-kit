@@ -9,6 +9,7 @@ import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution
 import { SessionsRepo } from "../../../storage/src/sqlite/repositories/sessions-repo.js";
 import type { SessionState } from "../../../shared/src/types/session.js";
 import { enforceMcpRouting, enforceMcpRoutingDetailed } from "../executor/enforce-mcp-routing.js";
+import { QualityGateAuditRepo } from "../../../storage/src/sqlite/repositories/quality-gate-audit-repo.js";
 
 function makeRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "dh-workflow-"));
@@ -63,6 +64,12 @@ describe("workflow lanes", () => {
     });
     expect(result.summary.length).toBeGreaterThan(0);
     expect(result.nextStep.length).toBeGreaterThan(0);
+
+    const qualityGateRepo = new QualityGateAuditRepo(repo);
+    const qualityGates = qualityGateRepo.listBySession("sess-1", 20);
+    expect(qualityGates.length).toBeGreaterThan(0);
+    expect(qualityGates.some((record) => record.gateId === "rule_scan")).toBe(true);
+    expect(qualityGates.some((record) => record.gateId === "security_scan")).toBe(true);
   });
 
   it("runs delivery workflow with handoffs and gates", async () => {
@@ -103,11 +110,9 @@ describe("workflow lanes", () => {
     const repo = makeRepo();
     seedSession(repo, "sess-delivery-browser", "delivery", "delivery_solution");
     const objective = "Verify browser UI flow for checkout frontend";
-    const baseEnvelope = makeEnvelope("delivery", "delivery_solution");
-    const browserMcps = enforceMcpRouting(baseEnvelope, objective);
     const envelope = {
-      ...baseEnvelope,
-      activeMcps: browserMcps,
+      ...makeEnvelope("delivery", "delivery_solution"),
+      activeMcps: ["playwright", "chrome-devtools"],
     };
 
     const result = await runDeliveryWorkflow({

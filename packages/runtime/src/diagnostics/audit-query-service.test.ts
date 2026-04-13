@@ -7,6 +7,7 @@ import { ToolUsageAuditRepo } from "../../../storage/src/sqlite/repositories/too
 import { SkillActivationAuditRepo } from "../../../storage/src/sqlite/repositories/skill-activation-audit-repo.js";
 import { McpRouteAuditRepo } from "../../../storage/src/sqlite/repositories/mcp-route-audit-repo.js";
 import { HookInvocationLogsRepo } from "../../../storage/src/sqlite/repositories/hook-invocation-logs-repo.js";
+import { QualityGateAuditRepo } from "../../../storage/src/sqlite/repositories/quality-gate-audit-repo.js";
 import { ConfigRepo } from "../../../storage/src/sqlite/repositories/config-repo.js";
 import { AuditQueryService } from "./audit-query-service.js";
 import { createDebugDump } from "./debug-dump.js";
@@ -34,6 +35,7 @@ describe("AuditQueryService", () => {
     const skillRepo = new SkillActivationAuditRepo(repoRoot);
     const mcpRepo = new McpRouteAuditRepo(repoRoot);
     const hookRepo = new HookInvocationLogsRepo(repoRoot);
+    const qualityGateRepo = new QualityGateAuditRepo(repoRoot);
 
     toolRepo.save({
       id: "tool-1",
@@ -85,6 +87,19 @@ describe("AuditQueryService", () => {
       durationMs: 3,
       timestamp: "2026-04-12T11:04:00.000Z",
     });
+    qualityGateRepo.save({
+      id: "qg-1",
+      sessionId: "sess-1",
+      envelopeId: "env-6",
+      role: "implementer",
+      gateId: "rule_scan",
+      availability: "not_configured",
+      result: "not_run",
+      reason: "Semgrep configuration missing.",
+      evidence: [],
+      limitations: ["No Semgrep configuration"],
+      timestamp: "2026-04-12T11:03:30.000Z",
+    });
 
     const service = new AuditQueryService(repoRoot);
     const snapshot = service.getInspectionSnapshot({
@@ -98,10 +113,13 @@ describe("AuditQueryService", () => {
     expect(snapshot.breakdown.tools).toHaveLength(2);
     expect(snapshot.breakdown.skills).toHaveLength(1);
     expect(snapshot.breakdown.mcps).toHaveLength(1);
+    expect(snapshot.breakdown.qualityGates).toHaveLength(1);
     expect(snapshot.breakdown.hooks).toHaveLength(1);
     expect(snapshot.summary.toolStatusCounts.succeeded).toBe(1);
     expect(snapshot.summary.toolStatusCounts.failed).toBe(1);
     expect(snapshot.summary.hookDecisionCounts.modify).toBe(1);
+    expect(snapshot.summary.qualityGateResultCounts.not_run).toBe(1);
+    expect(snapshot.summary.qualityGateAvailabilityCounts.not_configured).toBe(1);
     expect(snapshot.summary.timelineCount).toBe(3);
     expect(snapshot.timeline).toHaveLength(3);
     expect(snapshot.timeline[0]!.timestamp >= snapshot.timeline[1]!.timestamp).toBe(true);
@@ -136,6 +154,7 @@ describe("AuditQueryService", () => {
     expect(profiles.latestSession.breakdown.tools).toHaveLength(1);
     expect(profiles.recentWindow.query.fromTimestamp).toBeDefined();
     expect(profiles.recentWindow.breakdown.tools).toHaveLength(1);
+    expect(profiles.recentWindow.breakdown.qualityGates).toHaveLength(0);
     expect(profiles.recentWindow.breakdown.hooks).toHaveLength(0);
     expect(profiles.recentWindow.errors).toEqual(
       expect.arrayContaining([
@@ -145,6 +164,35 @@ describe("AuditQueryService", () => {
         }),
       ]),
     );
+  });
+
+  it("includes quality-gate records in recentWindow without session filter", () => {
+    const repoRoot = makeTmpRepo();
+    const qualityGateRepo = new QualityGateAuditRepo(repoRoot);
+
+    qualityGateRepo.save({
+      id: "qg-window-1",
+      sessionId: "sess-a",
+      envelopeId: "env-a",
+      role: "implementer",
+      gateId: "workflow_gate",
+      availability: "available",
+      result: "pass",
+      reason: "workflow pass",
+      evidence: ["gate evidence"],
+      limitations: [],
+      timestamp: new Date().toISOString(),
+    });
+
+    const service = new AuditQueryService(repoRoot);
+    const profiles = service.getInspectionProfiles({
+      latestSessionId: "sess-a",
+      limit: 10,
+      recentWindowHours: 1,
+    });
+
+    expect(profiles.recentWindow.breakdown.qualityGates.length).toBeGreaterThan(0);
+    expect(profiles.recentWindow.summary.qualityGateCount).toBeGreaterThan(0);
   });
 });
 

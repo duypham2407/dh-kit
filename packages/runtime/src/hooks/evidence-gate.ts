@@ -1,7 +1,10 @@
+import type { QualityGateResult } from "../workflow/quality-gates-runtime.js";
+
 export type EvidenceGateDecision = {
   allowed: boolean;
   reason: string;
   suggestion?: string;
+  qualityGate?: QualityGateResult;
 };
 
 type StructuralIntentRule = {

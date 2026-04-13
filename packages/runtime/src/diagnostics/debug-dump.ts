@@ -8,7 +8,8 @@ import { ChunksRepo } from "../../../storage/src/sqlite/repositories/chunks-repo
 import { EmbeddingsRepo } from "../../../storage/src/sqlite/repositories/embeddings-repo.js";
 import { resolveDhPaths } from "../../../shared/src/utils/path.js";
 import { AuditQueryService } from "./audit-query-service.js";
-import { evaluateOperatorSafeProjectWorktree } from "../workspace/operator-safe-project-worktree-utils.js";
+import { runOperatorSafeProjectWorktreeLifecycle } from "../workspace/operator-safe-project-worktree-utils.js";
+import { listOperatorSafeArtifacts } from "../workspace/operator-safe-maintenance-utils.js";
 import { detectProjects } from "../../../intelligence/src/workspace/detect-projects.js";
 import { buildExtensionStateDriftReport } from "../extensions/extension-drift-report.js";
 import type { ExtensionStateDriftReport } from "../extensions/extension-drift-report.js";
@@ -25,6 +26,15 @@ export type DebugDump = {
     warningCount: number;
     blockingCount: number;
     recommendedAction: string;
+    reportId: string;
+    reportPath: string;
+    outcome: string;
+    failureClass: string;
+  };
+  operatorSafeArtifacts: {
+    reportCount: number;
+    snapshotCount: number;
+    tempWorkspaceCount: number;
   };
   // Drift snapshot is persisted-state oriented; `state` may be undefined when
   // no in-flight runtime touch data exists for this debug-dump request.
@@ -54,7 +64,7 @@ export async function createDebugDump(repoRoot: string): Promise<DebugDump> {
     limit: 25,
     recentWindowHours: 24,
   });
-  const operatorSafeWorktreeCheck = await evaluateOperatorSafeProjectWorktree({
+  const operatorSafeLifecycle = await runOperatorSafeProjectWorktreeLifecycle({
     mode: "dry_run",
     operation: "index_workspace",
     repoRoot,
@@ -62,6 +72,7 @@ export async function createDebugDump(repoRoot: string): Promise<DebugDump> {
     requireVcs: false,
     knownWorkspaces: workspaces,
   });
+  const operatorSafeArtifacts = await listOperatorSafeArtifacts(repoRoot);
   const chunksRepo = new ChunksRepo(repoRoot);
   const embeddingsRepo = new EmbeddingsRepo(repoRoot);
   const paths = resolveDhPaths(repoRoot);
@@ -79,10 +90,19 @@ export async function createDebugDump(repoRoot: string): Promise<DebugDump> {
     auditInspection,
     operatorSafeWorktree: {
       mode: "dry_run",
-      allowed: operatorSafeWorktreeCheck.allowed,
-      warningCount: operatorSafeWorktreeCheck.warnings.length,
-      blockingCount: operatorSafeWorktreeCheck.blockingReasons.length,
-      recommendedAction: operatorSafeWorktreeCheck.recommendedAction,
+      allowed: operatorSafeLifecycle.preflight.allowed,
+      warningCount: operatorSafeLifecycle.preflight.warnings.length,
+      blockingCount: operatorSafeLifecycle.preflight.blockingReasons.length,
+      recommendedAction: operatorSafeLifecycle.preflight.recommendedAction,
+      reportId: operatorSafeLifecycle.report.id,
+      reportPath: operatorSafeLifecycle.reportPath,
+      outcome: operatorSafeLifecycle.report.outcome,
+      failureClass: operatorSafeLifecycle.report.failureClass,
+    },
+    operatorSafeArtifacts: {
+      reportCount: operatorSafeArtifacts.reports.length,
+      snapshotCount: operatorSafeArtifacts.snapshots.length,
+      tempWorkspaceCount: operatorSafeArtifacts.tempWorkspaces.length,
     },
     extensionStateDrift,
     diagnostics: {

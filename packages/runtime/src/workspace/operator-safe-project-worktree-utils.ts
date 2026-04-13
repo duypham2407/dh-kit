@@ -6,11 +6,25 @@ import {
   toWorkspaceRelativePath,
 } from "../../../intelligence/src/workspace/scan-paths.js";
 import { detectProjects } from "../../../intelligence/src/workspace/detect-projects.js";
+import { SUPPORTED_OPERATOR_WORKTREE_OPERATIONS } from "../../../shared/src/types/operator-worktree.js";
 import type {
+  OperatorWorktreeExecutionReport,
+  OperatorWorktreeFailureClass,
+  OperatorWorktreeExecutionOutcome,
   OperatorWorktreePreflightInput,
   OperatorWorktreePreflightResult,
   OperatorWorktreeRecommendation,
+  OperatorWorktreeRiskClass,
+  OperatorWorktreeStageResult,
 } from "../../../shared/src/types/operator-worktree.js";
+import { captureOperatorSafeSnapshot } from "./operator-safe-project-worktree-snapshot.js";
+import { prepareOperatorSafeTempWorkspace } from "./operator-safe-temp-workspace.js";
+import { runOperatorSafeBoundedApply } from "./operator-safe-bounded-apply.js";
+import { attemptOperatorSafeRollbackLight } from "./operator-safe-project-worktree-rollback-light.js";
+import {
+  buildOperatorSafeExecutionReport,
+  writeOperatorSafeExecutionReport,
+} from "./operator-safe-execution-report.js";
 
 function findWorkspaceForTarget(input: {
   workspaceRoots: string[];
@@ -29,11 +43,11 @@ function resolveRecommendation(input: {
   hasPartialWarning: boolean;
   hasMissingMarkerWarning: boolean;
 }): OperatorWorktreeRecommendation {
-  if (input.idempotentSkip) {
-    return "run_full_index";
-  }
   if (input.hasMissingMarkerWarning) {
     return "add_workspace_marker";
+  }
+  if (input.idempotentSkip) {
+    return "run_full_index";
   }
   if (input.hasBlockingReasons) {
     return "adjust_target";
@@ -47,6 +61,65 @@ function resolveRecommendation(input: {
   return "proceed";
 }
 
+function resolveRiskClass(input: {
+  mode: OperatorWorktreePreflightInput["mode"];
+  warningsCount: number;
+}): OperatorWorktreeRiskClass {
+  if (input.mode === "execute") {
+    return "high";
+  }
+  if (input.warningsCount > 0) {
+    return "moderate";
+  }
+  return "low";
+}
+
+function resolveOutcome(input: {
+  mode: OperatorWorktreePreflightInput["mode"];
+  preflightAllowed: boolean;
+  applyDelegated: boolean;
+  applyFailed: boolean;
+  rollbackDegraded: boolean;
+}): OperatorWorktreeExecutionOutcome {
+  if (!input.preflightAllowed) {
+    return "blocked";
+  }
+  if (input.applyFailed) {
+    return "failed";
+  }
+  if (input.rollbackDegraded) {
+    return "rollback_degraded";
+  }
+  if (input.mode === "check") {
+    return "advisory";
+  }
+  if (input.mode === "dry_run") {
+    return "dry_run";
+  }
+  return input.applyDelegated ? "succeeded" : "failed";
+}
+
+function resolveFailureClass(input: {
+  preflightAllowed: boolean;
+  applyFailed: boolean;
+  rollbackDegraded: boolean;
+  applyDelegated: boolean;
+}): OperatorWorktreeFailureClass {
+  if (!input.preflightAllowed) {
+    return "preflight_failure";
+  }
+  if (input.applyFailed) {
+    return "apply_failure";
+  }
+  if (input.rollbackDegraded) {
+    return "rollback_degraded";
+  }
+  if (!input.applyDelegated) {
+    return "apply_failure";
+  }
+  return "none";
+}
+
 function normalizeWorkspaceRoots(workspaces: NonNullable<OperatorWorktreePreflightInput["knownWorkspaces"]>) {
   return workspaces.map((workspace) => ({
     ...workspace,
@@ -54,11 +127,22 @@ function normalizeWorkspaceRoots(workspaces: NonNullable<OperatorWorktreePreflig
   }));
 }
 
+function isSupportedOperation(operation: string): operation is OperatorWorktreePreflightInput["operation"] {
+  return (SUPPORTED_OPERATOR_WORKTREE_OPERATIONS as readonly string[]).includes(operation);
+}
+
 export async function evaluateOperatorSafeProjectWorktree(input: OperatorWorktreePreflightInput): Promise<OperatorWorktreePreflightResult> {
   const canonicalRepoRoot = canonicalizeAbsolutePath(input.repoRoot);
   const canonicalTargetPath = canonicalizeAbsolutePath(input.targetPath);
   const warnings: OperatorWorktreePreflightResult["warnings"] = [];
   const blockingReasons: OperatorWorktreePreflightResult["blockingReasons"] = [];
+
+  if (!isSupportedOperation(input.operation)) {
+    blockingReasons.push({
+      code: "operation_not_supported",
+      message: `Operation '${String(input.operation)}' is not supported by the bounded operator-safe layer.`,
+    });
+  }
 
   if (!input.targetPath.trim()) {
     blockingReasons.push({
@@ -180,5 +264,122 @@ export async function evaluateOperatorSafeProjectWorktree(input: OperatorWorktre
         : undefined,
       idempotentSkip: alreadyIndexed,
     },
+  };
+}
+
+export async function runOperatorSafeProjectWorktreeLifecycle(input: OperatorWorktreePreflightInput): Promise<{
+  preflight: OperatorWorktreePreflightResult;
+  report: OperatorWorktreeExecutionReport;
+  reportPath: string;
+}> {
+  const preflight = await evaluateOperatorSafeProjectWorktree(input);
+  const stages: OperatorWorktreeStageResult[] = [
+    {
+      stage: "preflight",
+      success: preflight.allowed,
+      details: preflight.allowed
+        ? "Preflight checks passed for bounded operator-safe execution."
+        : `Preflight blocked execution with ${preflight.blockingReasons.length} blocking reason(s).`,
+    },
+  ];
+
+  const snapshot = await captureOperatorSafeSnapshot({
+    repoRoot: preflight.context.canonicalRepoRoot,
+    preflight,
+  });
+  stages.push({
+    stage: "prepare",
+    success: preflight.allowed ? snapshot.captured || !snapshot.required : false,
+    details: snapshot.required
+      ? (snapshot.captured
+        ? "Snapshot metadata captured."
+        : "Snapshot was required but not captured.")
+      : "Snapshot not required for this mode.",
+  });
+
+  const tempWorkspace = await prepareOperatorSafeTempWorkspace({
+    repoRoot: preflight.context.canonicalRepoRoot,
+    operation: preflight.operation,
+    mode: preflight.mode,
+  });
+
+  const apply = await runOperatorSafeBoundedApply({ preflight });
+  stages.push({
+    stage: "apply",
+    success: preflight.allowed ? (apply.simulated || apply.delegated || apply.applied) : false,
+    details: apply.message,
+  });
+
+  const rollback = await attemptOperatorSafeRollbackLight({
+    mode: preflight.mode,
+    snapshot,
+    apply,
+  });
+  stages.push({
+    stage: "rollback",
+    success: !rollback.degraded,
+    details: rollback.message,
+  });
+
+  stages.push({
+    stage: "cleanup",
+    success: true,
+    details: tempWorkspace.created
+      ? "Temp workspace lifecycle recorded; cleanup controlled by maintenance utilities."
+      : "No temp workspace provisioned for advisory mode.",
+  });
+
+  const outcome = resolveOutcome({
+    mode: preflight.mode,
+    preflightAllowed: preflight.allowed,
+    applyDelegated: apply.delegated || apply.applied || apply.simulated,
+    applyFailed: preflight.allowed && !apply.delegated && !apply.applied && !apply.simulated,
+    rollbackDegraded: rollback.degraded,
+  });
+  const failureClass = resolveFailureClass({
+    preflightAllowed: preflight.allowed,
+    applyFailed: preflight.allowed && !apply.delegated && !apply.applied && !apply.simulated,
+    rollbackDegraded: rollback.degraded,
+    applyDelegated: apply.delegated || apply.applied || apply.simulated,
+  });
+
+  const report = buildOperatorSafeExecutionReport({
+    operation: preflight.operation,
+    mode: preflight.mode,
+    riskClass: resolveRiskClass({
+      mode: preflight.mode,
+      warningsCount: preflight.warnings.length,
+    }),
+    outcome,
+    failureClass,
+    recommendedAction: preflight.recommendedAction,
+    allowed: preflight.allowed,
+    warningCodes: preflight.warnings.map((warning) => warning.code),
+    blockingCodes: preflight.blockingReasons.map((reason) => reason.code),
+    stages,
+    context: {
+      repoRoot: preflight.context.canonicalRepoRoot,
+      targetPath: preflight.context.canonicalTargetPath,
+      workspaceRoot: preflight.context.workspace?.root,
+    },
+    snapshot,
+    tempWorkspace,
+    apply,
+    rollback,
+    notes: [
+      "Bounded operator-safe lifecycle executed.",
+      "Execution apply remains delegated to operation-specific runner for execute mode.",
+      ...(rollback.unavailable
+        ? ["Rollback-light is unavailable for this flow; this is distinct from rollback-degraded execution."]
+        : []),
+    ],
+  });
+
+  const reportPath = await writeOperatorSafeExecutionReport(preflight.context.canonicalRepoRoot, report);
+
+  return {
+    preflight,
+    report,
+    reportPath,
   };
 }

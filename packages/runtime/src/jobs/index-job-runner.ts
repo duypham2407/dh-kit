@@ -5,7 +5,7 @@
  */
 
 import { detectProjects } from "../../../intelligence/src/workspace/detect-projects.js";
-import { evaluateOperatorSafeProjectWorktree } from "../workspace/operator-safe-project-worktree-utils.js";
+import { runOperatorSafeProjectWorktreeLifecycle } from "../workspace/operator-safe-project-worktree-utils.js";
 import { extractCallEdges } from "../../../intelligence/src/graph/extract-call-edges.js";
 import { extractCallSites } from "../../../intelligence/src/graph/extract-call-sites.js";
 import { extractSymbolsFromFiles } from "../../../intelligence/src/symbols/extract-symbols.js";
@@ -54,6 +54,10 @@ export type IndexJobResult = {
       warningCount: number;
       blockingCount: number;
       recommendedAction: string;
+      reportId: string;
+      reportPath: string;
+      outcome: string;
+      failureClass: string;
     };
   };
 };
@@ -85,7 +89,7 @@ export async function runIndexWorkflow(
 
   // ── Step 1: Scan workspace ──────────────────────────────────────
   const workspaces = await detectProjects(repoRoot, opts.scanOptions);
-  const operatorSafety = await evaluateOperatorSafeProjectWorktree({
+  const operatorSafety = await runOperatorSafeProjectWorktreeLifecycle({
     mode: "check",
     operation: "index_workspace",
     repoRoot,
@@ -108,14 +112,18 @@ export async function runIndexWorkflow(
       workspaceCoverage: buildWorkspaceCoverage(workspaces),
       partialScan,
       scanStopReasons,
-      operatorSafety: {
-        mode: operatorSafety.mode,
-        allowed: operatorSafety.allowed,
-        warningCount: operatorSafety.warnings.length,
-        blockingCount: operatorSafety.blockingReasons.length,
-        recommendedAction: operatorSafety.recommendedAction,
-      },
-    });
+        operatorSafety: {
+          mode: operatorSafety.preflight.mode,
+          allowed: operatorSafety.preflight.allowed,
+          warningCount: operatorSafety.preflight.warnings.length,
+          blockingCount: operatorSafety.preflight.blockingReasons.length,
+          recommendedAction: operatorSafety.preflight.recommendedAction,
+          reportId: operatorSafety.report.id,
+          reportPath: operatorSafety.reportPath,
+          outcome: operatorSafety.report.outcome,
+          failureClass: operatorSafety.report.failureClass,
+        },
+      });
   }
 
   const partialScan = workspaces.some((workspace) => workspace.scanMeta?.partial === true);
@@ -169,11 +177,15 @@ export async function runIndexWorkflow(
       partialScan,
       scanStopReasons,
       operatorSafety: {
-        mode: operatorSafety.mode,
-        allowed: operatorSafety.allowed,
-        warningCount: operatorSafety.warnings.length,
-        blockingCount: operatorSafety.blockingReasons.length,
-        recommendedAction: operatorSafety.recommendedAction,
+        mode: operatorSafety.preflight.mode,
+        allowed: operatorSafety.preflight.allowed,
+        warningCount: operatorSafety.preflight.warnings.length,
+        blockingCount: operatorSafety.preflight.blockingReasons.length,
+        recommendedAction: operatorSafety.preflight.recommendedAction,
+        reportId: operatorSafety.report.id,
+        reportPath: operatorSafety.reportPath,
+        outcome: operatorSafety.report.outcome,
+        failureClass: operatorSafety.report.failureClass,
       },
     },
   );
@@ -251,7 +263,7 @@ function makeResult(
   const scanSummary = diagnostics.partialScan
     ? ` scan=partial(${diagnostics.scanStopReasons.join(",") || "unknown"})`
     : " scan=complete";
-  const safetySummary = ` operator-safety=${diagnostics.operatorSafety.allowed ? "allow" : "block"}(${diagnostics.operatorSafety.recommendedAction})`;
+  const safetySummary = ` operator-safety=${diagnostics.operatorSafety.allowed ? "allow" : "block"}(${diagnostics.operatorSafety.recommendedAction}/${diagnostics.operatorSafety.outcome})`;
   const workspaceSummary = ` workspaces=${diagnostics.workspaceCount}`;
 
   return {

@@ -4,7 +4,7 @@ Last reviewed against code: 2026-04-05
 
 ## Mục tiêu
 
-Tài liệu này chốt hướng kiến trúc thực dụng cho `dh`, app cá nhân sở hữu toàn bộ runtime qua fork OpenCode (Go core + TypeScript SDK), lấy cảm hứng từ các công cụ đi trước như Cursor, Augment và Antigravity nhưng lọc lại theo 4 ràng buộc thực tế:
+Tài liệu này chốt hướng kiến trúc thực dụng cho `dh`, app cá nhân sở hữu toàn bộ runtime qua fork OpenCode (Go core + dh-owned internal bridge SDK), lấy cảm hứng từ các công cụ đi trước như Cursor, Augment và Antigravity nhưng lọc lại theo 4 ràng buộc thực tế:
 
 1. trước mắt chỉ cần CLI, không cần GUI
 2. đây là app cá nhân, nên phải tối ưu chi phí vận hành
@@ -137,7 +137,7 @@ Không tạo `apps/api` hay `apps/worker` ở phase đầu. Nếu cần backgrou
 
 ### Quyết định 2: Fork OpenCode làm runtime lõi
 
-Không dùng OpenCode như external shell. `dh` fork toàn bộ OpenCode runtime (Go core + TypeScript SDK) và diverge hoàn toàn.
+Không dùng OpenCode như external shell. `dh` fork runtime core và duy trì bridge SDK nội bộ do dh sở hữu, diverge hoàn toàn theo nhu cầu sản phẩm.
 
 `dh` sở hữu:
 
@@ -166,7 +166,7 @@ Chi tiết quyết định fork: `docs/architecture/opencode-integration-decisio
 - macOS: arm64 (Apple Silicon), amd64 (Intel)
 - Linux: amd64, arm64
 
-User không cần cài Node.js, Go, hay bất kỳ runtime nào. Binary là self-contained.
+Target packaging state: user không cần cài Node.js, Go, hay runtime khác khi single-binary path hoàn tất; current development path vẫn dùng TypeScript/Node tooling cho authoring và validation.
 
 ### Quyết định 4: Ưu tiên local-first storage
 
@@ -215,7 +215,7 @@ Hệ thống có 6 khối chính:
 ```text
 CLI
 -> dh Application Layer (lane, planning, enforcement, context)
--> Forked OpenCode Runtime (Go core + TS SDK, with 6 dh hooks)
+-> Forked OpenCode Runtime (Go core + dh-owned bridge SDK, with 6 dh hooks)
 -> Retrieval Layer
 -> Code Intelligence Layer
 -> Local Storage and Runtime

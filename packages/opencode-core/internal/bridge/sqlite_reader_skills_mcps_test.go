@@ -120,6 +120,67 @@ func TestSQLiteDecisionReaderLatestMcpsDecodesOutputJSON(t *testing.T) {
 	}
 }
 
+func TestSQLiteDecisionReaderLatestMcpRoutingDecisionDecodesBlockedAndWarnings(t *testing.T) {
+	repoRoot := t.TempDir()
+	dbDir := filepath.Join(repoRoot, ".dh", "sqlite")
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		t.Fatalf("mkdir db dir: %v", err)
+	}
+	dbPath := filepath.Join(repoRoot, DBPathTemplate)
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if _, err := db.Exec(`
+		CREATE TABLE hook_invocation_logs (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			envelope_id TEXT NOT NULL,
+			hook_name TEXT NOT NULL,
+			input_json TEXT NOT NULL,
+			output_json TEXT NOT NULL,
+			decision TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			duration_ms REAL NOT NULL,
+			timestamp TEXT NOT NULL
+		);
+	`); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO hook_invocation_logs (id, session_id, envelope_id, hook_name, input_json, output_json, decision, reason, duration_ms, timestamp)
+		VALUES ('1', 'sess-1', 'env-1', 'mcp_routing', '{}', '{"mcps":["augment_context_engine"],"blocked":["chrome-devtools"],"warnings":["fallback applied"]}', 'modify', 'ok', 1, '2026-04-05T10:00:00Z');
+	`); err != nil {
+		t.Fatalf("insert row: %v", err)
+	}
+
+	reader, err := NewSQLiteDecisionReader(repoRoot)
+	if err != nil {
+		t.Fatalf("new reader: %v", err)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+
+	decision, ok, err := reader.LatestMcpRoutingDecision("sess-1", "env-1")
+	if err != nil {
+		t.Fatalf("latest decision: %v", err)
+	}
+	if !ok || decision == nil {
+		t.Fatal("expected decision, got not found")
+	}
+	if len(decision.Mcps) != 1 || decision.Mcps[0] != "augment_context_engine" {
+		t.Fatalf("unexpected mcps: %#v", decision.Mcps)
+	}
+	if len(decision.Blocked) != 1 || decision.Blocked[0] != "chrome-devtools" {
+		t.Fatalf("unexpected blocked: %#v", decision.Blocked)
+	}
+	if len(decision.Warnings) != 1 || decision.Warnings[0] != "fallback applied" {
+		t.Fatalf("unexpected warnings: %#v", decision.Warnings)
+	}
+}
+
 func TestSQLiteDecisionReaderLatestSkillsFallsBackToSessionScope(t *testing.T) {
 	repoRoot := t.TempDir()
 	dbDir := filepath.Join(repoRoot, ".dh", "sqlite")

@@ -44,6 +44,10 @@ func (stubDecisionReader) LatestMcps(sessionID, envelopeID string) ([]string, bo
 	return []string{"augment_context_engine", "context7"}, true, nil
 }
 
+func (stubDecisionReader) LatestMcpRoutingDecision(sessionID, envelopeID string) (*bridge.McpRoutingDecisionRow, bool, error) {
+	return &bridge.McpRoutingDecisionRow{Mcps: []string{"augment_context_engine", "context7"}, Blocked: []string{}}, true, nil
+}
+
 func (stubDecisionReader) Close() error { return nil }
 
 func TestNewRegistryWithDecisionReaderRegistersAllHooks(t *testing.T) {

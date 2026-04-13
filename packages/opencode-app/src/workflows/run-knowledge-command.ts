@@ -1,6 +1,7 @@
 import { runRetrieval } from "../../../retrieval/src/query/run-retrieval.js";
 import { ChunksRepo } from "../../../storage/src/sqlite/repositories/chunks-repo.js";
 import { EmbeddingsRepo } from "../../../storage/src/sqlite/repositories/embeddings-repo.js";
+import { KnowledgeCommandSessionBridge } from "../../../runtime/src/session/knowledge-command-session-bridge.js";
 
 export type KnowledgeCommandReport = {
   exitCode: number;
@@ -13,6 +14,21 @@ export type KnowledgeCommandReport = {
   resultCount: number;
   evidenceCount: number;
   evidencePreview: string[];
+  sessionId?: string;
+  resumed?: boolean;
+  compaction?: {
+    attempted: boolean;
+    overflow: boolean;
+    compacted: boolean;
+    continuationSummaryGeneratedInMemory: boolean;
+    continuationSummaryPersisted: boolean;
+  };
+  persistence?: {
+    attempted: boolean;
+    persisted: boolean;
+    warning?: string;
+    eventId?: string;
+  };
   message?: string;
   guidance?: string[];
 };
@@ -21,6 +37,7 @@ export async function runKnowledgeCommand(input: {
   kind: "ask" | "explain" | "trace";
   input: string;
   repoRoot: string;
+  resumeSessionId?: string;
 }): Promise<KnowledgeCommandReport> {
   if (!input.input) {
     return {
@@ -36,6 +53,29 @@ export async function runKnowledgeCommand(input: {
       evidencePreview: [],
       message: `Missing input for '${input.kind}' command.`,
       guidance: [`Example: dh ${input.kind} "how does authentication work?"`],
+    };
+  }
+
+  const bridge = new KnowledgeCommandSessionBridge(input.repoRoot);
+  const resolved = bridge.resolveSession({
+    kind: input.kind,
+    prompt: input.input,
+    resumeSessionId: input.resumeSessionId,
+  });
+
+  if (!resolved.ok) {
+    return {
+      exitCode: 1,
+      command: input.kind,
+      repo: input.repoRoot,
+      intent: "",
+      tools: [],
+      seedTerms: [],
+      workspaceCount: 0,
+      resultCount: 0,
+      evidenceCount: 0,
+      evidencePreview: [],
+      message: resolved.reason,
     };
   }
 
@@ -81,6 +121,10 @@ export async function runKnowledgeCommand(input: {
     evidencePreview: retrieval.evidencePackets.slice(0, 3).map((packet, index) => {
       return `evidence ${index + 1}: ${packet.filePath} [${packet.lines[0]}-${packet.lines[1]}] score=${packet.score.toFixed(2)} reason=${packet.reason}`;
     }),
+    sessionId: resolved.session.sessionId,
+    resumed: resolved.resumed,
+    compaction: resolved.compaction,
+    persistence: resolved.persistence,
     guidance,
   };
 }

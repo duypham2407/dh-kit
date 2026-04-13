@@ -1,4 +1,5 @@
 import type { AgentRole } from "./agent.js";
+import type { HookDecisionRecord } from "../../../opencode-sdk/src/index.js";
 
 export type ToolUsageAudit = {
   id: string;
@@ -31,15 +32,30 @@ export type McpRouteAudit = {
   timestamp: string;
 };
 
-export type HookInvocationLog = {
+export type QualityGateAudit = {
   id: string;
   sessionId: string;
   envelopeId: string;
-  hookName: "model_override" | "pre_tool_exec" | "pre_answer" | "skill_activation" | "mcp_routing" | "session_state";
-  input: Record<string, unknown>;
-  output: Record<string, unknown>;
-  decision: "allow" | "block" | "modify";
+  role: AgentRole;
+  gateId: "rule_scan" | "security_scan" | "workflow_gate" | "local_verification" | "structural_evidence" | "browser_verification";
+  availability: "available" | "unavailable" | "not_configured";
+  result: "pass" | "fail" | "not_run";
   reason: string;
-  durationMs: number;
+  evidence: string[];
+  limitations: string[];
   timestamp: string;
 };
+
+export type HookInvocationLog = HookDecisionRecord;
+
+export type AuditQueryFilter = {
+  sessionId?: string;
+  role?: AgentRole;
+  envelopeId?: string;
+  fromTimestamp?: string;
+  toTimestamp?: string;
+  limit?: number;
+};
+
+export const DEFAULT_AUDIT_QUERY_LIMIT = 25;
+export const MAX_AUDIT_QUERY_LIMIT = 100;

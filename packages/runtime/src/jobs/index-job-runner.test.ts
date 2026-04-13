@@ -55,8 +55,11 @@ describe("runIndexWorkflow", () => {
     expect(result.embedding).toBeDefined();
     expect(result.embedding!.embeddingsStored).toBeGreaterThan(0);
     expect(result.summary).toContain("Indexed");
+    expect(result.summary).toContain("operator-safety=");
     expect(result.diagnostics.filesDiscovered).toBeGreaterThan(0);
     expect(result.diagnostics.filesRefreshed).toBeGreaterThan(0);
+    expect(result.diagnostics.operatorSafety.allowed).toBe(true);
+    expect(result.diagnostics.operatorSafety.blockingCount).toBe(0);
 
     // Verify DB state
     const chunksRepo = new ChunksRepo(repo);
@@ -82,6 +85,7 @@ describe("runIndexWorkflow", () => {
     expect(result.embedding).toBeUndefined();
     expect(result.summary).toContain("embeddings=skipped");
     expect(result.diagnostics.filesRefreshed).toBeGreaterThan(0);
+    expect(result.diagnostics.operatorSafety.allowed).toBe(true);
   });
 
   it("returns zero counts for empty repo", async () => {
@@ -96,6 +100,35 @@ describe("runIndexWorkflow", () => {
     expect(result.chunksProduced).toBe(0);
     expect(result.embedding).toBeUndefined();
     expect(result.diagnostics.filesDiscovered).toBe(0);
+    expect(result.diagnostics.operatorSafety.allowed).toBe(true);
+  });
+
+  it("surfaces partial scan diagnostics and summary", async () => {
+    const repo = makeTmpRepo();
+    fs.writeFileSync(path.join(repo, "src", "a.ts"), "export const a = 1;\n", "utf8");
+    fs.writeFileSync(path.join(repo, "src", "b.ts"), "export const b = 1;\n", "utf8");
+
+    const result = await runIndexWorkflow(repo, { scanOptions: { maxFiles: 1 }, skipEmbedding: true });
+
+    expect(result.diagnostics.partialScan).toBe(true);
+    expect(result.diagnostics.scanStopReasons).toContain("max_files_reached");
+    expect(result.summary).toContain("scan=partial");
+    expect(result.summary).toContain("operator-safety=allow");
+    expect(result.summary).toContain("workspaces=1");
+    expect(result.diagnostics.workspaceCount).toBe(1);
+    expect(result.diagnostics.workspaceCoverage[0]?.partial).toBe(true);
+    expect(result.diagnostics.workspaceCoverage[0]?.stopReason).toBe("max_files_reached");
+  });
+
+  it("keeps check-mode safety advisory and does not abort indexing", async () => {
+    const repo = makeTmpRepo();
+    fs.writeFileSync(path.join(repo, "src", "a.ts"), "export const a = 1;\n", "utf8");
+
+    const result = await runIndexWorkflow(repo, { skipEmbedding: true });
+
+    expect(result.filesScanned).toBeGreaterThan(0);
+    expect(result.diagnostics.operatorSafety.mode).toBe("check");
+    expect(result.summary).toContain("operator-safety=");
   });
 
   it("does not re-chunk already-indexed files unless force=true", async () => {

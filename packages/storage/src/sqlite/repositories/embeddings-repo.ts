@@ -112,6 +112,14 @@ export class EmbeddingsRepo {
     return result.changes;
   }
 
+  countOrphaned(): number {
+    const database = openDhDatabase(this.repoRoot);
+    const row = database.prepare(
+      "SELECT COUNT(*) as count FROM embeddings WHERE chunk_id NOT IN (SELECT id FROM chunks)",
+    ).get() as { count: number };
+    return row.count;
+  }
+
   countByModel(modelName: string): number {
     const database = openDhDatabase(this.repoRoot);
     const row = database.prepare("SELECT COUNT(*) as count FROM embeddings WHERE model_name = ?").get(modelName) as { count: number };

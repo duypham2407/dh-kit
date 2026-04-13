@@ -12,6 +12,7 @@ export type BrowserVerificationResult = {
   executedChecks: string[];
   evidence: string[];
   limitations: string[];
+  outcome: "not_required" | "verified" | "insufficient_evidence";
 };
 
 export function runBrowserVerification(input: BrowserVerificationInput): BrowserVerificationResult {
@@ -27,6 +28,7 @@ export function runBrowserVerification(input: BrowserVerificationInput): Browser
       executedChecks: [],
       evidence: [],
       limitations: [],
+      outcome: "not_required",
     };
   }
 
@@ -34,29 +36,36 @@ export function runBrowserVerification(input: BrowserVerificationInput): Browser
   const evidence: string[] = [];
   const limitations: string[] = [];
 
-  if (mcpSet.has("playwright")) {
+  const hasPlaywright = mcpSet.has("playwright");
+  const hasDevtools = mcpSet.has("chrome-devtools");
+
+  if (hasPlaywright) {
     executedChecks.push("Playwright smoke verification flow");
     evidence.push("playwright smoke flow routed");
   } else {
     limitations.push("Playwright MCP was not routed; browser smoke depth is reduced.");
   }
 
-  if (mcpSet.has("chrome-devtools")) {
+  if (hasDevtools) {
     executedChecks.push("Chrome DevTools diagnostics flow");
     evidence.push("chrome-devtools verification flow routed");
   } else {
     limitations.push("Chrome DevTools MCP was not routed; diagnostics depth is reduced.");
   }
 
-  evidence.push("browser verification evidence recorded");
+  const pass = hasPlaywright || hasDevtools;
+  if (pass) {
+    evidence.push("browser verification evidence recorded");
+  }
   evidence.push(`browser evidence policy: ${input.evidencePolicy}`);
 
   return {
     required: true,
-    pass: true,
+    pass,
     executedChecks,
     evidence,
     limitations,
+    outcome: pass ? "verified" : "insufficient_evidence",
   };
 }
 

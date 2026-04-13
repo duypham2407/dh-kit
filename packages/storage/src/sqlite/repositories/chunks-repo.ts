@@ -16,6 +16,13 @@ export type ChunkRow = {
   createdAt: string;
 };
 
+export type ChunkPathInventoryRow = {
+  id: string;
+  fileId: string;
+  filePath: string;
+  createdAt: string;
+};
+
 type RawChunkRow = {
   id: string;
   file_id: string;
@@ -133,5 +140,44 @@ export class ChunksRepo {
     const database = openDhDatabase(this.repoRoot);
     const row = database.prepare("SELECT COUNT(*) as count FROM chunks").get() as { count: number };
     return row.count;
+  }
+
+  /**
+   * Lightweight path inventory used by historical cleanup/remediation flows.
+   */
+  listPathInventory(): ChunkPathInventoryRow[] {
+    const database = openDhDatabase(this.repoRoot);
+    const rows = database.prepare(
+      "SELECT id, file_id, file_path, created_at FROM chunks ORDER BY created_at DESC",
+    ).all() as Array<{ id: string; file_id: string; file_path: string; created_at: string }>;
+    return rows.map((row) => ({
+      id: row.id,
+      fileId: row.file_id,
+      filePath: row.file_path,
+      createdAt: row.created_at,
+    }));
+  }
+
+  /**
+   * Batch-safe file_path update by chunk id.
+   * Returns number of rows updated.
+   */
+  updateFilePathsByChunkId(updates: Array<{ chunkId: string; filePath: string }>): number {
+    if (updates.length === 0) return 0;
+    const database = openDhDatabase(this.repoRoot);
+    const updateStmt = database.prepare("UPDATE chunks SET file_path = ? WHERE id = ?");
+    database.exec("BEGIN");
+    try {
+      let changed = 0;
+      for (const item of updates) {
+        const result = updateStmt.run(item.filePath, item.chunkId) as { changes: number };
+        changed += result.changes;
+      }
+      database.exec("COMMIT");
+      return changed;
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
   }
 }

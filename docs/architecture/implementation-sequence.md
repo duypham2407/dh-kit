@@ -39,7 +39,7 @@ Chuỗi phụ thuộc chính:
 
 ```text
 opencode-core fork + hook stubs
--> opencode-sdk fork
+-> opencode-sdk dh-owned bridge SDK baseline
 -> shared contracts
 -> runtime state + storage
 -> opencode-app enforcement logic
@@ -64,7 +64,7 @@ Fork OpenCode runtime, add hook stubs, build first binary.
 
 1. Fork OpenCode Go core vào `packages/opencode-core/`
 2. Record fork origin (commit hash, version) in `FORK_ORIGIN.md`
-3. Fork OpenCode TypeScript SDK vào `packages/opencode-sdk/`
+3. Establish dh-owned bridge SDK in `packages/opencode-sdk/`
 4. Add 6 hook point stubs in Go core:
    - `internal/hooks/model_override.go`
    - `internal/hooks/pre_tool_exec.go`

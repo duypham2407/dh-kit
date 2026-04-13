@@ -41,6 +41,12 @@ type HookDecisionRow struct {
 	Reason     string
 }
 
+type McpRoutingDecisionRow struct {
+	Mcps     []string
+	Blocked  []string
+	Warnings []string
+}
+
 // DecisionReader is the interface Go hook implementations use to query
 // TS-side enforcement decisions. Concrete implementations are in
 // sqlite_reader.go (requires a build tag to compile with a driver).
@@ -53,6 +59,7 @@ type DecisionReader interface {
 	LatestResolvedModel(sessionID, envelopeID string) (providerID, modelID, variantID string, ok bool, err error)
 	LatestSkills(sessionID, envelopeID string) ([]string, bool, error)
 	LatestMcps(sessionID, envelopeID string) ([]string, bool, error)
+	LatestMcpRoutingDecision(sessionID, envelopeID string) (*McpRoutingDecisionRow, bool, error)
 	Close() error
 }
 
@@ -77,6 +84,10 @@ func (AllowByDefault) LatestSkills(_, _ string) ([]string, bool, error) {
 }
 
 func (AllowByDefault) LatestMcps(_, _ string) ([]string, bool, error) {
+	return nil, false, nil
+}
+
+func (AllowByDefault) LatestMcpRoutingDecision(_, _ string) (*McpRoutingDecisionRow, bool, error) {
 	return nil, false, nil
 }
 

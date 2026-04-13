@@ -14,7 +14,7 @@ Tổng thể kiến trúc (mental model)
 
 ```text
 CLI Interface
--> dh Application Layer + Forked OpenCode Runtime (Go core + TS SDK, 6 hooks)
+-> dh Application Layer + Forked OpenCode Runtime (Go core + dh-owned bridge SDK, 6 hooks)
 -> Code Intelligence Engine
 -> Index + Storage Layer
 ```

@@ -2,7 +2,11 @@ import { describe, it, expect, afterEach } from "vitest";
 import { ChunksRepo } from "./chunks-repo.js";
 import { EmbeddingsRepo } from "./embeddings-repo.js";
 import { HookInvocationLogsRepo } from "./hook-invocation-logs-repo.js";
-import { closeDhDatabase } from "../db.js";
+import { ToolUsageAuditRepo } from "./tool-usage-audit-repo.js";
+import { SkillActivationAuditRepo } from "./skill-activation-audit-repo.js";
+import { McpRouteAuditRepo } from "./mcp-route-audit-repo.js";
+import { QualityGateAuditRepo } from "./quality-gate-audit-repo.js";
+import { closeDhDatabase, openDhDatabase } from "../db.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -91,6 +95,42 @@ describe("ChunksRepo", () => {
     repo.deleteByFileId("f1");
     expect(repo.listAll()).toHaveLength(1);
     expect(repo.listAll()[0]!.fileId).toBe("f2");
+  });
+
+  it("listPathInventory returns lightweight path rows", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new ChunksRepo(repoRoot);
+    const saved = repo.save({
+      fileId: "f1",
+      filePath: "src/a.ts",
+      symbolId: undefined,
+      lineStart: 1,
+      lineEnd: 10,
+      content: "a",
+      contentHash: "h-a",
+      tokenEstimate: 1,
+      language: "ts",
+    });
+
+    const inventory = repo.listPathInventory();
+    expect(inventory).toHaveLength(1);
+    expect(inventory[0]).toMatchObject({
+      id: saved.id,
+      fileId: "f1",
+      filePath: "src/a.ts",
+    });
+  });
+
+  it("updateFilePathsByChunkId updates only provided rows", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new ChunksRepo(repoRoot);
+    const c1 = repo.save({ fileId: "f1", filePath: "./src/a.ts", symbolId: undefined, lineStart: 1, lineEnd: 10, content: "a", contentHash: "ha-1", tokenEstimate: 1, language: "ts" });
+    const c2 = repo.save({ fileId: "f2", filePath: "src/b.ts", symbolId: undefined, lineStart: 1, lineEnd: 10, content: "b", contentHash: "ha-2", tokenEstimate: 1, language: "ts" });
+
+    const updated = repo.updateFilePathsByChunkId([{ chunkId: c1.id, filePath: "src/a.ts" }]);
+    expect(updated).toBe(1);
+    expect(repo.findById(c1.id)!.filePath).toBe("src/a.ts");
+    expect(repo.findById(c2.id)!.filePath).toBe("src/b.ts");
   });
 });
 
@@ -193,6 +233,25 @@ describe("EmbeddingsRepo", () => {
     expect(rows).toHaveLength(2);
     expect(repo.countByModel("m")).toBe(2);
   });
+
+  it("countOrphaned tracks orphan rows before and after cleanup", () => {
+    const repoRoot = makeTmpRepo();
+    const c1 = saveChunk(repoRoot, "c1");
+    const c2 = saveChunk(repoRoot, "c2");
+    const database = openDhDatabase(repoRoot);
+    const repo = new EmbeddingsRepo(repoRoot);
+    repo.save({ chunkId: c1.id, modelName: "m", vector: [1], vectorDim: 1 });
+    repo.save({ chunkId: c2.id, modelName: "m", vector: [2], vectorDim: 1 });
+
+    database.exec("PRAGMA foreign_keys = OFF");
+    database.prepare("DELETE FROM chunks WHERE id = ?").run(c1.id);
+    database.prepare("DELETE FROM chunks WHERE id = ?").run(c2.id);
+    database.exec("PRAGMA foreign_keys = ON");
+
+    expect(repo.countOrphaned()).toBe(2);
+    expect(repo.deleteOrphaned()).toBe(2);
+    expect(repo.countOrphaned()).toBe(0);
+  });
 });
 
 describe("HookInvocationLogsRepo", () => {
@@ -252,5 +311,191 @@ describe("HookInvocationLogsRepo", () => {
     expect(logs).toHaveLength(3);
     // Newest first
     expect(logs[0]!.timestamp > logs[1]!.timestamp).toBe(true);
+  });
+});
+
+describe("Audit repos query filters", () => {
+  it("ToolUsageAuditRepo filters by session, role, envelope, and time-range", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new ToolUsageAuditRepo(repoRoot);
+
+    repo.save({
+      id: "tool-1",
+      sessionId: "sess-1",
+      envelopeId: "env-1",
+      role: "implementer",
+      intent: "read",
+      toolName: "Read",
+      status: "succeeded",
+      timestamp: "2026-04-12T10:00:00.000Z",
+    });
+    repo.save({
+      id: "tool-2",
+      sessionId: "sess-1",
+      envelopeId: "env-2",
+      role: "reviewer",
+      intent: "scan",
+      toolName: "Grep",
+      status: "failed",
+      timestamp: "2026-04-12T11:00:00.000Z",
+    });
+    repo.save({
+      id: "tool-3",
+      sessionId: "sess-2",
+      envelopeId: "env-3",
+      role: "implementer",
+      intent: "query",
+      toolName: "SQL",
+      status: "called",
+      timestamp: "2026-04-12T12:00:00.000Z",
+    });
+
+    const sess1 = repo.list({ sessionId: "sess-1" });
+    expect(sess1).toHaveLength(2);
+
+    const reviewerOnly = repo.list({ role: "reviewer" });
+    expect(reviewerOnly).toHaveLength(1);
+    expect(reviewerOnly[0]!.id).toBe("tool-2");
+
+    const env2 = repo.list({ envelopeId: "env-2" });
+    expect(env2).toHaveLength(1);
+    expect(env2[0]!.id).toBe("tool-2");
+
+    const timeRange = repo.list({ fromTimestamp: "2026-04-12T10:30:00.000Z", toTimestamp: "2026-04-12T11:30:00.000Z" });
+    expect(timeRange).toHaveLength(1);
+    expect(timeRange[0]!.id).toBe("tool-2");
+  });
+
+  it("SkillActivationAuditRepo applies newest-first with bounded limit", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new SkillActivationAuditRepo(repoRoot);
+
+    repo.save({
+      id: "skill-1",
+      sessionId: "sess-1",
+      envelopeId: "env-1",
+      role: "implementer",
+      skillName: "s1",
+      activationReason: "r1",
+      timestamp: "2026-04-12T10:00:00.000Z",
+    });
+    repo.save({
+      id: "skill-2",
+      sessionId: "sess-1",
+      envelopeId: "env-2",
+      role: "implementer",
+      skillName: "s2",
+      activationReason: "r2",
+      timestamp: "2026-04-12T11:00:00.000Z",
+    });
+
+    const limited = repo.list({ sessionId: "sess-1", limit: 1 });
+    expect(limited).toHaveLength(1);
+    expect(limited[0]!.id).toBe("skill-2");
+  });
+
+  it("McpRouteAuditRepo applies max limit clamp and empty-result behavior", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new McpRouteAuditRepo(repoRoot);
+
+    for (let i = 0; i < 3; i++) {
+      repo.save({
+        id: `mcp-${i}`,
+        sessionId: "sess-1",
+        envelopeId: `env-${i}`,
+        role: "analyst",
+        mcpName: "context7",
+        routeReason: "reason",
+        timestamp: `2026-04-12T1${i}:00:00.000Z`,
+      });
+    }
+
+    const none = repo.list({ sessionId: "missing" });
+    expect(none).toEqual([]);
+
+    const clamped = repo.list({ sessionId: "sess-1", limit: 9999 });
+    expect(clamped).toHaveLength(3);
+  });
+
+  it("QualityGateAuditRepo stores and lists quality-gate records", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new QualityGateAuditRepo(repoRoot);
+
+    repo.save({
+      id: "qg-1",
+      sessionId: "sess-1",
+      envelopeId: "env-1",
+      role: "tester",
+      gateId: "rule_scan",
+      availability: "not_configured",
+      result: "not_run",
+      reason: "Semgrep config missing.",
+      evidence: [],
+      limitations: ["No config"],
+      timestamp: "2026-04-13T10:00:00.000Z",
+    });
+    repo.save({
+      id: "qg-2",
+      sessionId: "sess-1",
+      envelopeId: "env-1",
+      role: "tester",
+      gateId: "workflow_gate",
+      availability: "available",
+      result: "pass",
+      reason: "Workflow gate passed.",
+      evidence: ["verification evidence recorded"],
+      limitations: [],
+      timestamp: "2026-04-13T10:01:00.000Z",
+    });
+
+    const rows = repo.listBySession("sess-1", 10);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.id).toBe("qg-2");
+    expect(rows[0]!.evidence).toContain("verification evidence recorded");
+    expect(rows[1]!.availability).toBe("not_configured");
+  });
+
+  it("QualityGateAuditRepo list(filter) supports role/envelope/time filtering", () => {
+    const repoRoot = makeTmpRepo();
+    const repo = new QualityGateAuditRepo(repoRoot);
+
+    repo.save({
+      id: "qg-f-1",
+      sessionId: "sess-f",
+      envelopeId: "env-f-1",
+      role: "tester",
+      gateId: "browser_verification",
+      availability: "available",
+      result: "fail",
+      reason: "missing evidence",
+      evidence: [],
+      limitations: ["missing routed MCP"],
+      timestamp: "2026-04-13T10:00:00.000Z",
+    });
+    repo.save({
+      id: "qg-f-2",
+      sessionId: "sess-f",
+      envelopeId: "env-f-2",
+      role: "implementer",
+      gateId: "workflow_gate",
+      availability: "available",
+      result: "pass",
+      reason: "ok",
+      evidence: ["workflow ok"],
+      limitations: [],
+      timestamp: "2026-04-13T10:01:00.000Z",
+    });
+
+    const roleFiltered = repo.list({ role: "tester" });
+    expect(roleFiltered).toHaveLength(1);
+    expect(roleFiltered[0]!.id).toBe("qg-f-1");
+
+    const envFiltered = repo.list({ envelopeId: "env-f-2" });
+    expect(envFiltered).toHaveLength(1);
+    expect(envFiltered[0]!.id).toBe("qg-f-2");
+
+    const timeFiltered = repo.list({ fromTimestamp: "2026-04-13T10:00:30.000Z" });
+    expect(timeFiltered).toHaveLength(1);
+    expect(timeFiltered[0]!.id).toBe("qg-f-2");
   });
 });

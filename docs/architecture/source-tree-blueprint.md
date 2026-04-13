@@ -144,7 +144,7 @@ Blueprint chính cho `packages/`:
 ```text
 packages/
   opencode-core/     <- Forked Go runtime with dh hooks
-  opencode-sdk/      <- Forked TypeScript SDK
+  opencode-sdk/      <- dh-owned internal bridge SDK
   shared/
   opencode-app/
   intelligence/
@@ -190,7 +190,7 @@ packages/opencode-core/
 
 ## `packages/opencode-sdk/`
 
-Đây là forked TypeScript SDK, cung cấp type definitions và protocol contracts.
+Đây là dh-owned internal bridge SDK, cung cấp type definitions và protocol contracts.
 
 ```text
 packages/opencode-sdk/
@@ -638,7 +638,7 @@ build/
 Nếu bắt đầu scaffold thật, nên tạo theo thứ tự:
 
 1. `packages/opencode-core/` (fork Go source, add hook stubs)
-2. `packages/opencode-sdk/` (fork TS SDK)
+2. `packages/opencode-sdk/` (dh-owned bridge SDK baseline)
 3. `apps/cli/`
 4. `packages/shared/`
 5. `packages/opencode-app/`

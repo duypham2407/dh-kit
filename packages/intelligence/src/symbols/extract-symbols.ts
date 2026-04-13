@@ -1,9 +1,9 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 import type { IndexedFile, IndexedSymbol } from "../../../shared/src/types/indexing.js";
 import { createId } from "../../../shared/src/utils/ids.js";
 import { extractSymbolsFromFilesAST } from "../parser/ast-symbol-extractor.js";
 import { isSupportedLanguage } from "../parser/tree-sitter-init.js";
+import { resolveIndexedFileAbsolutePath } from "../workspace/scan-paths.js";
 
 const SYMBOL_PATTERNS: Array<{
   kind: IndexedSymbol["kind"];
@@ -66,7 +66,10 @@ export async function extractSymbolsFromFilesRegex(repoRoot: string, files: Inde
 }
 
 async function extractSymbolsFromFile(repoRoot: string, file: IndexedFile): Promise<IndexedSymbol[]> {
-  const absolutePath = path.join(repoRoot, file.path);
+  const absolutePath = resolveIndexedFileAbsolutePath(repoRoot, file);
+  if (!absolutePath) {
+    return [];
+  }
   const content = await fs.readFile(absolutePath, "utf8");
   const symbols: IndexedSymbol[] = [];
 

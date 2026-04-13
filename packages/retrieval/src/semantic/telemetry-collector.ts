@@ -32,6 +32,11 @@ function eventsFilePath(repoRoot: string): string {
 
 type TimestampedEvent = TelemetryEvent & { timestamp: string };
 
+export type TelemetrySummaryWindow = {
+  sinceIso?: string;
+  untilIso?: string;
+};
+
 /**
  * Append a telemetry event to the local JSONL log.
  * Synchronous to avoid interfering with async pipeline flow.
@@ -91,6 +96,10 @@ export type TelemetrySummary = {
     avgDurationMs: number;
     strategyBreakdown: Record<string, number>;
   };
+  unresolvedPaths: {
+    semantic: number;
+    evidence: number;
+  };
 };
 
 /**
@@ -98,6 +107,15 @@ export type TelemetrySummary = {
  */
 export function summarizeTelemetry(repoRoot: string): TelemetrySummary {
   const events = readTelemetryEvents(repoRoot);
+  return summarizeTelemetryFromEvents(events);
+}
+
+export function summarizeTelemetryInWindow(repoRoot: string, window: TelemetrySummaryWindow): TelemetrySummary {
+  const events = readTelemetryEvents(repoRoot);
+  return summarizeTelemetryFromEvents(filterEventsByWindow(events, window));
+}
+
+function summarizeTelemetryFromEvents(events: TimestampedEvent[]): TelemetrySummary {
 
   const pipelineEvents = events.filter((e): e is TimestampedEvent & { kind: "embedding_pipeline"; metrics: EmbeddingPipelineMetrics } => e.kind === "embedding_pipeline");
   const annEvents = events.filter((e): e is TimestampedEvent & { kind: "ann_build"; metrics: AnnBuildMetrics } => e.kind === "ann_build");
@@ -110,6 +128,8 @@ export function summarizeTelemetry(repoRoot: string): TelemetrySummary {
   const aTotalDur = annEvents.reduce((s, e) => s + e.metrics.durationMs, 0);
 
   const sTotalDur = searchEvents.reduce((s, e) => s + e.metrics.durationMs, 0);
+  const semanticPathUnresolvedCount = events.filter((e) => e.kind === "semantic_path_unresolved").length;
+  const evidencePathUnresolvedCount = events.filter((e) => e.kind === "evidence_path_unresolved").length;
   const strategyBreakdown: Record<string, number> = {};
   for (const e of searchEvents) {
     strategyBreakdown[e.metrics.strategy] = (strategyBreakdown[e.metrics.strategy] ?? 0) + 1;
@@ -135,5 +155,19 @@ export function summarizeTelemetry(repoRoot: string): TelemetrySummary {
       avgDurationMs: searchEvents.length > 0 ? sTotalDur / searchEvents.length : 0,
       strategyBreakdown,
     },
+    unresolvedPaths: {
+      semantic: semanticPathUnresolvedCount,
+      evidence: evidencePathUnresolvedCount,
+    },
   };
+}
+
+function filterEventsByWindow(events: TimestampedEvent[], window: TelemetrySummaryWindow): TimestampedEvent[] {
+  const sinceMs = window.sinceIso ? Date.parse(window.sinceIso) : Number.NEGATIVE_INFINITY;
+  const untilMs = window.untilIso ? Date.parse(window.untilIso) : Number.POSITIVE_INFINITY;
+  return events.filter((event) => {
+    const at = Date.parse(event.timestamp);
+    if (!Number.isFinite(at)) return false;
+    return at >= sinceMs && at <= untilMs;
+  });
 }

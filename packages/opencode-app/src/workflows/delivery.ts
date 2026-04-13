@@ -7,10 +7,13 @@ import { runTester } from "../team/tester.js";
 import { evaluateGate } from "../../../runtime/src/workflow/gate-evaluator.js";
 import { buildHandoff } from "../../../runtime/src/workflow/handoff-manager.js";
 import { planWorkItems } from "../../../runtime/src/workflow/work-item-planner.js";
+import { buildWorkflowQualityGateReport } from "../../../runtime/src/workflow/quality-gates-runtime.js";
 import { WorkflowAuditService } from "../../../runtime/src/workflow/workflow-audit-service.js";
 import { WorkItemsRepo } from "../../../storage/src/sqlite/repositories/work-items-repo.js";
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
 import type { WorkItemState } from "../../../shared/src/types/work-item.js";
+import type { ChatProvider } from "../../../providers/src/chat/types.js";
+import { enforceMcpRoutingDetailed } from "../executor/enforce-mcp-routing.js";
 
 export async function runDeliveryWorkflow(input: {
   sessionId: string;
@@ -18,11 +21,12 @@ export async function runDeliveryWorkflow(input: {
   stage: string;
   repoRoot: string;
   envelope: ExecutionEnvelopeState;
+  provider?: ChatProvider;
 }): Promise<{ summary: string[] }> {
   const audit = new WorkflowAuditService(input.repoRoot);
-  const coordinator = await runCoordinator({ lane: "delivery", stage: input.stage, objective: input.objective });
-  const analyst = await runAnalyst({ objective: input.objective });
-  const architect = await runArchitect({ sessionId: input.sessionId, lane: "delivery", objective: input.objective });
+  const coordinator = await runCoordinator({ lane: "delivery", stage: input.stage, objective: input.objective, provider: input.provider });
+  const analyst = await runAnalyst({ objective: input.objective, provider: input.provider });
+  const architect = await runArchitect({ sessionId: input.sessionId, lane: "delivery", objective: input.objective, provider: input.provider });
   const workItemsRepo = new WorkItemsRepo(input.repoRoot);
   for (const workItem of architect.workItems) {
     workItemsRepo.save(workItem);
@@ -35,10 +39,12 @@ export async function runDeliveryWorkflow(input: {
       const implementer = await runImplementer({
         workItemId: workItem.id,
         summary: `${architect.solutionSummary} Execute '${workItem.title}'.`,
+        provider: input.provider,
       });
       const reviewer = await runReviewer({
         changedAreas: implementer.changedAreas,
         implementerSummary: implementer.summary,
+        provider: input.provider,
       });
       const tester = await runTester({
         objective: `${input.objective}; ${workItem.title}`,
@@ -47,6 +53,7 @@ export async function runDeliveryWorkflow(input: {
         requiredMcps: input.envelope.activeMcps,
         browserEvidencePolicy: requiresBrowserVerification(input.objective) ? "required" : "optional",
         browserVerificationRequired: requiresBrowserVerification(input.objective),
+        provider: input.provider,
       });
       const reviewGate = evaluateGate({
         workflow: {
@@ -95,15 +102,66 @@ export async function runDeliveryWorkflow(input: {
   const browserEvidenceAvailable = executionReports.some((report) => {
     return report.tester.evidence.some((item) => item.toLowerCase().includes("browser verification evidence"));
   });
+  const qualityGates = buildWorkflowQualityGateReport({
+    repoRoot: input.repoRoot,
+    lane: "delivery",
+    workflowGate: {
+      pass: aggregateReviewPass && aggregateVerificationPass,
+      reason: aggregateReviewPass && aggregateVerificationPass
+        ? "Delivery review and verification gates passed across all work items."
+        : "One or more delivery review/verification gates failed.",
+    },
+    localVerification: {
+      pass: aggregateVerificationPass,
+      reason: aggregateVerificationPass
+        ? "Tester evidence recorded for all delivery work items."
+        : "One or more delivery work items did not produce verification evidence.",
+      evidence: executionReports.flatMap((report) => report.tester.evidence),
+      limitations: executionReports.flatMap((report) => report.tester.limitations),
+    },
+    browserVerification: {
+      required: requiresBrowserVerification(input.objective),
+      pass: browserEvidenceAvailable,
+      executedChecks: executionReports.flatMap((report) => report.tester.executedChecks.filter((check) => check.toLowerCase().includes("browser"))),
+      evidence: executionReports.flatMap((report) => report.tester.evidence.filter((item) => item.toLowerCase().includes("browser"))),
+      limitations: executionReports.flatMap((report) => report.tester.limitations),
+    },
+  });
 
   const handoff = buildHandoff({ lane: "delivery", fromRole: "architect", toRole: "implementer", stage: input.stage });
+  const mcpDecision = enforceMcpRoutingDetailed(input.envelope, input.objective, {
+    runtimeStateRepoRoot: input.repoRoot,
+  });
 
   audit.recordRoleOutput(input.envelope, coordinator);
   audit.recordRoleOutput(input.envelope, analyst);
   audit.recordRoleOutput(input.envelope, architect);
   audit.recordRequiredTool(input.envelope, "workflow.delivery", "delivery_workflow", "called");
+  for (const result of qualityGates.results) {
+    audit.recordQualityGate(input.envelope, {
+      gateId: result.gateId,
+      availability: qualityGates.availability.gates[result.gateId].availability,
+      result: result.status,
+      reason: result.reason,
+      evidence: result.evidence,
+      limitations: result.limitations,
+    });
+    if (result.gateId === "rule_scan" || result.gateId === "security_scan") {
+      const availability = qualityGates.availability.gates[result.gateId].availability;
+      audit.recordRequiredTool(
+        input.envelope,
+        result.gateId,
+        `${result.gateId}_quality_gate`,
+        availability === "available" ? "called" : "required_but_missing",
+      );
+    }
+  }
   audit.recordSkillActivation(input.envelope, "verification-before-completion", "Delivery lane requires verification discipline.");
   audit.recordMcpRoute(input.envelope, "augment_context_engine", "Delivery workflow needs codebase understanding.");
+  for (const mcpName of mcpDecision.selected) {
+    const reasonCodes = mcpDecision.reasons[mcpName] ?? [];
+    audit.recordMcpRoute(input.envelope, mcpName, reasonCodes.join(",") || "selected");
+  }
   audit.recordHookDecision({
     envelope: input.envelope,
     hookName: "skill_activation",
@@ -118,7 +176,16 @@ export async function runDeliveryWorkflow(input: {
     decision: "modify",
     reason: "Delivery workflow prioritizes codebase understanding MCPs.",
     payloadIn: { lane: "delivery", role: input.envelope.role },
-    payloadOut: { mcps: input.envelope.activeMcps.length > 0 ? input.envelope.activeMcps : ["augment_context_engine"] },
+    payloadOut: {
+      mcps: mcpDecision.selected,
+      blocked: mcpDecision.blocked,
+      warnings: mcpDecision.warnings,
+      decisions: mcpDecision.decisions,
+      reasons: mcpDecision.reasons,
+      rejected: mcpDecision.rejected,
+      runtimeStates: mcpDecision.runtimeStates,
+      runtimeStateDrift: mcpDecision.runtimeStateDrift,
+    },
   });
   audit.recordHookDecision({
     envelope: input.envelope,
@@ -157,6 +224,7 @@ export async function runDeliveryWorkflow(input: {
       reviewPass: aggregateReviewPass,
       verificationPass: aggregateVerificationPass,
       browserEvidenceAvailable,
+      qualityGates,
     },
   });
 
@@ -173,7 +241,9 @@ export async function runDeliveryWorkflow(input: {
       `Handoff: ${handoff.notes.join(" ")}`,
       `Implementer: ${aggregateWorkItemStatus(executionReports.map((report) => report.implementer.status))}`,
       `Reviewer: ${aggregateReviewPass ? "PASS" : "FAIL"} (${executionReports.filter((report) => report.reviewGate.pass).length}/${executionReports.length} passed)`,
-      `Tester: ${aggregateVerificationPass ? "PASS" : "FAIL"} (${executionReports.filter((report) => report.verificationGate.pass).length}/${executionReports.length} passed${browserEvidenceAvailable ? "; Browser verification evidence available." : ""})`,
+      `Tester: ${aggregateVerificationPass ? "PASS" : "FAIL"} (${executionReports.filter((report) => report.verificationGate.pass).length}/${executionReports.length} passed${requiresBrowserVerification(input.objective)
+        ? (browserEvidenceAvailable ? "; Browser verification evidence available." : "; Browser verification evidence missing.")
+        : ""})`,
     ],
   };
 }

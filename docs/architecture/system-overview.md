@@ -12,7 +12,7 @@ Tài liệu này mô tả kiến trúc tổng thể của `dh`, một AI softwar
 - trách nhiệm của từng khối
 - nguyên tắc thiết kế để AI có thể search, đọc hiểu và trace codebase chắc chắn
 
-Tài liệu này là overview cấp hệ thống. Chi tiết schema index nằm ở `docs/architecture/indexing-model.md`. Chi tiết retrieval pipeline nằm ở `docs/architecture/retrieval-strategy.md`. Chi tiết quyết định fork nằm ở `docs/architecture/opencode-integration-decision.md`.
+Tài liệu này là overview cấp hệ thống. Chi tiết schema index nằm ở `docs/architecture/indexing-model.md`. Chi tiết retrieval pipeline nằm ở `docs/architecture/retrieval-strategy.md`. Chi tiết quyết định fork nằm ở `docs/architecture/opencode-integration-decision.md`. Bản nguyên tắc đọc hiểu code của DH nằm ở `docs/architecture/dh-code-understanding-principles-reference.md`. Bản kỹ thuật structural/hybrid retrieval chi tiết nằm ở `docs/architecture/ai-code-understanding-structural-techniques.md`.
 
 Current implementation note:
 
@@ -145,7 +145,7 @@ apps/
 
 packages/
   opencode-core/     <- Forked Go runtime with dh hooks
-  opencode-sdk/      <- Forked TypeScript SDK
+  opencode-sdk/      <- dh-owned internal bridge SDK
   shared/
   opencode-app/      <- dh application logic
   intelligence/
@@ -155,7 +155,7 @@ packages/
   providers/
 ```
 
-Target distribution của `dh` là single pre-built binary cho macOS/Linux. User không cần cài Node.js, Go, hay OpenCode riêng khi packaging path hoàn tất.
+Target distribution của `dh` là single pre-built binary cho macOS/Linux. Current state vẫn có TypeScript-centric developer/runtime surfaces; khi packaging path hoàn tất thì end users không cần cài Node.js, Go, hay OpenCode riêng.
 
 ## Trách nhiệm của từng package
 
@@ -192,7 +192,7 @@ Không nên chứa:
 
 Trách nhiệm:
 
-- forked TypeScript SDK
+- dh-owned internal bridge SDK
 - type definitions và protocol contracts
 - client-side utilities cho communication với Go core
 

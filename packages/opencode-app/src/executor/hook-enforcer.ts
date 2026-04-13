@@ -14,17 +14,18 @@
  */
 
 import { createId } from "../../../shared/src/utils/ids.js";
-import { nowIso } from "../../../shared/src/utils/time.js";
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
-import type { HookInvocationLog } from "../../../shared/src/types/audit.js";
+import type { HookDecision as BridgeHookDecision } from "../../../opencode-sdk/src/index.js";
 import { HookInvocationLogsRepo } from "../../../storage/src/sqlite/repositories/hook-invocation-logs-repo.js";
+import { buildBridgeEnvelopeContext, writeHookDecision } from "../../../opencode-sdk/src/index.js";
 import { enforceToolUsage } from "../executor/enforce-tool-usage.js";
 import { gateAnswer } from "../executor/answer-gating.js";
+import { RuntimeEnforcer } from "../../../runtime/src/hooks/runtime-enforcer.js";
 import type { QueryIntent } from "../planner/required-tools-policy.js";
 
 export type HookDecision = {
   allow: boolean;
-  decision: "allow" | "block" | "modify";
+  decision: BridgeHookDecision;
   reason: string;
   logId: string;
 };
@@ -35,9 +36,11 @@ export type HookDecision = {
  */
 export class HookEnforcer {
   private readonly logs: HookInvocationLogsRepo;
+  private readonly runtimeEnforcer: RuntimeEnforcer;
 
   constructor(private readonly repoRoot: string) {
     this.logs = new HookInvocationLogsRepo(repoRoot);
+    this.runtimeEnforcer = new RuntimeEnforcer(repoRoot);
   }
 
   /**
@@ -51,25 +54,45 @@ export class HookEnforcer {
     intent: QueryIntent = "broad_codebase_question",
   ): HookDecision {
     const start = Date.now();
-    const result = enforceToolUsage(envelope, toolName, intent);
-    const durationMs = Date.now() - start;
+    const baselineResult = enforceToolUsage(envelope, toolName, intent);
+    if (!baselineResult.allow) {
+      const decision: BridgeHookDecision = "block";
+      const writeResult = writeHookDecision(this.logs, {
+        envelope: buildBridgeEnvelopeContext({
+          sessionId: envelope.sessionId,
+          envelopeId: envelope.id,
+          transportMode: "sqlite",
+        }),
+        hookName: "pre_tool_exec",
+        decision,
+        reason: baselineResult.reason,
+        payloadIn: { toolName, toolArgs, intent, source: "baseline" },
+        payloadOut: { allow: baselineResult.allow, reason: baselineResult.reason },
+        durationMs: Date.now() - start,
+        id: createId("hook"),
+      });
 
-    const decision: HookInvocationLog["decision"] = result.allow ? "allow" : "block";
-    const log: HookInvocationLog = {
-      id: createId("hook"),
+      const logId = writeResult.ok ? writeResult.value.id : createId("hook-failed");
+      return { allow: false, decision, reason: baselineResult.reason, logId };
+    }
+
+    const result = this.runtimeEnforcer.preToolExec({
       sessionId: envelope.sessionId,
       envelopeId: envelope.id,
-      hookName: "pre_tool_exec",
-      input: { toolName, toolArgs, intent },
-      output: { allow: result.allow, reason: result.reason },
+      role: envelope.role,
+      intent,
+      toolName,
+      toolArgs,
+    });
+
+    const latest = this.logs.findLatestDecision(envelope.sessionId, envelope.id, "pre_tool_exec");
+    const decision: BridgeHookDecision = result.allow ? "allow" : "block";
+    return {
+      allow: result.allow,
       decision,
       reason: result.reason,
-      durationMs,
-      timestamp: nowIso(),
+      logId: latest?.id ?? createId("hook-failed"),
     };
-    this.logs.save(log);
-
-    return { allow: result.allow, decision, reason: result.reason, logId: log.id };
   }
 
   /**
@@ -83,24 +106,48 @@ export class HookEnforcer {
     intent: QueryIntent = "broad_codebase_question",
   ): HookDecision {
     const start = Date.now();
-    const result = gateAnswer(envelope, toolsUsed, evidenceScore, intent);
-    const durationMs = Date.now() - start;
+    const baselineResult = gateAnswer(envelope, toolsUsed, evidenceScore, intent);
+    if (!baselineResult.allow) {
+      const decision: BridgeHookDecision = "block";
+      const writeResult = writeHookDecision(this.logs, {
+        envelope: buildBridgeEnvelopeContext({
+          sessionId: envelope.sessionId,
+          envelopeId: envelope.id,
+          transportMode: "sqlite",
+        }),
+        hookName: "pre_answer",
+        decision,
+        reason: baselineResult.reason,
+        payloadIn: { toolsUsed, evidenceScore, intent, source: "baseline" },
+        payloadOut: {
+          allow: baselineResult.allow,
+          action: baselineResult.action,
+          reason: baselineResult.reason,
+        },
+        durationMs: Date.now() - start,
+        id: createId("hook"),
+      });
 
-    const decision: HookInvocationLog["decision"] = result.allow ? "allow" : "block";
-    const log: HookInvocationLog = {
-      id: createId("hook"),
+      const logId = writeResult.ok ? writeResult.value.id : createId("hook-failed");
+      return { allow: false, decision, reason: baselineResult.reason, logId };
+    }
+
+    const structuralIntentText = intent.replaceAll("_", " ");
+    const result = this.runtimeEnforcer.preAnswer({
       sessionId: envelope.sessionId,
       envelopeId: envelope.id,
-      hookName: "pre_answer",
-      input: { toolsUsed, evidenceScore, intent },
-      output: { allow: result.allow, action: result.action, reason: result.reason },
+      intentText: structuralIntentText,
+      toolsUsed,
+      evidenceScore,
+    });
+
+    const latest = this.logs.findLatestDecision(envelope.sessionId, envelope.id, "pre_answer");
+    const decision: BridgeHookDecision = result.allow ? "allow" : "block";
+    return {
+      allow: result.allow,
       decision,
       reason: result.reason,
-      durationMs,
-      timestamp: nowIso(),
+      logId: latest?.id ?? createId("hook-failed"),
     };
-    this.logs.save(log);
-
-    return { allow: result.allow, decision, reason: result.reason, logId: log.id };
   }
 }

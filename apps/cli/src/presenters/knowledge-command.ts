@@ -21,6 +21,28 @@ export function renderKnowledgeCommandText(report: KnowledgeCommandReport): stri
     ...report.evidencePreview,
   ];
 
+  if (report.sessionId) {
+    lines.push(`session id: ${report.sessionId}`);
+  }
+  if (typeof report.resumed === "boolean") {
+    lines.push(`session resumed: ${report.resumed}`);
+  }
+  if (report.compaction) {
+    lines.push(`compaction attempted: ${report.compaction.attempted}`);
+    lines.push(`compaction overflow: ${report.compaction.overflow}`);
+    lines.push(`compaction applied: ${report.compaction.compacted}`);
+    lines.push(
+      `continuation summary persisted: ${report.compaction.continuationSummaryPersisted}`,
+    );
+  }
+  if (report.persistence) {
+    lines.push(`runtime persistence attempted: ${report.persistence.attempted}`);
+    lines.push(`runtime persistence succeeded: ${report.persistence.persisted}`);
+    if (report.persistence.warning) {
+      lines.push(`runtime persistence warning: ${report.persistence.warning}`);
+    }
+  }
+
   if (report.guidance && report.guidance.length > 0) {
     lines.push("", "next steps:", ...report.guidance.map((item) => `  - ${item}`));
   }

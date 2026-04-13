@@ -1,5 +1,6 @@
 import type { SemanticSearchResult } from "../../../shared/src/types/embedding.js";
 import type { NormalizedRetrievalResult } from "../../../shared/src/types/evidence.js";
+import { normalizeToRepoRelativePath } from "../../../intelligence/src/workspace/scan-paths.js";
 import { ChunksRepo } from "../../../storage/src/sqlite/repositories/chunks-repo.js";
 import { EmbeddingsRepo, type EmbeddingRow } from "../../../storage/src/sqlite/repositories/embeddings-repo.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "./embedding-pipeline.js";
@@ -147,6 +148,7 @@ function resolveChunks(
     if (!chunk) continue;
     results.push({
       chunkId: chunk.id,
+      fileId: chunk.fileId,
       filePath: chunk.filePath,
       symbolId: chunk.symbolId,
       lineStart: chunk.lineStart,
@@ -162,18 +164,66 @@ function resolveChunks(
 /**
  * Convert semantic search results to NormalizedRetrievalResult[] for
  * integration with the existing retrieval pipeline.
+ *
+ * @deprecated Use semanticResultsToNormalizedWithContext(...) instead.
+ * This helper intentionally fails fast to prevent path-contract drift when
+ * callers omit repoRoot/filePathById normalization context.
  */
 export function semanticResultsToNormalized(results: SemanticSearchResult[]): NormalizedRetrievalResult[] {
-  return results.map((r) => ({
-    entityType: "chunk" as const,
-    entityId: createId("semantic"),
-    filePath: r.filePath,
-    symbolName: r.symbolId,
-    lineRange: [r.lineStart, r.lineEnd] as [number, number],
-    sourceTool: "semantic_search",
-    matchReason: `Semantic similarity ${r.similarity.toFixed(3)} to query.`,
-    rawScore: r.similarity,
-    normalizedScore: r.similarity,
-    metadata: { chunkId: r.chunkId, language: r.language },
-  }));
+  if (results.length === 0) {
+    return [];
+  }
+  throw new Error(
+    "semanticResultsToNormalized requires normalization context. "
+    + "Use semanticResultsToNormalizedWithContext(results, { repoRoot, filePathById }).",
+  );
+}
+
+export function semanticResultsToNormalizedWithContext(
+  results: SemanticSearchResult[],
+  context: {
+    repoRoot?: string;
+    filePathById?: Map<string, string>;
+  },
+): NormalizedRetrievalResult[] {
+  return results.map((r) => {
+    const pathResolution = normalizeSemanticPath(context.repoRoot, r, context.filePathById);
+    return {
+      entityType: "chunk" as const,
+      entityId: createId("semantic"),
+      filePath: pathResolution.filePath,
+      symbolName: r.symbolId,
+      lineRange: [r.lineStart, r.lineEnd] as [number, number],
+      sourceTool: "semantic_search",
+      matchReason: `Semantic similarity ${r.similarity.toFixed(3)} to query.`,
+      rawScore: r.similarity,
+      normalizedScore: r.similarity,
+      metadata: {
+        chunkId: r.chunkId,
+        language: r.language,
+        semanticPathNormalized: pathResolution.normalized,
+        semanticPathUnresolved: pathResolution.unresolved,
+        semanticOriginalFilePath: r.filePath,
+      },
+    };
+  });
+}
+
+function normalizeSemanticPath(
+  repoRoot: string | undefined,
+  result: SemanticSearchResult,
+  filePathById?: Map<string, string>,
+): { filePath: string; normalized: boolean; unresolved: boolean } {
+  if (repoRoot) {
+    const normalized = normalizeToRepoRelativePath(repoRoot, result.filePath);
+    if (normalized) {
+      return { filePath: normalized, normalized: normalized !== result.filePath, unresolved: false };
+    }
+  }
+
+  if (result.fileId && filePathById?.has(result.fileId)) {
+    return { filePath: filePathById.get(result.fileId)!, normalized: true, unresolved: false };
+  }
+
+  return { filePath: result.filePath, normalized: false, unresolved: true };
 }

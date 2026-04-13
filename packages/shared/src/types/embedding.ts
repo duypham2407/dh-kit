@@ -23,6 +23,7 @@ export type EmbeddingResponse = {
 
 export type ChunkInput = {
   fileId: string;
+  /** Canonical repo-relative file path for retrieval/evidence downstream. */
   filePath: string;
   symbolId?: string;
   lineStart: number;
@@ -33,6 +34,8 @@ export type ChunkInput = {
 
 export type SemanticSearchResult = {
   chunkId: string;
+  fileId: string;
+  /** Canonical repo-relative file path when resolvable. */
   filePath: string;
   symbolId?: string;
   lineStart: number;

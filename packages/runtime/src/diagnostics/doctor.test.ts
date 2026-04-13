@@ -34,6 +34,7 @@ describe("runDoctor", () => {
     expect(report.summary).toContain("Providers:");
     expect(report.summary).toContain("Retrieval:");
     expect(report.summary).toContain("Workflow:");
+    expect(report.summary).toContain("Verification health:");
     expect(report.summary).toContain("Hooks:");
     expect(report.summary).toContain("Status: OK");
   });
@@ -139,6 +140,12 @@ describe("runDoctor", () => {
     expect(report.snapshot.sqliteBridgeReady).toBe(false);
     expect(report.snapshot.hookLogsPresent).toBe(false);
     expect(typeof report.snapshot.workflowMirrorPresent).toBe("boolean");
+    expect(report.snapshot.qualityGateContractVersion).toBe("v1");
+    expect(typeof report.snapshot.qualityGateAvailableCount).toBe("number");
+    expect(typeof report.snapshot.qualityGateUnavailableCount).toBe("number");
+    expect(typeof report.snapshot.qualityGateNotConfiguredCount).toBe("number");
+    expect(["available", "unavailable", "not_configured"]).toContain(report.snapshot.ruleScanAvailability);
+    expect(["available", "unavailable", "not_configured"]).toContain(report.snapshot.securityScanAvailability);
     expect(typeof report.snapshot.actionCount).toBe("number");
   });
 

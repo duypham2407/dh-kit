@@ -72,8 +72,8 @@ func TestBridgeMcpRoutingIntegrationUsesExactEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mcp routing: %v", err)
 	}
-	if len(blocked) != 0 {
-		t.Fatalf("expected empty blocked list, got %#v", blocked)
+	if len(blocked) != 1 || blocked[0] != "playwright" {
+		t.Fatalf("expected blocked list from payload, got %#v", blocked)
 	}
 	if len(mcps) != 2 || mcps[0] != "context7" || mcps[1] != "augment_context_engine" {
 		t.Fatalf("unexpected mcps: %#v", mcps)
@@ -91,8 +91,8 @@ func TestBridgeMcpRoutingIntegrationFallsBackToSessionScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mcp routing: %v", err)
 	}
-	if len(blocked) != 0 {
-		t.Fatalf("expected empty blocked list, got %#v", blocked)
+	if len(blocked) != 1 || blocked[0] != "chrome-devtools" {
+		t.Fatalf("expected blocked list from payload, got %#v", blocked)
 	}
 	if len(mcps) != 1 || mcps[0] != "augment_context_engine" {
 		t.Fatalf("unexpected fallback mcps: %#v", mcps)
@@ -156,8 +156,8 @@ func newSkillMcpReader(t *testing.T) bridge.DecisionReader {
 		VALUES
 		('s1', 'sess-1', 'sess-1',         'skill_activation', '{}', '{"skills":["using-skills"]}', 'modify', 'session', 1, '2026-04-05T10:00:00Z'),
 		('s2', 'sess-1', 'env-skill-exact','skill_activation', '{}', '{"skills":["tdd","debugging"]}', 'modify', 'exact', 1, '2026-04-05T10:01:00Z'),
-		('m1', 'sess-1', 'sess-1',         'mcp_routing',      '{}', '{"mcps":["augment_context_engine"]}', 'modify', 'session', 1, '2026-04-05T10:02:00Z'),
-		('m2', 'sess-1', 'env-mcp-exact',  'mcp_routing',      '{}', '{"mcps":["context7","augment_context_engine"]}', 'modify', 'exact', 1, '2026-04-05T10:03:00Z');
+		('m1', 'sess-1', 'sess-1',         'mcp_routing',      '{}', '{"mcps":["augment_context_engine"],"blocked":["chrome-devtools"]}', 'modify', 'session', 1, '2026-04-05T10:02:00Z'),
+		('m2', 'sess-1', 'env-mcp-exact',  'mcp_routing',      '{}', '{"mcps":["context7","augment_context_engine"],"blocked":["playwright"]}', 'modify', 'exact', 1, '2026-04-05T10:03:00Z');
 	`); err != nil {
 		t.Fatalf("insert rows: %v", err)
 	}

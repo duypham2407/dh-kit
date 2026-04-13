@@ -466,7 +466,7 @@ Mức tool enforcement của `dh` là `very hard` trong mọi lane.
 
 ## Forked OpenCode Runtime Integration
 
-`dh` sở hữu toàn bộ runtime qua fork OpenCode (Go core + TypeScript SDK). Không còn ranh giới "OpenCode chịu trách nhiệm X, dh chịu trách nhiệm Y". Thay vào đó, toàn bộ là dh, với 6 hook points cho phép dh application layer kiểm soát mọi quyết định runtime.
+`dh` sở hữu toàn bộ runtime qua fork OpenCode (Go core + dh-owned internal bridge SDK). Không còn ranh giới "OpenCode chịu trách nhiệm X, dh chịu trách nhiệm Y". Thay vào đó, toàn bộ là dh, với 6 hook points cho phép dh application layer kiểm soát mọi quyết định runtime.
 
 ### Forked Go core chịu trách nhiệm
 

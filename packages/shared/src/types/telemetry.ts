@@ -89,4 +89,21 @@ export type IndexingSessionMetrics = {
 export type TelemetryEvent =
   | { kind: "embedding_pipeline"; metrics: EmbeddingPipelineMetrics }
   | { kind: "ann_build"; metrics: AnnBuildMetrics }
-  | { kind: "semantic_search"; metrics: SemanticSearchMetrics };
+  | { kind: "semantic_search"; metrics: SemanticSearchMetrics }
+  | {
+      kind: "semantic_path_unresolved";
+      details: {
+        chunkId: string;
+        filePath: string;
+        originalFilePath: string;
+      };
+    }
+  | {
+      kind: "evidence_path_unresolved";
+      details: {
+        filePath: string;
+        normalizedFilePath: string | null;
+        sourceTool: string;
+        failureKind: "normalization_failed" | "file_read_failed";
+      };
+    };

@@ -123,4 +123,17 @@ describe("team agents with mock provider", () => {
     const tester = await runTester();
     expect(tester.status).toBe("PASS");
   });
+
+  it("tester fallback reports partial when required browser verification lacks evidence", async () => {
+    const tester = await runTester({
+      objective: "verify browser checkout UI",
+      requiredMcps: ["augment_context_engine"],
+      browserEvidencePolicy: "required",
+      browserVerificationRequired: true,
+    });
+
+    expect(tester.status).toBe("PARTIAL");
+    expect(tester.nextAction).toBe("implementer");
+    expect(tester.unmetCriteria.length).toBeGreaterThan(0);
+  });
 });

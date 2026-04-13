@@ -39,6 +39,10 @@ func (r testDecisionReader) LatestMcps(sessionID, envelopeID string) ([]string, 
 	return nil, false, nil
 }
 
+func (r testDecisionReader) LatestMcpRoutingDecision(sessionID, envelopeID string) (*bridge.McpRoutingDecisionRow, bool, error) {
+	return nil, false, nil
+}
+
 func (r testDecisionReader) Close() error { return nil }
 
 func TestBridgePreToolExecHookBlocksWhenDecisionIsBlock(t *testing.T) {
@@ -299,6 +303,9 @@ func (r testDecisionReaderWithState) LatestSkills(string, string) ([]string, boo
 func (r testDecisionReaderWithState) LatestMcps(string, string) ([]string, bool, error) {
 	return nil, false, nil
 }
+func (r testDecisionReaderWithState) LatestMcpRoutingDecision(string, string) (*bridge.McpRoutingDecisionRow, bool, error) {
+	return nil, false, nil
+}
 func (r testDecisionReaderWithState) Close() error { return nil }
 
 type testDecisionReaderWithSkills struct {
@@ -320,6 +327,9 @@ func (r testDecisionReaderWithSkills) LatestSkills(string, string) ([]string, bo
 	return r.skills, r.found, r.err
 }
 func (r testDecisionReaderWithSkills) LatestMcps(string, string) ([]string, bool, error) {
+	return nil, false, nil
+}
+func (r testDecisionReaderWithSkills) LatestMcpRoutingDecision(string, string) (*bridge.McpRoutingDecisionRow, bool, error) {
 	return nil, false, nil
 }
 func (r testDecisionReaderWithSkills) Close() error { return nil }
@@ -344,5 +354,11 @@ func (r testDecisionReaderWithMcps) LatestSkills(string, string) ([]string, bool
 }
 func (r testDecisionReaderWithMcps) LatestMcps(string, string) ([]string, bool, error) {
 	return r.mcps, r.found, r.err
+}
+func (r testDecisionReaderWithMcps) LatestMcpRoutingDecision(string, string) (*bridge.McpRoutingDecisionRow, bool, error) {
+	if !r.found || r.err != nil {
+		return nil, r.found, r.err
+	}
+	return &bridge.McpRoutingDecisionRow{Mcps: r.mcps, Blocked: []string{}}, true, nil
 }
 func (r testDecisionReaderWithMcps) Close() error { return nil }

@@ -1,0 +1,9 @@
+[package]
+name = "dh-indexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+dh-types = { path = "../dh-types" }

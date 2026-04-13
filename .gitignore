@@ -46,3 +46,14 @@ example/*
 
 # OS
 Thumbs.db
+
+# Rust/Cargo build artifacts
+**/target/
+rust-engine/target/
+**/.cargo/
+*.sqlite
+
+# Log files
+*.log
+context-engine-combined.log
+context-engine-error.log

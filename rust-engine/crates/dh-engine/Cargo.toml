@@ -1,0 +1,11 @@
+[package]
+name = "dh-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+dh-storage = { path = "../dh-storage" }
+dh-types = { path = "../dh-types" }

@@ -49,7 +49,7 @@ export class HookInvocationLogsRepo {
 
   /**
    * Retrieve the most recent hook invocation log for a given session,
-   * envelope, and hook name. Used by the Go runtime to read the TS-side
+   * envelope, and hook name. Used by runtime hook handlers to read the TS-side
    * enforcement decision.
    */
   findLatestDecision(

@@ -1,0 +1,11 @@
+{
+  "file": "class-methods.ts",
+  "expected": {
+    "symbols": 4,
+    "imports": 0,
+    "call_edges": 2,
+    "references": 10,
+    "chunks": 6,
+    "parse_status": "Parsed"
+  }
+}

@@ -20,7 +20,7 @@ export type IndexedFile = {
 
 export type WorkspaceMarkers = {
   hasPackageJson: boolean;
-  hasGoMod: boolean;
+  hasCargoToml: boolean;
 };
 
 export type ScanStopReason =

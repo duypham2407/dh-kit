@@ -14,17 +14,23 @@ import type { EmbeddingProviderConfig } from "../../../shared/src/types/embeddin
 import { getQualityGateAvailabilitySnapshot } from "../workflow/quality-gates-runtime.js";
 import fsSync from "node:fs";
 import path from "node:path";
+import {
+  listLanguageSupportBoundaries,
+  type LanguageSupportBoundary,
+} from "../../../intelligence/src/symbols/extract-symbols.js";
 
 export type DoctorReport = {
   ok: boolean;
   summary: string;
   actions: string[];
   hookReadiness: {
-    goBinaryReady: boolean;
+    runtimeBinaryReady: boolean;
     sqliteBridgeReady: boolean;
     hookLogsPresent: boolean;
   };
   diagnostics: {
+    lifecycleClassification: DoctorLifecycleClassification;
+    languageSupportBoundaries: LanguageSupportBoundary[];
     providerCoverage: {
       providersWithoutModels: string[];
       totalProviders: number;
@@ -43,10 +49,35 @@ export type DoctorReport = {
   snapshot: DoctorSnapshot;
 };
 
+export type LifecycleStatus = "healthy" | "degraded" | "unsupported" | "misconfigured";
+
+export type DoctorLifecycleClassification = {
+  overall: LifecycleStatus;
+  installDistribution: {
+    status: LifecycleStatus;
+    reasons: string[];
+  };
+  runtimeWorkspaceReadiness: {
+    status: LifecycleStatus;
+    reasons: string[];
+  };
+  capabilityTooling: {
+    status: LifecycleStatus;
+    reasons: string[];
+  };
+};
+
 /** Compact machine-readable snapshot for monitoring pipelines. */
 export type DoctorSnapshot = {
   timestamp: string;
   ok: boolean;
+  lifecycleStatus: LifecycleStatus;
+  installDistributionStatus: LifecycleStatus;
+  runtimeWorkspaceReadinessStatus: LifecycleStatus;
+  capabilityToolingStatus: LifecycleStatus;
+  installDistributionReasons: string[];
+  runtimeWorkspaceReadinessReasons: string[];
+  capabilityToolingReasons: string[];
   tables: { required: number; present: number; missing: string[] };
   dbIntegrity: { ok: boolean; details: string[] };
   chunks: number;
@@ -57,7 +88,7 @@ export type DoctorSnapshot = {
   providers: number;
   models: number;
   agents: number;
-  goBinaryReady: boolean;
+  runtimeBinaryReady: boolean;
   sqliteBridgeReady: boolean;
   hookLogsPresent: boolean;
   workflowMirrorPresent: boolean;
@@ -68,6 +99,15 @@ export type DoctorSnapshot = {
   ruleScanAvailability: "available" | "unavailable" | "not_configured";
   securityScanAvailability: "available" | "unavailable" | "not_configured";
   actionCount: number;
+  languageSupportBoundaries: Array<{
+    language: string;
+    status: "supported" | "limited" | "fallback-only";
+  }>;
+  languageSupportSummary: {
+    supported: number;
+    limited: number;
+    fallbackOnly: number;
+  };
 };
 
 export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
@@ -132,8 +172,16 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
 
   const workflowMirrorPath = `${repoRoot}/.dh/workflow-state.json`;
   const workflowMirrorExists = fsSync.existsSync(workflowMirrorPath);
-  const goBinaryPath = path.join(repoRoot, "packages", "opencode-core", "dist", "dh");
-  const goBinaryReady = fsSync.existsSync(goBinaryPath);
+  const releaseDir = path.join(repoRoot, "dist", "releases");
+  const releaseManifestPath = path.join(releaseDir, "manifest.json");
+  const releaseChecksumsPath = path.join(releaseDir, "SHA256SUMS");
+  const runtimeBinaryCandidates = [
+    path.join(releaseDir, "dh-darwin-arm64"),
+    path.join(releaseDir, "dh-darwin-amd64"),
+    path.join(releaseDir, "dh-linux-amd64"),
+    path.join(releaseDir, "dh-linux-arm64"),
+  ];
+  const runtimeBinaryReady = runtimeBinaryCandidates.some((candidate) => fsSync.existsSync(candidate));
 
   let hookLogsPresent = false;
   try {
@@ -143,8 +191,86 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     hookLogsPresent = false;
   }
 
-  const sqliteBridgeReady = availableTables.has("hook_invocation_logs") && goBinaryReady;
+  const sqliteBridgeReady = availableTables.has("hook_invocation_logs") && runtimeBinaryReady;
   const qualityGateAvailability = getQualityGateAvailabilitySnapshot(repoRoot);
+  const languageSupportBoundaries = listLanguageSupportBoundaries();
+  const languageSupportSummary = languageSupportBoundaries.reduce(
+    (acc, boundary) => {
+      if (boundary.status === "supported") {
+        acc.supported += 1;
+      } else if (boundary.status === "limited") {
+        acc.limited += 1;
+      } else {
+        acc.fallbackOnly += 1;
+      }
+      return acc;
+    },
+    { supported: 0, limited: 0, fallbackOnly: 0 },
+  );
+
+  const installDistributionReasons: string[] = [];
+  const runtimeWorkspaceReasons: string[] = [];
+  const capabilityToolingReasons: string[] = [];
+
+  if (!runtimeBinaryReady) {
+    installDistributionReasons.push("Runtime release binary is not present under dist/releases (dh-<platform>-<arch>). ");
+  }
+  if (!fsSync.existsSync(releaseManifestPath)) {
+    installDistributionReasons.push("Release manifest is not present at dist/releases/manifest.json.");
+  }
+  if (!fsSync.existsSync(releaseChecksumsPath)) {
+    installDistributionReasons.push("Release checksums are not present at dist/releases/SHA256SUMS.");
+  }
+
+  if (!integrityResult.ok) {
+    runtimeWorkspaceReasons.push(`SQLite integrity failed: ${integrityResult.details.join("; ")}`);
+  }
+  if (missingTables.length > 0) {
+    runtimeWorkspaceReasons.push(`Required tables missing: ${missingTables.join(", ")}`);
+  }
+  if (!workflowMirrorExists) {
+    runtimeWorkspaceReasons.push("Workflow compatibility mirror is missing (.dh/workflow-state.json).");
+  }
+
+  if (!embeddingKeyAvailable && semanticMode !== "off") {
+    capabilityToolingReasons.push(`Embedding API key is not configured (${embeddingKeyVar}).`);
+  }
+  if (providersWithoutModels.length > 0) {
+    capabilityToolingReasons.push(`Providers without models: ${providersWithoutModels.join(", ")}`);
+  }
+  if (qualityGateAvailability.summary.unavailableCount > 0) {
+    capabilityToolingReasons.push(`Unavailable quality gates: ${qualityGateAvailability.summary.unavailableCount}`);
+  }
+
+  const installDistributionStatus: LifecycleStatus = installDistributionReasons.length > 0 ? "degraded" : "healthy";
+
+  const runtimeWorkspaceReadinessStatus: LifecycleStatus = !integrityResult.ok || missingTables.length > 0
+    ? "misconfigured"
+    : runtimeWorkspaceReasons.length > 0
+      ? "degraded"
+      : "healthy";
+
+  let capabilityToolingStatus: LifecycleStatus = "healthy";
+  if (providers.length === 0 || totalModels === 0) {
+    capabilityToolingStatus = "unsupported";
+  } else if (!embeddingKeyAvailable && semanticMode !== "off") {
+    capabilityToolingStatus = "misconfigured";
+  } else if (capabilityToolingReasons.length > 0 || qualityGateAvailability.summary.notConfiguredCount > 0) {
+    capabilityToolingStatus = "degraded";
+  }
+
+  const lifecycleStatuses: LifecycleStatus[] = [
+    installDistributionStatus,
+    runtimeWorkspaceReadinessStatus,
+    capabilityToolingStatus,
+  ];
+  const lifecycleStatus: LifecycleStatus = lifecycleStatuses.includes("misconfigured")
+    ? "misconfigured"
+    : lifecycleStatuses.includes("unsupported")
+      ? "unsupported"
+      : lifecycleStatuses.includes("degraded")
+        ? "degraded"
+        : "healthy";
 
   const statusOk = missingTables.length === 0 && providers.length > 0 && DEFAULT_AGENT_REGISTRY.length > 0 && integrityResult.ok;
 
@@ -153,6 +279,10 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
 
   if (!integrityResult.ok) {
     actions.push(`Database integrity check FAILED: ${integrityResult.details.join("; ")}. Run "dh recover" to attempt automatic repair.`);
+  }
+
+  if (!runtimeBinaryReady) {
+    actions.push("Install/distribution readiness is degraded: runtime release binary is missing under dist/releases. Build release artifacts or reinstall the runtime bundle.");
   }
 
   if (!embeddingKeyAvailable && semanticMode !== "off") {
@@ -169,12 +299,22 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     actions.push(`Semantic retrieval is disabled. Enable with: dh config --semantic always`);
   }
 
+  if (!workflowMirrorExists) {
+    actions.push("Runtime/workspace readiness is degraded: workflow mirror is missing (.dh/workflow-state.json). Run a workflow command to initialize state.");
+  }
+
   if (providersWithoutModels.length > 0) {
     actions.push(`Provider registry mismatch: providers without models: ${providersWithoutModels.join(", ")}.`);
   }
 
   if (embeddingModel !== DEFAULT_EMBEDDING_CONFIG.modelName) {
     actions.push(`Custom embedding model: ${embeddingModel} (default: ${DEFAULT_EMBEDDING_CONFIG.modelName}). Change with: dh config --embedding`);
+  }
+
+  if (qualityGateAvailability.summary.unavailableCount > 0 || qualityGateAvailability.summary.notConfiguredCount > 0) {
+    actions.push(
+      `Capability/tooling readiness is degraded: quality gates unavailable=${qualityGateAvailability.summary.unavailableCount}, not_configured=${qualityGateAvailability.summary.notConfiguredCount}.`,
+    );
   }
 
   const summaryLines = [
@@ -213,12 +353,23 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     `  rule_scan: ${qualityGateAvailability.gates.rule_scan.availability}`,
     `  security_scan: ${qualityGateAvailability.gates.security_scan.availability}`,
     "",
+    "Language support boundaries:",
+    `  supported: ${languageSupportSummary.supported}`,
+    `  limited: ${languageSupportSummary.limited}`,
+    `  fallback-only: ${languageSupportSummary.fallbackOnly}`,
+    "",
+    "Lifecycle classification:",
+    `  install/distribution: ${installDistributionStatus}${installDistributionReasons.length > 0 ? ` — ${installDistributionReasons.join(" ")}` : ""}`,
+    `  runtime/workspace readiness: ${runtimeWorkspaceReadinessStatus}${runtimeWorkspaceReasons.length > 0 ? ` — ${runtimeWorkspaceReasons.join(" ")}` : ""}`,
+    `  capability/tooling: ${capabilityToolingStatus}${capabilityToolingReasons.length > 0 ? ` — ${capabilityToolingReasons.join(" ")}` : ""}`,
+    `  overall lifecycle status: ${lifecycleStatus}`,
+    "",
     "Hooks:",
-    `  go binary: ${goBinaryReady ? "yes" : "no"}`,
+    `  runtime binary: ${runtimeBinaryReady ? "yes" : "no"}`,
     `  sqlite bridge: ${sqliteBridgeReady ? "ready" : "not ready"}`,
     `  hook logs present: ${hookLogsPresent ? "yes" : "no"}`,
     "",
-    `Status: ${statusOk ? "OK" : "ISSUES FOUND"}`,
+    `Status: ${statusOk ? (lifecycleStatus === "healthy" ? "OK" : `DEGRADED (${lifecycleStatus})`) : "ISSUES FOUND"}`,
   ];
 
   if (chunkCount === 0) {
@@ -237,11 +388,27 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     summary: summaryLines.join("\n"),
     actions,
     hookReadiness: {
-      goBinaryReady,
+      runtimeBinaryReady,
       sqliteBridgeReady,
       hookLogsPresent,
     },
     diagnostics: {
+      lifecycleClassification: {
+        overall: lifecycleStatus,
+        installDistribution: {
+          status: installDistributionStatus,
+          reasons: installDistributionReasons,
+        },
+        runtimeWorkspaceReadiness: {
+          status: runtimeWorkspaceReadinessStatus,
+          reasons: runtimeWorkspaceReasons,
+        },
+        capabilityTooling: {
+          status: capabilityToolingStatus,
+          reasons: capabilityToolingReasons,
+        },
+      },
+      languageSupportBoundaries,
       providerCoverage: {
         providersWithoutModels,
         totalProviders: providers.length,
@@ -259,6 +426,13 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     snapshot: {
       timestamp: new Date().toISOString(),
       ok: statusOk,
+      lifecycleStatus,
+      installDistributionStatus,
+      runtimeWorkspaceReadinessStatus,
+      capabilityToolingStatus,
+      installDistributionReasons,
+      runtimeWorkspaceReadinessReasons: runtimeWorkspaceReasons,
+      capabilityToolingReasons,
       tables: {
         required: requiredTables.length,
         present: requiredTables.length - missingTables.length,
@@ -276,7 +450,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
       providers: providers.length,
       models: totalModels,
       agents: DEFAULT_AGENT_REGISTRY.length,
-      goBinaryReady,
+      runtimeBinaryReady,
       sqliteBridgeReady,
       hookLogsPresent,
       workflowMirrorPresent: workflowMirrorExists,
@@ -287,6 +461,11 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
       ruleScanAvailability: qualityGateAvailability.gates.rule_scan.availability,
       securityScanAvailability: qualityGateAvailability.gates.security_scan.availability,
       actionCount: actions.length,
+      languageSupportBoundaries: languageSupportBoundaries.map((boundary) => ({
+        language: boundary.language,
+        status: boundary.status,
+      })),
+      languageSupportSummary,
     },
   };
 }

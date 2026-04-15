@@ -299,7 +299,7 @@ Mục tiêu: khóa chất lượng và bàn giao có thể vận hành.
 - Việc đã làm:
   - Thêm benchmark test `packages/intelligence/src/graph/graph-indexer.benchmark.test.ts` để đo full-index vs incremental-index.
   - Tối ưu `graph-indexer.ts` để không upsert target node không đổi trong incremental loop (giảm reindex lan truyền).
-  - Tạo runbook vận hành/resume: `docs/operations/openkit-reuse-runtime-integration-runbook.md`.
+  - Tạo runbook vận hành/resume: `docs/archive/operations/openkit-reuse-runtime-integration-runbook.md`.
   - Chuẩn hóa checklist toàn bộ P0→P9 và DoD theo trạng thái thực tế + evidence.
 - Bằng chứng:
   - `npx vitest run packages/intelligence/src/graph/graph-indexer.benchmark.test.ts --reporter=verbose`

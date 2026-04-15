@@ -182,10 +182,10 @@ export async function evaluateOperatorSafeProjectWorktree(input: OperatorWorktre
     });
   }
 
-  if (workspace && workspace.markers && !workspace.markers.hasGoMod && !workspace.markers.hasPackageJson) {
+  if (workspace && workspace.markers && !workspace.markers.hasCargoToml && !workspace.markers.hasPackageJson) {
     warnings.push({
       code: "workspace_missing_markers",
-      message: "Workspace has no recognized marker file (package.json or go.mod); safety checks run in bounded mode.",
+      message: "Workspace has no recognized marker file (package.json or Cargo.toml); safety checks run in bounded mode.",
     });
   }
 

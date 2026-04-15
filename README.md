@@ -24,7 +24,8 @@ Nó giúp bạn:
 
 ### Requirements
 
-- **Node.js v22+** must be installed and available in `PATH`. The `dh` binary delegates subcommands (`ask`, `explain`, `trace`, `doctor`, `index`, etc.) to an embedded JavaScript CLI that runs on Node.js.
+- **Node.js v22+** must be installed and available in `PATH` to run `dh` operational commands (`ask`, `explain`, `trace`, `doctor`, `index`, workflow commands, etc.).
+- `dh --help` / `dh --version` may work without full runtime setup, but normal product-path usage assumes Node.js is present.
 
   ```sh
   node --version  # should print v22.x or later
@@ -133,10 +134,10 @@ dh --help
 Bạn chỉ cần:
 
 - binary `dh`
+- Node.js v22+ trong `PATH`
 
 Bạn không cần:
 
-- Node.js
 - npm
 - Go
 
@@ -150,7 +151,7 @@ Nếu bạn muốn build/test từ source:
 
 - Node.js
 - npm
-- Go
+- Rust (toolchain 1.94.1 via `rust-toolchain.toml`)
 - make
 
 ## First-Time Setup
@@ -199,6 +200,14 @@ dh doctor --debug-dump
 - semantic config đã set chưa
 - embedding key có thiếu không
 - repo đã có index chưa
+
+Từ Phase 5, `doctor` phân loại lifecycle rõ ràng theo 3 nhóm để tránh false-OK:
+
+- `install/distribution`
+- `runtime/workspace readiness`
+- `capability/tooling`
+
+Mỗi nhóm có trạng thái: `healthy`, `degraded`, `unsupported`, hoặc `misconfigured`.
 
 ### Step 3: Build the local index
 
@@ -292,6 +301,16 @@ dh migrate "upgrade provider integration to a new API contract"
 ```
 
 ## Optional: Enable Real Semantic Retrieval
+
+## Language Support Boundary (bounded)
+
+`dh` surface language support theo 3 mức rõ ràng:
+
+- `supported`: capability path hiện hữu và ổn định cho surface đó
+- `limited`: có hỗ trợ một phần, chưa đảm bảo toàn bộ downstream capability
+- `fallback-only`: chủ yếu dựa vào fallback/degraded behavior
+
+Phase 5 chỉ surfacing boundary truthfully, không claim broad multi-language parity.
 
 Nếu muốn semantic retrieval dùng embedding provider thật, set `OPENAI_API_KEY`:
 
@@ -516,6 +535,6 @@ Nếu bạn đang phát triển source code của `dh`:
 npm install
 npm run check
 npm test
-cd packages/opencode-core && go test ./...
+cd rust-engine && cargo test --workspace
 make release-all
 ```

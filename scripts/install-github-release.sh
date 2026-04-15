@@ -4,7 +4,11 @@ set -eu
 REPO="${DH_GITHUB_REPO:-duypham2407/dh-kit}"
 VERSION="${1:-latest}"
 INSTALL_DIR="${2:-$HOME/.local/bin}"
+RUST_BOOTSTRAP="${DH_INSTALL_RUST_TOOLS:-0}"
+RUST_ASSUME_YES="${DH_INSTALL_RUST_TOOLS_YES:-0}"
+RUST_DRY_RUN="${DH_RUST_BOOTSTRAP_DRY_RUN:-0}"
 TMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t dh-install)
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -30,10 +34,15 @@ case "$platform" in
   darwin|linux)
     ;;
   *)
-    echo "unsupported platform: $platform" >&2
+    echo "unsupported platform: $platform (supported: darwin, linux)" >&2
     exit 1
     ;;
 esac
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "install dependency missing: curl is required" >&2
+  exit 1
+fi
 
 if [ "$VERSION" = "latest" ]; then
   base_url="https://github.com/$REPO/releases/latest/download"
@@ -72,6 +81,7 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 target="$INSTALL_DIR/dh"
+backup=""
 
 if [ -f "$target" ]; then
   backup="$target.backup.$(date +%s)"
@@ -84,3 +94,35 @@ chmod +x "$target"
 
 echo "[dh] installed to $target"
 echo "[dh] verify with: $target --help"
+
+if "$target" --version >/dev/null 2>&1; then
+  echo "[dh] install verified: $($target --version)"
+else
+  if [ -f "$backup" ]; then
+    echo "[dh] post-install verification failed; rolling back to $backup" >&2
+    mv "$backup" "$target"
+    chmod +x "$target"
+  fi
+  exit 1
+fi
+
+if [ -x "$SCRIPT_DIR/verify-release-artifacts.sh" ]; then
+  echo "[dh] lifecycle note: artifact-level verification is available for local release dirs via scripts/verify-release-artifacts.sh"
+fi
+
+if [ "$RUST_BOOTSTRAP" = "1" ]; then
+  script_url="https://raw.githubusercontent.com/$REPO/main/scripts/install-dev-tools.sh"
+  toolchain_url="https://raw.githubusercontent.com/$REPO/main/rust-toolchain.toml"
+  echo "[dh] Rust dev bootstrap opt-in detected (DH_INSTALL_RUST_TOOLS=1)"
+  echo "[dh] downloading helper: $script_url"
+  helper="$TMP_DIR/install-dev-tools.sh"
+  toolchain_file="$TMP_DIR/rust-toolchain.toml"
+  curl -fsSL "$script_url" -o "$helper"
+  echo "[dh] downloading toolchain contract: $toolchain_url"
+  curl -fsSL "$toolchain_url" -o "$toolchain_file"
+  chmod +x "$helper"
+  DH_INSTALL_RUST_TOOLS_YES="$RUST_ASSUME_YES" \
+    DH_RUST_BOOTSTRAP_DRY_RUN="$RUST_DRY_RUN" \
+    DH_RUST_TOOLCHAIN_FILE="$toolchain_file" \
+    sh "$helper" --with-rust-tools
+fi

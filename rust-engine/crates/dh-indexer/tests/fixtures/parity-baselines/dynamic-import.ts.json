@@ -1,0 +1,11 @@
+{
+  "file": "dynamic-import.ts",
+  "expected": {
+    "symbols": 2,
+    "imports": 1,
+    "call_edges": 2,
+    "references": 4,
+    "chunks": 3,
+    "parse_status": "Parsed"
+  }
+}

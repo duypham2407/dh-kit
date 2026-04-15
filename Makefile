@@ -1,11 +1,12 @@
 APP_NAME=dh
-GO_CORE_DIR=packages/opencode-core
+RUST_ENGINE_DIR=rust-engine
 DIST_DIR=dist
 RELEASE_DIR=$(DIST_DIR)/releases
 PACKAGE_SCRIPT=scripts/package-release.sh
+RUST_RELEASE_STAGE_DIR=$(DIST_DIR)/rust-engine/releases
 VERSION ?= dev
 
-.PHONY: check test build go-build cli-bundle release-dirs release-macos-arm64 release-macos-amd64 release-linux-amd64 release-linux-arm64 package-release release-all
+.PHONY: check test rust-test rust-build-release build package-release release-all
 
 check:
 	npm run check
@@ -13,23 +14,28 @@ check:
 test:
 	npm test
 
-cli-bundle:
-	scripts/build-cli-bundle.sh
+rust-test:
+	cargo test --workspace --manifest-path $(RUST_ENGINE_DIR)/Cargo.toml
 
-go-build: cli-bundle
-	$(MAKE) -C $(GO_CORE_DIR) build VERSION=$(VERSION)
+rust-build-release:
+	mkdir -p $(RUST_RELEASE_STAGE_DIR)
+	@platform=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
+	arch=$$(uname -m); \
+	case "$$arch" in \
+		aarch64) arch="arm64" ;; \
+		x86_64) arch="amd64" ;; \
+	esac; \
+	cargo build --release -p dh-engine --manifest-path $(RUST_ENGINE_DIR)/Cargo.toml; \
+	cp "$(RUST_ENGINE_DIR)/target/release/dh-engine" "$(RUST_RELEASE_STAGE_DIR)/$(APP_NAME)-$$platform-$$arch"; \
+	chmod +x "$(RUST_RELEASE_STAGE_DIR)/$(APP_NAME)-$$platform-$$arch"
 
-build: check test go-build
+build: check test rust-test rust-build-release
 
 release-dirs:
 	mkdir -p $(DIST_DIR)/releases
 
 package-release:
-	sh $(PACKAGE_SCRIPT) $(GO_CORE_DIR)/dist/releases $(RELEASE_DIR) $(VERSION)
+	sh $(PACKAGE_SCRIPT) $(RUST_RELEASE_STAGE_DIR) $(RELEASE_DIR) $(VERSION)
 
-release-all: check test cli-bundle
-	$(MAKE) -C $(GO_CORE_DIR) release-macos-arm64 VERSION=$(VERSION)
-	$(MAKE) -C $(GO_CORE_DIR) release-macos-amd64 VERSION=$(VERSION)
-	$(MAKE) -C $(GO_CORE_DIR) release-linux-amd64 VERSION=$(VERSION)
-	$(MAKE) -C $(GO_CORE_DIR) release-linux-arm64 VERSION=$(VERSION)
+release-all: check test rust-test rust-build-release
 	$(MAKE) package-release VERSION=$(VERSION)

@@ -1,5 +1,8 @@
 # DH Architecture
 
+> **Archive-only note:** This document reflects historical Go-era architecture framing.
+> It is retained for provenance and is not authoritative for the current supported runtime path.
+
 Last reviewed against code: 2026-04-05
 
 ## Mục tiêu

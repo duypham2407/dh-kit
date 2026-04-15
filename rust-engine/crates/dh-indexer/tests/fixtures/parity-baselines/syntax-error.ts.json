@@ -1,0 +1,11 @@
+{
+  "file": "syntax-error.ts",
+  "expected": {
+    "symbols": 0,
+    "imports": 0,
+    "call_edges": 0,
+    "references": 2,
+    "chunks": 1,
+    "parse_status": "ParsedWithErrors"
+  }
+}

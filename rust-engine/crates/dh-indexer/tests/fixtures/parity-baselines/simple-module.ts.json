@@ -1,0 +1,11 @@
+{
+  "file": "simple-module.ts",
+  "expected": {
+    "symbols": 3,
+    "imports": 0,
+    "call_edges": 1,
+    "references": 8,
+    "chunks": 4,
+    "parse_status": "Parsed"
+  }
+}

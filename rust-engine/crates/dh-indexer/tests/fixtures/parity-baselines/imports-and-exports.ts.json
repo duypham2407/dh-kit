@@ -1,0 +1,11 @@
+{
+  "file": "imports-and-exports.ts",
+  "expected": {
+    "symbols": 1,
+    "imports": 3,
+    "call_edges": 1,
+    "references": 12,
+    "chunks": 2,
+    "parse_status": "Parsed"
+  }
+}

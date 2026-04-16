@@ -80,9 +80,17 @@ export type KnowledgeCommandReport = {
     method?: string;
     requestId?: number;
     rustBacked: boolean;
+    protocolVersion?: string;
     engine?: {
       name: string;
       version: string;
+    };
+    capabilities?: {
+      protocolVersion: string;
+      methods: readonly ["dh.initialize", "query.search", "query.definition", "query.relationship"];
+      queryRelationship: {
+        supportedRelations: readonly ["usage", "dependencies", "dependents"];
+      };
     };
     failure?: {
       code: BridgeFailureCode;
@@ -230,10 +238,12 @@ export async function runKnowledgeCommand(input: {
           method: bridgeResult.method,
           requestId: bridgeResult.requestId,
           rustBacked: true,
+          protocolVersion: bridgeResult.protocolVersion,
           engine: {
             name: bridgeResult.engineName,
             version: bridgeResult.engineVersion,
           },
+          capabilities: bridgeResult.capabilities,
         },
       };
     } catch (error) {

@@ -110,6 +110,8 @@ export type DoctorSnapshot = {
   };
 };
 
+type OperatorReadinessCondition = "ready" | "ready-with-known-degradation" | "blocked";
+
 export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   const paths = resolveDhPaths(repoRoot);
   await fs.mkdir(paths.configHome, { recursive: true });
@@ -274,6 +276,12 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
 
   const statusOk = missingTables.length === 0 && providers.length > 0 && DEFAULT_AGENT_REGISTRY.length > 0 && integrityResult.ok;
 
+  const operatorReadinessCondition: OperatorReadinessCondition = lifecycleStatus === "healthy"
+    ? "ready"
+    : statusOk
+      ? "ready-with-known-degradation"
+      : "blocked";
+
   // Build actionable next-steps
   const actions: string[] = [];
 
@@ -319,6 +327,19 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
 
   const summaryLines = [
     "dh doctor",
+    "",
+    "Operator summary:",
+    "  surface: product/install/workspace health (dh doctor)",
+    `  condition: ${operatorReadinessCondition}`,
+    `  why: lifecycle=${lifecycleStatus}; install=${installDistributionStatus}, runtime=${runtimeWorkspaceReadinessStatus}, capability=${capabilityToolingStatus}`,
+    `  works: ${operatorReadinessCondition === "blocked" ? "diagnostics and remediation guidance still available" : "core dh commands remain available with listed constraints"}`,
+    `  limited: ${operatorReadinessCondition === "ready" ? "none detected" : "degraded, unsupported, or misconfigured surfaces require attention before claiming full health"}`,
+    `  next: ${actions[0] ?? "Run \"dh index\" then \"dh ask \\\"how does this project work?\\\"\""}`,
+    "",
+    "Boundary:",
+    "  this command reports product/install/workspace health only.",
+    "  for workflow-state, evidence, or policy inspection use:",
+    "  node .opencode/workflow-state.js status|show|show-policy-status|show-invocations|check-stage-readiness|resume-summary",
     "",
     "Paths:",
     `  config: ${paths.configHome}`,
@@ -369,7 +390,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     `  sqlite bridge: ${sqliteBridgeReady ? "ready" : "not ready"}`,
     `  hook logs present: ${hookLogsPresent ? "yes" : "no"}`,
     "",
-    `Status: ${statusOk ? (lifecycleStatus === "healthy" ? "OK" : `DEGRADED (${lifecycleStatus})`) : "ISSUES FOUND"}`,
+    `Status: ${operatorReadinessCondition === "ready" ? "OK (ready)" : operatorReadinessCondition === "ready-with-known-degradation" ? `DEGRADED (${lifecycleStatus})` : "BLOCKED"}`,
   ];
 
   if (chunkCount === 0) {

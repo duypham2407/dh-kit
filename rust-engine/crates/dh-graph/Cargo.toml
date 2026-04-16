@@ -6,3 +6,9 @@ license.workspace = true
 
 [dependencies]
 serde.workspace = true
+anyhow.workspace = true
+dh-types = { path = "../dh-types" }
+dh-storage = { path = "../dh-storage" }
+
+[dev-dependencies]
+tempfile = "3"

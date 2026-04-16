@@ -305,14 +305,36 @@ pub struct ExportFact {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IndexProgressEvent {
-    ScanStarted { roots: usize },
-    ScanCompleted { files_seen: u64, files_selected: u64 },
-    HashingProgress { done: u64, total: u64 },
-    ParsingProgress { done: u64, total: u64 },
-    WritingProgress { done: u64, total: u64 },
-    EmbeddingQueued { chunks: u64 },
-    Completed { changed_files: u64, duration_ms: u128 },
-    Failed { stage: String, message: String },
+    ScanStarted {
+        roots: usize,
+    },
+    ScanCompleted {
+        files_seen: u64,
+        files_selected: u64,
+    },
+    HashingProgress {
+        done: u64,
+        total: u64,
+    },
+    ParsingProgress {
+        done: u64,
+        total: u64,
+    },
+    WritingProgress {
+        done: u64,
+        total: u64,
+    },
+    EmbeddingQueued {
+        chunks: u64,
+    },
+    Completed {
+        changed_files: u64,
+        duration_ms: u128,
+    },
+    Failed {
+        stage: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,4 +343,87 @@ pub enum FileChangeEvent {
     Modified { path: PathBuf },
     Deleted { path: PathBuf },
     Renamed { from: PathBuf, to: PathBuf },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnswerState {
+    Grounded,
+    Partial,
+    Insufficient,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionClass {
+    FindSymbol,
+    Definition,
+    References,
+    Dependencies,
+    Dependents,
+    CallHierarchy,
+    TraceFlow,
+    Impact,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceKind {
+    Definition,
+    Reference,
+    Dependency,
+    Dependent,
+    Call,
+    TraceStep,
+    ImpactEdge,
+    Chunk,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceSource {
+    Graph,
+    Query,
+    Storage,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceConfidence {
+    Grounded,
+    Partial,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvidenceEntry {
+    pub kind: EvidenceKind,
+    pub file_path: String,
+    pub symbol: Option<String>,
+    pub line_start: Option<u32>,
+    pub line_end: Option<u32>,
+    pub snippet: Option<String>,
+    pub reason: String,
+    pub source: EvidenceSource,
+    pub confidence: EvidenceConfidence,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct EvidenceBounds {
+    pub hop_count: Option<u32>,
+    pub node_limit: Option<usize>,
+    pub traversal_scope: Option<String>,
+    pub stop_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvidencePacket {
+    pub answer_state: AnswerState,
+    pub question_class: QuestionClass,
+    pub subject: String,
+    pub summary: String,
+    pub conclusion: String,
+    pub evidence: Vec<EvidenceEntry>,
+    pub gaps: Vec<String>,
+    pub bounds: EvidenceBounds,
 }

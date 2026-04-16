@@ -29,6 +29,14 @@ describe("runDoctor", () => {
 
     expect(report.ok).toBe(true);
     expect(report.summary).toContain("dh doctor");
+    expect(report.summary).toContain("Operator summary:");
+    expect(report.summary).toContain("surface: product/install/workspace health (dh doctor)");
+    expect(report.summary).toContain("condition:");
+    expect(report.summary).toContain("why:");
+    expect(report.summary).toContain("works:");
+    expect(report.summary).toContain("limited:");
+    expect(report.summary).toContain("next:");
+    expect(report.summary).toContain("Boundary:");
     expect(report.summary).toContain("Paths:");
     expect(report.summary).toContain("Database:");
     expect(report.summary).toContain("Providers:");
@@ -68,6 +76,16 @@ describe("runDoctor", () => {
     expect(["healthy", "degraded", "unsupported", "misconfigured"]).toContain(
       report.diagnostics.lifecycleClassification.capabilityTooling.status,
     );
+  });
+
+  it("uses ready, degraded, and blocked-facing condition labels", async () => {
+    const repo = makeTmpRepo();
+    const report = await runDoctor(repo);
+
+    expect(report.summary).toMatch(/condition: (ready|ready-with-known-degradation|blocked)/);
+    expect(report.summary).toContain("Status:");
+    expect(report.summary).toContain("this command reports product/install/workspace health only.");
+    expect(report.summary).toContain("node .opencode/workflow-state.js status|show|show-policy-status|show-invocations|check-stage-readiness|resume-summary");
   });
 
   it("reports language support boundary summary", async () => {

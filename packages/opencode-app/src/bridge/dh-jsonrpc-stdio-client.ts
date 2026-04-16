@@ -44,6 +44,14 @@ export type BridgeAskResult = {
   requestId: number;
   engineName: string;
   engineVersion: string;
+  protocolVersion: string;
+  capabilities: {
+    protocolVersion: string;
+    methods: readonly ["dh.initialize", "query.search", "query.definition", "query.relationship"];
+    queryRelationship: {
+      supportedRelations: readonly ["usage", "dependencies", "dependents"];
+    };
+  };
   evidenceType: "search_match" | "definition" | "usage" | "dependencies" | "dependents";
   items: BridgeSearchItem[];
 };
@@ -99,6 +107,9 @@ type JsonRpcResponse = JsonRpcSuccess | JsonRpcFailure;
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const V2_PROTOCOL_VERSION = "1";
+const V2_METHODS = ["dh.initialize", "query.search", "query.definition", "query.relationship"] as const;
+const V2_RELATIONS = ["usage", "dependencies", "dependents"] as const;
 
 export function createDhJsonRpcStdioClient(
   repoRoot: string,
@@ -131,6 +142,14 @@ class DhJsonRpcStdioClient implements BridgeClient {
   private initialized = false;
   private engineName = "dh-engine";
   private engineVersion = "unknown";
+  private protocolVersion = V2_PROTOCOL_VERSION;
+  private capabilities: BridgeAskResult["capabilities"] = {
+    protocolVersion: V2_PROTOCOL_VERSION,
+    methods: V2_METHODS,
+    queryRelationship: {
+      supportedRelations: V2_RELATIONS,
+    },
+  };
 
   constructor(
     repoRoot: string,
@@ -185,6 +204,8 @@ class DhJsonRpcStdioClient implements BridgeClient {
       requestId,
       engineName: this.engineName,
       engineVersion: this.engineVersion,
+      protocolVersion: this.protocolVersion,
+      capabilities: this.capabilities,
       evidenceType: call.evidenceType,
       items,
     };
@@ -257,17 +278,14 @@ class DhJsonRpcStdioClient implements BridgeClient {
           evidenceType: "dependents",
           requestId,
         };
-      default:
-        return {
-          method: "query.search",
-          params: {
-            query: input.query,
-            workspaceRoot: input.repoRoot,
-            limit,
-          },
-          evidenceType: "search_match",
-          requestId,
-        };
+      default: {
+        const _exhaustive: never = input.queryClass;
+        throw new DhBridgeError({
+          code: "INVALID_REQUEST",
+          phase: "request",
+          message: `Unsupported query class for bridge contract v2: ${String(_exhaustive)}`,
+        });
+      }
     }
   }
 
@@ -376,6 +394,26 @@ class DhJsonRpcStdioClient implements BridgeClient {
     const resultObj = asRecord(initializeResponse.result);
     this.engineName = asString(resultObj.serverName) ?? "dh-engine";
     this.engineVersion = asString(resultObj.serverVersion) ?? "unknown";
+    const protocolVersion = asString(resultObj.protocolVersion);
+    if (protocolVersion !== V2_PROTOCOL_VERSION) {
+      throw new DhBridgeError({
+        code: "INVALID_REQUEST",
+        phase: "startup",
+        message: `Bridge initialize returned unsupported protocolVersion '${protocolVersion ?? "missing"}'.`,
+      });
+    }
+
+    const capabilities = parseV2Capabilities(resultObj.capabilities);
+    if (!capabilities) {
+      throw new DhBridgeError({
+        code: "INVALID_REQUEST",
+        phase: "startup",
+        message: "Bridge initialize did not advertise required V2 capabilities.",
+      });
+    }
+
+    this.protocolVersion = protocolVersion;
+    this.capabilities = capabilities;
     this.initialized = true;
   }
 
@@ -446,12 +484,13 @@ class DhJsonRpcStdioClient implements BridgeClient {
       const header = this.readBuffer.subarray(0, headerEnd).toString("ascii");
       const contentLength = parseContentLength(header);
       if (contentLength === null || contentLength < 0) {
-        const wrapped = new DhBridgeError({
-          code: "INVALID_REQUEST",
-          phase: "request",
-          message: "Bridge response is missing a valid Content-Length header.",
+        this.failAllPending((phase) => {
+          return new DhBridgeError({
+            code: "INVALID_REQUEST",
+            phase,
+            message: "Bridge response is missing a valid Content-Length header.",
+          });
         });
-        this.failAllPending(() => wrapped);
         this.readBuffer = Buffer.alloc(0);
         return;
       }
@@ -469,12 +508,13 @@ class DhJsonRpcStdioClient implements BridgeClient {
       try {
         parsed = JSON.parse(body) as JsonRpcResponse;
       } catch (error) {
-        const wrapped = new DhBridgeError({
-          code: "INVALID_REQUEST",
-          phase: "request",
-          message: `Bridge response payload is not valid JSON: ${(error as Error).message}`,
+        this.failAllPending((phase) => {
+          return new DhBridgeError({
+            code: "INVALID_REQUEST",
+            phase,
+            message: `Bridge response payload is not valid JSON: ${(error as Error).message}`,
+          });
         });
-        this.failAllPending(() => wrapped);
         return;
       }
 
@@ -591,6 +631,40 @@ function asString(value: unknown): string | null {
 
 function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseV2Capabilities(value: unknown): BridgeAskResult["capabilities"] | null {
+  const capabilities = asRecord(value);
+  const protocolVersion = asString(capabilities.protocolVersion);
+  if (protocolVersion !== V2_PROTOCOL_VERSION) {
+    return null;
+  }
+
+  const methods = asStringArray(capabilities.methods);
+  if (!methods || methods.length !== V2_METHODS.length || !V2_METHODS.every((method) => methods.includes(method))) {
+    return null;
+  }
+
+  const relationship = asRecord(capabilities.queryRelationship);
+  const supportedRelations = asStringArray(relationship.supportedRelations);
+  if (!supportedRelations || supportedRelations.length !== V2_RELATIONS.length || !V2_RELATIONS.every((relation) => supportedRelations.includes(relation))) {
+    return null;
+  }
+
+  return {
+    protocolVersion,
+    methods: V2_METHODS,
+    queryRelationship: {
+      supportedRelations: V2_RELATIONS,
+    },
+  };
+}
+
+function asStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    return null;
+  }
+  return value as string[];
 }
 
 function resolveRustEngineRoot(repoRoot: string): string {

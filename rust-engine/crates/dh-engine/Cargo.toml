@@ -11,6 +11,7 @@ dh-indexer = { path = "../dh-indexer" }
 dh-parser = { path = "../dh-parser" }
 dh-storage = { path = "../dh-storage" }
 dh-types = { path = "../dh-types" }
+dh-query = { path = "../dh-query" }
 serde_json.workspace = true
 serde.workspace = true
 

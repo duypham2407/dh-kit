@@ -272,6 +272,7 @@ dependencies = [
  "clap",
  "dh-indexer",
  "dh-parser",
+ "dh-query",
  "dh-storage",
  "dh-types",
  "serde",
@@ -283,7 +284,11 @@ dependencies = [
 name = "dh-graph"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "dh-storage",
+ "dh-types",
  "serde",
+ "tempfile",
 ]
 
 [[package]]
@@ -322,7 +327,10 @@ name = "dh-query"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dh-graph",
+ "dh-storage",
  "dh-types",
+ "tempfile",
 ]
 
 [[package]]

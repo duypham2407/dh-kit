@@ -94,4 +94,9 @@ DH_INSTALL_RUST_TOOLS="$WITH_RUST_TOOLS" \
   DH_RUST_BOOTSTRAP_DRY_RUN="$RUST_TOOLS_DRY_RUN" \
   sh "$SCRIPT_DIR/install.sh" "$BIN_PATH" "$INSTALL_DIR" "$EXPECTED_SHA256"
 
-echo "[dh] install-from-release lifecycle completed"
+echo "[dh] surface: lifecycle install (install-from-release)"
+echo "[dh] condition: completed"
+echo "[dh] why: release artifacts verified and binary installed to $INSTALL_DIR/dh"
+echo "[dh] works: dh binary is installed and executable at $INSTALL_DIR/dh"
+echo "[dh] limited: none detected by this lifecycle command; run doctor for workspace/runtime health"
+echo "[dh] next: run '$INSTALL_DIR/dh doctor' (or 'dh doctor')"

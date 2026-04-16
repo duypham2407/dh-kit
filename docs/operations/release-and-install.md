@@ -66,6 +66,12 @@ Install the host-compatible binary and verify checksum from `SHA256SUMS`:
 scripts/install-from-release.sh dist/releases
 ```
 
+Expected lifecycle output contract:
+
+- `surface: lifecycle install (install-from-release)`
+- `condition: completed` on success
+- `why` / `works` / `limited` / `next` guidance so operators know what to run immediately after install
+
 Optional install directory:
 
 ```sh
@@ -79,6 +85,12 @@ Upgrade creates a backup of the existing binary and verifies the new one:
 ```sh
 scripts/upgrade-from-release.sh dist/releases
 ```
+
+Expected lifecycle output contract:
+
+- `surface: lifecycle upgrade (upgrade-from-release)`
+- `condition: completed` on success
+- explicit `next` guidance to run `dh --version` and `dh doctor`
 
 If the upgraded binary fails `--version`, it automatically rolls back to the
 backup.
@@ -108,6 +120,12 @@ Optional install dir:
 ```sh
 scripts/uninstall.sh "$HOME/.local/bin"
 ```
+
+Expected lifecycle output contract:
+
+- `surface: lifecycle uninstall`
+- `condition: completed` when removal occurred, `condition: noop` when nothing existed at the target path
+- explicit `next` guidance to verify path state (`which dh`)
 
 Phase 5 note: uninstall now reports explicit lifecycle outcome (`completed` or `noop`)
 and verifies binary removal when deletion is attempted.
@@ -180,6 +198,12 @@ No Windows runtime installer is implemented yet; do not assume Windows release p
 Statuses are one of: `healthy`, `degraded`, `unsupported`, `misconfigured`.
 Nightly doctor snapshot checks treat `unsupported` and `misconfigured` lifecycle
 states as regressions requiring attention.
+
+Doctor boundary reminder:
+
+- `dh doctor` reports product/install/workspace health.
+- For workflow-state, evidence, or policy status, use:
+  `node .opencode/workflow-state.js status|show|show-policy-status|show-invocations|check-stage-readiness|resume-summary`.
 
 ## Verify install
 

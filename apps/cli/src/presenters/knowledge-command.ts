@@ -83,6 +83,16 @@ export function renderKnowledgeCommandText(report: KnowledgeCommandReport): stri
     if (report.bridgeEvidence.engine) {
       lines.push(`bridge engine: ${report.bridgeEvidence.engine.name}@${report.bridgeEvidence.engine.version}`);
     }
+    if (report.bridgeEvidence.protocolVersion) {
+      lines.push(`bridge protocol version: ${report.bridgeEvidence.protocolVersion}`);
+    }
+    if (report.bridgeEvidence.capabilities) {
+      lines.push(`bridge capability protocol: ${report.bridgeEvidence.capabilities.protocolVersion}`);
+      lines.push(`bridge capability methods: ${report.bridgeEvidence.capabilities.methods.join(", ")}`);
+      lines.push(
+        `bridge capability relationship relations: ${report.bridgeEvidence.capabilities.queryRelationship.supportedRelations.join(", ")}`,
+      );
+    }
   }
 
   if (report.guidance && report.guidance.length > 0) {

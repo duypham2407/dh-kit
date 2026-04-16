@@ -41,9 +41,17 @@ describe("knowledge command presenters", () => {
           method: "query.search",
           requestId: 12,
           rustBacked: true,
+          protocolVersion: "1",
           engine: {
             name: "dh-engine",
             version: "0.1.0",
+          },
+          capabilities: {
+            protocolVersion: "1",
+            methods: ["dh.initialize", "query.search", "query.definition", "query.relationship"],
+            queryRelationship: {
+              supportedRelations: ["usage", "dependencies", "dependents"],
+            },
           },
         },
         answer: "Best file-discovery match: src/a.ts [1-10].",
@@ -72,6 +80,10 @@ describe("knowledge command presenters", () => {
     expect(text).toContain("bridge rust backed: true");
     expect(text).toContain("bridge method: query.search");
     expect(text).toContain("bridge request id: 12");
+    expect(text).toContain("bridge protocol version: 1");
+    expect(text).toContain("bridge capability protocol: 1");
+    expect(text).toContain("bridge capability methods: dh.initialize, query.search, query.definition, query.relationship");
+    expect(text).toContain("bridge capability relationship relations: usage, dependencies, dependents");
     expect(text).toContain("answer:");
     expect(text).toContain("Best file-discovery match");
     expect(text).toContain("evidence:");

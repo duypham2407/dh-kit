@@ -9,6 +9,14 @@ import { DhBridgeError, type BridgeClient } from "../bridge/dh-jsonrpc-stdio-cli
 
 let repos: string[] = [];
 
+const v2Capabilities = {
+  protocolVersion: "1",
+  methods: ["dh.initialize", "query.search", "query.definition", "query.relationship"] as const,
+  queryRelationship: {
+    supportedRelations: ["usage", "dependencies", "dependents"] as const,
+  },
+};
+
 function makeRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "dh-run-knowledge-"));
   fs.mkdirSync(path.join(repo, ".dh"), { recursive: true });
@@ -161,6 +169,8 @@ describe("runKnowledgeCommand", () => {
             requestId: 7,
             engineName: "dh-engine",
             engineVersion: "0.1.0",
+            protocolVersion: "1",
+            capabilities: v2Capabilities,
             items: [
               {
                 filePath: "src/auth.ts",
@@ -187,6 +197,18 @@ describe("runKnowledgeCommand", () => {
     expect(report.bridgeEvidence?.rustBacked).toBe(true);
     expect(report.bridgeEvidence?.method).toBe("query.search");
     expect(report.bridgeEvidence?.requestId).toBe(7);
+    expect(report.bridgeEvidence?.protocolVersion).toBe("1");
+    expect(report.bridgeEvidence?.capabilities?.methods).toEqual([
+      "dh.initialize",
+      "query.search",
+      "query.definition",
+      "query.relationship",
+    ]);
+    expect(report.bridgeEvidence?.capabilities?.queryRelationship.supportedRelations).toEqual([
+      "usage",
+      "dependencies",
+      "dependents",
+    ]);
     expect(report.answerType).toBe("search_match");
     expect(report.grounding).toBe("grounded");
     expect(report.answer).toContain("file-discovery");
@@ -208,6 +230,8 @@ describe("runKnowledgeCommand", () => {
             requestId: 11,
             engineName: "dh-engine",
             engineVersion: "0.1.0",
+            protocolVersion: "1",
+            capabilities: v2Capabilities,
             items: [
               {
                 filePath: "packages/opencode-app/src/workflows/run-knowledge-command.ts",
@@ -247,6 +271,8 @@ describe("runKnowledgeCommand", () => {
             requestId: 13,
             engineName: "dh-engine",
             engineVersion: "0.1.0",
+            protocolVersion: "1",
+            capabilities: v2Capabilities,
             items: [
               {
                 filePath: "a.ts",
@@ -327,6 +353,8 @@ describe("runKnowledgeCommand", () => {
             requestId: 21,
             engineName: "dh-engine",
             engineVersion: "0.1.0",
+            protocolVersion: "1",
+            capabilities: v2Capabilities,
             items: [
               {
                 filePath: "apps/cli/src/runtime-client.ts",
@@ -400,6 +428,56 @@ describe("runKnowledgeCommand", () => {
     expect(requestFailure.bridgeEvidence?.failure?.code).toBe("REQUEST_FAILED");
     expect(requestFailure.bridgeEvidence?.failure?.phase).toBe("request");
     expect(requestFailure.bridgeEvidence?.startupSucceeded).toBe(true);
+  });
+
+  it("preserves timeout and unreachable-worker failure classifications", async () => {
+    const repo = makeRepo();
+
+    const timeoutFailure = await runKnowledgeCommand({
+      kind: "ask",
+      input: "find auth flow",
+      repoRoot: repo,
+      bridgeClientFactory: () => ({
+        async runAskQuery(_input) {
+          throw new DhBridgeError({
+            code: "BRIDGE_TIMEOUT",
+            phase: "request",
+            message: "timeout",
+            retryable: true,
+          });
+        },
+        async close() {
+          // noop
+        },
+      } satisfies BridgeClient),
+    });
+
+    expect(timeoutFailure.exitCode).toBe(1);
+    expect(timeoutFailure.bridgeEvidence?.failure?.code).toBe("BRIDGE_TIMEOUT");
+    expect(timeoutFailure.bridgeEvidence?.failure?.phase).toBe("request");
+    expect(timeoutFailure.bridgeEvidence?.failure?.retryable).toBe(true);
+
+    const unreachableFailure = await runKnowledgeCommand({
+      kind: "ask",
+      input: "find auth flow",
+      repoRoot: repo,
+      bridgeClientFactory: () => ({
+        async runAskQuery(_input) {
+          throw new DhBridgeError({
+            code: "BRIDGE_UNREACHABLE",
+            phase: "request",
+            message: "broken pipe",
+          });
+        },
+        async close() {
+          // noop
+        },
+      } satisfies BridgeClient),
+    });
+
+    expect(unreachableFailure.exitCode).toBe(1);
+    expect(unreachableFailure.bridgeEvidence?.failure?.code).toBe("BRIDGE_UNREACHABLE");
+    expect(unreachableFailure.bridgeEvidence?.failure?.phase).toBe("request");
   });
 
   it("treats empty bridge result as failure for ask", async () => {

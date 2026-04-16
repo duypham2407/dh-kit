@@ -57,6 +57,19 @@ function spawnFake(handler: RpcHandler): (command: string, args: string[], optio
   return () => new FakeChildProcess(handler) as unknown as ChildProcessWithoutNullStreams;
 }
 
+const v2InitializeResult = {
+  serverName: "dh-engine",
+  serverVersion: "0.1.0",
+  protocolVersion: "1",
+  capabilities: {
+    protocolVersion: "1",
+    methods: ["dh.initialize", "query.search", "query.definition", "query.relationship"],
+    queryRelationship: {
+      supportedRelations: ["usage", "dependencies", "dependents"],
+    },
+  },
+};
+
 describe("dh-jsonrpc-stdio-client", () => {
   it("parses multibyte payload with byte-oriented framing", async () => {
     const spawnChild = spawnFake((request, child) => {
@@ -64,7 +77,7 @@ describe("dh-jsonrpc-stdio-client", () => {
         child.emitJsonResponse({
           jsonrpc: "2.0",
           id: request.id,
-          result: { serverName: "dh-engine", serverVersion: "0.1.0" },
+          result: v2InitializeResult,
         });
         return;
       }
@@ -131,7 +144,7 @@ describe("dh-jsonrpc-stdio-client", () => {
         child.emitJsonResponse({
           jsonrpc: "2.0",
           id: request.id,
-          result: { serverName: "dh-engine", serverVersion: "0.1.0" },
+          result: v2InitializeResult,
         });
         return;
       }
@@ -149,6 +162,125 @@ describe("dh-jsonrpc-stdio-client", () => {
       limit: 1,
     })).rejects.toMatchObject({
       code: "BRIDGE_UNREACHABLE",
+      phase: "request",
+    } satisfies Partial<DhBridgeError>);
+    await client.close();
+  });
+
+  it("surfaces unsupported relation as METHOD_NOT_SUPPORTED", async () => {
+    const spawnChild = spawnFake((request, child) => {
+      if (request.method === "dh.initialize") {
+        child.emitJsonResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: v2InitializeResult,
+        });
+        return;
+      }
+
+      if (request.method === "query.relationship") {
+        child.emitJsonResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          error: {
+            code: -32601,
+            message: "query.relationship relation not supported in bridge contract v2: impact",
+          },
+        });
+      }
+    });
+
+    const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
+    await expect(client.runAskQuery({
+      query: "impact helper",
+      repoRoot: process.cwd(),
+      queryClass: "graph_relationship_dependents",
+      targetPath: "impact",
+      limit: 1,
+    })).rejects.toMatchObject({
+      code: "METHOD_NOT_SUPPORTED",
+      phase: "request",
+    } satisfies Partial<DhBridgeError>);
+    await client.close();
+  });
+
+  it("surfaces request timeout with retryable classification", async () => {
+    const spawnChild = spawnFake((request, child) => {
+      if (request.method === "dh.initialize") {
+        child.emitJsonResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: v2InitializeResult,
+        });
+        return;
+      }
+
+      if (request.method === "query.search") {
+        // Intentionally no response to trigger timeout.
+      }
+    });
+
+    const client = createDhJsonRpcStdioClient(process.cwd(), {
+      spawnChild,
+      requestTimeoutMs: 5,
+    });
+    await expect(client.runAskQuery({
+      query: "auth",
+      repoRoot: process.cwd(),
+      queryClass: "search_file_discovery",
+      limit: 1,
+    })).rejects.toMatchObject({
+      code: "BRIDGE_TIMEOUT",
+      phase: "request",
+      retryable: true,
+    } satisfies Partial<DhBridgeError>);
+    await client.close();
+  });
+
+  it("keeps malformed startup protocol responses in startup phase", async () => {
+    const spawnChild = spawnFake((request, child) => {
+      if (request.method === "dh.initialize") {
+        child.stdout.emit("data", Buffer.from("Content-Length: 1\r\n\r\n{", "utf8"));
+      }
+    });
+
+    const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
+    await expect(client.runAskQuery({
+      query: "auth",
+      repoRoot: process.cwd(),
+      queryClass: "search_file_discovery",
+      limit: 1,
+    })).rejects.toMatchObject({
+      code: "INVALID_REQUEST",
+      phase: "startup",
+    } satisfies Partial<DhBridgeError>);
+    await client.close();
+  });
+
+  it("keeps malformed request protocol responses in request phase", async () => {
+    const spawnChild = spawnFake((request, child) => {
+      if (request.method === "dh.initialize") {
+        child.emitJsonResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: v2InitializeResult,
+        });
+        return;
+      }
+
+      if (request.method === "query.search") {
+        child.stdout.emit("data", Buffer.from("Content-Length: 1\r\n\r\n{", "utf8"));
+      }
+    });
+
+    const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
+    await expect(client.runAskQuery({
+      query: "auth",
+      repoRoot: process.cwd(),
+      queryClass: "search_file_discovery",
+      limit: 1,
+    })).rejects.toMatchObject({
+      code: "INVALID_REQUEST",
       phase: "request",
     } satisfies Partial<DhBridgeError>);
     await client.close();

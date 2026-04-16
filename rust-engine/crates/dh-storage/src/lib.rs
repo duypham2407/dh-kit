@@ -2,9 +2,9 @@
 
 use anyhow::{Context, Result};
 use dh_types::{
-    CallEdge, CallKind, Chunk, EmbeddingStatus, File, FileId, Import, ImportKind, IndexRunStatus,
-    IndexState, LanguageId, ParseStatus, Reference, ReferenceKind, Span, Symbol, SymbolId, SymbolKind,
-    Visibility, WorkspaceId,
+    CallEdge, CallKind, Chunk, ChunkId, EmbeddingStatus, File, FileId, Import, ImportKind,
+    IndexRunStatus, IndexState, LanguageId, ParseStatus, Reference, ReferenceKind, Span, Symbol,
+    SymbolId, SymbolKind, Visibility, WorkspaceId,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use thiserror::Error;
@@ -327,6 +327,7 @@ pub trait SymbolRepository {
     fn insert_symbols(&self, symbols: &[Symbol]) -> Result<()>;
     fn find_symbol_by_name(&self, workspace_id: WorkspaceId, name: &str) -> Result<Vec<Symbol>>;
     fn find_symbols_by_file(&self, file_id: FileId) -> Result<Vec<Symbol>>;
+    fn find_symbols_by_workspace(&self, workspace_id: WorkspaceId) -> Result<Vec<Symbol>>;
 }
 
 pub trait ImportRepository {
@@ -347,6 +348,77 @@ pub trait ReferenceRepository {
 pub trait ChunkRepository {
     fn insert_chunks(&self, chunks: &[Chunk]) -> Result<()>;
     fn find_chunks_by_file(&self, file_id: FileId) -> Result<Vec<Chunk>>;
+    fn find_chunks_by_workspace(&self, workspace_id: WorkspaceId) -> Result<Vec<Chunk>>;
+}
+
+pub trait GraphRepository {
+    fn find_symbol_definitions(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_name: &str,
+        limit: usize,
+    ) -> Result<Vec<Symbol>>;
+    fn find_symbol_by_id(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_id: SymbolId,
+    ) -> Result<Option<Symbol>>;
+    fn find_file_by_id(&self, workspace_id: WorkspaceId, file_id: FileId) -> Result<Option<File>>;
+    fn find_chunk_by_id(
+        &self,
+        workspace_id: WorkspaceId,
+        chunk_id: ChunkId,
+    ) -> Result<Option<Chunk>>;
+    fn find_references_to_symbol(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_id: SymbolId,
+        limit: usize,
+    ) -> Result<Vec<Reference>>;
+    fn find_references_to_target_name(
+        &self,
+        workspace_id: WorkspaceId,
+        target_name: &str,
+        limit: usize,
+    ) -> Result<Vec<Reference>>;
+    fn find_reverse_imports_by_file(
+        &self,
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        limit: usize,
+    ) -> Result<Vec<Import>>;
+    fn find_reverse_imports_by_symbol(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_id: SymbolId,
+        limit: usize,
+    ) -> Result<Vec<Import>>;
+    fn find_calls_from_symbol(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_id: SymbolId,
+        limit: usize,
+    ) -> Result<Vec<CallEdge>>;
+    fn find_calls_to_symbol(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_id: SymbolId,
+        limit: usize,
+    ) -> Result<Vec<CallEdge>>;
+    fn bounded_file_neighborhood(
+        &self,
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        hop_limit: u32,
+        node_limit: usize,
+    ) -> Result<Vec<FileId>>;
+    fn bounded_symbol_neighborhood(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_id: SymbolId,
+        hop_limit: u32,
+        node_limit: usize,
+    ) -> Result<Vec<SymbolId>>;
 }
 
 pub trait IndexStateRepository {
@@ -418,11 +490,16 @@ impl FileRepository for Database {
     }
 
     fn delete_file_facts(&self, file_id: FileId) -> Result<()> {
-        self.conn.execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
         self.conn
-            .execute("DELETE FROM imports WHERE source_file_id = ?1", params![file_id])?;
-        self.conn
-            .execute("DELETE FROM call_edges WHERE source_file_id = ?1", params![file_id])?;
+            .execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
+        self.conn.execute(
+            "DELETE FROM imports WHERE source_file_id = ?1",
+            params![file_id],
+        )?;
+        self.conn.execute(
+            "DELETE FROM call_edges WHERE source_file_id = ?1",
+            params![file_id],
+        )?;
         self.conn.execute(
             "DELETE FROM [references] WHERE source_file_id = ?1",
             params![file_id],
@@ -430,7 +507,11 @@ impl FileRepository for Database {
 
         let rel_path: Option<String> = self
             .conn
-            .query_row("SELECT rel_path FROM files WHERE id = ?1", params![file_id], |row| row.get(0))
+            .query_row(
+                "SELECT rel_path FROM files WHERE id = ?1",
+                params![file_id],
+                |row| row.get(0),
+            )
             .optional()?;
 
         if let Some(path) = rel_path {
@@ -438,7 +519,8 @@ impl FileRepository for Database {
                 .execute("DELETE FROM chunk_fts WHERE rel_path = ?1", params![path])?;
         }
 
-        self.conn.execute("DELETE FROM chunks WHERE file_id = ?1", params![file_id])?;
+        self.conn
+            .execute("DELETE FROM chunks WHERE file_id = ?1", params![file_id])?;
         Ok(())
     }
 
@@ -560,6 +642,26 @@ impl SymbolRepository for Database {
         }
         Ok(out)
     }
+
+    fn find_symbols_by_workspace(&self, workspace_id: WorkspaceId) -> Result<Vec<Symbol>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, file_id, parent_symbol_id, kind, name, qualified_name,
+                   signature, detail, visibility, exported, async_flag, static_flag,
+                   start_byte, end_byte, start_line, start_column, end_line, end_column, symbol_hash
+              FROM symbols
+             WHERE workspace_id = ?1
+             ORDER BY id ASC
+            ",
+        )?;
+
+        let rows = stmt.query_map(params![workspace_id], map_symbol)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
 }
 
 impl ImportRepository for Database {
@@ -634,9 +736,9 @@ impl ChunkRepository for Database {
             ",
         )?;
 
-        let mut fts_stmt = self
-            .conn
-            .prepare("INSERT INTO chunk_fts(title, content, rel_path, language) VALUES (?1, ?2, ?3, ?4)")?;
+        let mut fts_stmt = self.conn.prepare(
+            "INSERT INTO chunk_fts(title, content, rel_path, language) VALUES (?1, ?2, ?3, ?4)",
+        )?;
 
         for chunk in chunks {
             chunk_stmt.execute(params![
@@ -662,7 +764,11 @@ impl ChunkRepository for Database {
 
             let rel_path: Option<String> = self
                 .conn
-                .query_row("SELECT rel_path FROM files WHERE id = ?1", params![chunk.file_id], |row| row.get(0))
+                .query_row(
+                    "SELECT rel_path FROM files WHERE id = ?1",
+                    params![chunk.file_id],
+                    |row| row.get(0),
+                )
                 .optional()?;
 
             fts_stmt.execute(params![
@@ -689,6 +795,26 @@ impl ChunkRepository for Database {
         )?;
 
         let rows = stmt.query_map(params![file_id], map_chunk)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn find_chunks_by_workspace(&self, workspace_id: WorkspaceId) -> Result<Vec<Chunk>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, file_id, symbol_id, parent_symbol_id, kind, language,
+                   title, content, content_hash, token_estimate, start_line, start_column,
+                   end_line, end_column, prev_chunk_id, next_chunk_id, embedding_status
+              FROM chunks
+             WHERE workspace_id = ?1
+             ORDER BY id ASC
+            ",
+        )?;
+
+        let rows = stmt.query_map(params![workspace_id], map_chunk)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -906,6 +1032,340 @@ impl IndexStateRepository for Database {
     }
 }
 
+impl GraphRepository for Database {
+    fn find_symbol_definitions(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_name: &str,
+        limit: usize,
+    ) -> Result<Vec<Symbol>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, file_id, parent_symbol_id, kind, name, qualified_name,
+                   signature, detail, visibility, exported, async_flag, static_flag,
+                   start_byte, end_byte, start_line, start_column, end_line, end_column, symbol_hash
+              FROM symbols
+             WHERE workspace_id = ?1 AND (name = ?2 OR qualified_name = ?2)
+             ORDER BY exported DESC, id ASC
+             LIMIT ?3
+            ",
+        )?;
+        let rows = stmt.query_map(params![workspace_id, symbol_name, limit as i64], map_symbol)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn find_symbol_by_id(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_id: SymbolId,
+    ) -> Result<Option<Symbol>> {
+        self.conn
+            .query_row(
+                "
+                SELECT id, workspace_id, file_id, parent_symbol_id, kind, name, qualified_name,
+                       signature, detail, visibility, exported, async_flag, static_flag,
+                       start_byte, end_byte, start_line, start_column, end_line, end_column, symbol_hash
+                  FROM symbols
+                 WHERE workspace_id = ?1 AND id = ?2
+                ",
+                params![workspace_id, symbol_id],
+                map_symbol,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn find_file_by_id(&self, workspace_id: WorkspaceId, file_id: FileId) -> Result<Option<File>> {
+        self.conn
+            .query_row(
+                "
+                SELECT id, workspace_id, root_id, package_id, rel_path, language, size_bytes,
+                       mtime_unix_ms, content_hash, structure_hash, public_api_hash, parse_status,
+                       parse_error, symbol_count, chunk_count, is_barrel,
+                       last_indexed_at_unix_ms, deleted_at_unix_ms
+                  FROM files
+                 WHERE workspace_id = ?1 AND id = ?2
+                ",
+                params![workspace_id, file_id],
+                map_file,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn find_chunk_by_id(
+        &self,
+        workspace_id: WorkspaceId,
+        chunk_id: ChunkId,
+    ) -> Result<Option<Chunk>> {
+        self.conn
+            .query_row(
+                "
+                SELECT id, workspace_id, file_id, symbol_id, parent_symbol_id, kind, language,
+                       title, content, content_hash, token_estimate, start_line, start_column,
+                       end_line, end_column, prev_chunk_id, next_chunk_id, embedding_status
+                  FROM chunks
+                 WHERE workspace_id = ?1 AND id = ?2
+                ",
+                params![workspace_id, chunk_id],
+                map_chunk,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn find_references_to_symbol(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_id: SymbolId,
+        limit: usize,
+    ) -> Result<Vec<Reference>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, source_file_id, source_symbol_id, target_symbol_id,
+                   target_name, kind, resolved, resolution_confidence,
+                   start_line, start_column, end_line, end_column
+              FROM [references]
+             WHERE workspace_id = ?1 AND target_symbol_id = ?2
+             ORDER BY id ASC
+             LIMIT ?3
+            ",
+        )?;
+        let rows = stmt.query_map(
+            params![workspace_id, symbol_id, limit as i64],
+            map_reference,
+        )?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn find_references_to_target_name(
+        &self,
+        workspace_id: WorkspaceId,
+        target_name: &str,
+        limit: usize,
+    ) -> Result<Vec<Reference>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, source_file_id, source_symbol_id, target_symbol_id,
+                   target_name, kind, resolved, resolution_confidence,
+                   start_line, start_column, end_line, end_column
+              FROM [references]
+             WHERE workspace_id = ?1 AND target_name = ?2
+             ORDER BY id ASC
+             LIMIT ?3
+            ",
+        )?;
+        let rows = stmt.query_map(
+            params![workspace_id, target_name, limit as i64],
+            map_reference,
+        )?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn find_reverse_imports_by_file(
+        &self,
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        limit: usize,
+    ) -> Result<Vec<Import>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, source_file_id, source_symbol_id, raw_specifier,
+                   imported_name, local_name, alias, kind, is_type_only, is_reexport,
+                   resolved_file_id, resolved_symbol_id, start_line, start_column,
+                   end_line, end_column, resolution_error
+              FROM imports
+             WHERE workspace_id = ?1 AND resolved_file_id = ?2
+             ORDER BY id ASC
+             LIMIT ?3
+            ",
+        )?;
+        let rows = stmt.query_map(params![workspace_id, file_id, limit as i64], map_import)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn find_reverse_imports_by_symbol(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_id: SymbolId,
+        limit: usize,
+    ) -> Result<Vec<Import>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, source_file_id, source_symbol_id, raw_specifier,
+                   imported_name, local_name, alias, kind, is_type_only, is_reexport,
+                   resolved_file_id, resolved_symbol_id, start_line, start_column,
+                   end_line, end_column, resolution_error
+              FROM imports
+             WHERE workspace_id = ?1 AND resolved_symbol_id = ?2
+             ORDER BY id ASC
+             LIMIT ?3
+            ",
+        )?;
+        let rows = stmt.query_map(params![workspace_id, symbol_id, limit as i64], map_import)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn find_calls_from_symbol(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_id: SymbolId,
+        limit: usize,
+    ) -> Result<Vec<CallEdge>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, source_file_id, caller_symbol_id, callee_symbol_id,
+                   callee_qualified_name, callee_display_name, kind, resolved,
+                   start_line, start_column, end_line, end_column
+              FROM call_edges
+             WHERE workspace_id = ?1 AND caller_symbol_id = ?2
+             ORDER BY id ASC
+             LIMIT ?3
+            ",
+        )?;
+        let rows = stmt.query_map(
+            params![workspace_id, symbol_id, limit as i64],
+            map_call_edge,
+        )?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn find_calls_to_symbol(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_id: SymbolId,
+        limit: usize,
+    ) -> Result<Vec<CallEdge>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, source_file_id, caller_symbol_id, callee_symbol_id,
+                   callee_qualified_name, callee_display_name, kind, resolved,
+                   start_line, start_column, end_line, end_column
+              FROM call_edges
+             WHERE workspace_id = ?1 AND callee_symbol_id = ?2
+             ORDER BY id ASC
+             LIMIT ?3
+            ",
+        )?;
+        let rows = stmt.query_map(
+            params![workspace_id, symbol_id, limit as i64],
+            map_call_edge,
+        )?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn bounded_file_neighborhood(
+        &self,
+        workspace_id: WorkspaceId,
+        file_id: FileId,
+        hop_limit: u32,
+        node_limit: usize,
+    ) -> Result<Vec<FileId>> {
+        use std::collections::{HashSet, VecDeque};
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+
+        visited.insert(file_id);
+        queue.push_back((file_id, 0_u32));
+
+        while let Some((current, hop)) = queue.pop_front() {
+            if visited.len() >= node_limit || hop >= hop_limit {
+                continue;
+            }
+
+            for imp in self.find_imports_by_file(current)? {
+                if let Some(next) = imp.resolved_file_id {
+                    if visited.insert(next) {
+                        queue.push_back((next, hop + 1));
+                    }
+                }
+            }
+            for rev in self.find_reverse_imports_by_file(workspace_id, current, node_limit)? {
+                if visited.insert(rev.source_file_id) {
+                    queue.push_back((rev.source_file_id, hop + 1));
+                }
+            }
+        }
+
+        Ok(visited.into_iter().collect())
+    }
+
+    fn bounded_symbol_neighborhood(
+        &self,
+        workspace_id: WorkspaceId,
+        symbol_id: SymbolId,
+        hop_limit: u32,
+        node_limit: usize,
+    ) -> Result<Vec<SymbolId>> {
+        use std::collections::{HashSet, VecDeque};
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+
+        visited.insert(symbol_id);
+        queue.push_back((symbol_id, 0_u32));
+
+        while let Some((current, hop)) = queue.pop_front() {
+            if visited.len() >= node_limit || hop >= hop_limit {
+                continue;
+            }
+
+            for call in self.find_calls_from_symbol(workspace_id, current, node_limit)? {
+                if let Some(next) = call.callee_symbol_id {
+                    if visited.insert(next) {
+                        queue.push_back((next, hop + 1));
+                    }
+                }
+            }
+
+            for call in self.find_calls_to_symbol(workspace_id, current, node_limit)? {
+                if let Some(next) = call.caller_symbol_id {
+                    if visited.insert(next) {
+                        queue.push_back((next, hop + 1));
+                    }
+                }
+            }
+
+            for r in self.find_references_to_symbol(workspace_id, current, node_limit)? {
+                if let Some(next) = r.source_symbol_id {
+                    if visited.insert(next) {
+                        queue.push_back((next, hop + 1));
+                    }
+                }
+            }
+        }
+
+        Ok(visited.into_iter().collect())
+    }
+}
+
 fn map_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<File> {
     Ok(File {
         id: row.get(0)?,
@@ -1006,7 +1466,8 @@ fn map_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
         },
         prev_chunk_id: row.get(15)?,
         next_chunk_id: row.get(16)?,
-        embedding_status: embedding_status_from_str(&row.get::<_, String>(17)?).map_err(to_sqlite_err)?,
+        embedding_status: embedding_status_from_str(&row.get::<_, String>(17)?)
+            .map_err(to_sqlite_err)?,
     })
 }
 
@@ -1078,7 +1539,11 @@ fn to_sqlite_err(err: StorageError) -> rusqlite::Error {
 }
 
 fn bool_to_int(value: bool) -> i64 {
-    if value { 1 } else { 0 }
+    if value {
+        1
+    } else {
+        0
+    }
 }
 
 fn int_to_bool(value: i64) -> bool {
@@ -1573,7 +2038,186 @@ mod tests {
         db.update_state(&state)?;
         let fetched = db.get_state(1)?;
         assert!(fetched.is_some());
-        assert_eq!(fetched.expect("state exists").schema_version, SCHEMA_VERSION);
+        assert_eq!(
+            fetched.expect("state exists").schema_version,
+            SCHEMA_VERSION
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn graph_repository_helpers_round_trip() -> Result<()> {
+        let db = setup_db()?;
+        db.upsert_file(&File {
+            id: 10,
+            workspace_id: 1,
+            root_id: 1,
+            package_id: None,
+            rel_path: "src/a.ts".to_string(),
+            language: LanguageId::TypeScript,
+            size_bytes: 1,
+            mtime_unix_ms: 1,
+            content_hash: "a".to_string(),
+            structure_hash: None,
+            public_api_hash: None,
+            parse_status: ParseStatus::Parsed,
+            parse_error: None,
+            symbol_count: 1,
+            chunk_count: 0,
+            is_barrel: false,
+            last_indexed_at_unix_ms: None,
+            deleted_at_unix_ms: None,
+        })?;
+        db.upsert_file(&File {
+            id: 11,
+            workspace_id: 1,
+            root_id: 1,
+            package_id: None,
+            rel_path: "src/b.ts".to_string(),
+            language: LanguageId::TypeScript,
+            size_bytes: 1,
+            mtime_unix_ms: 1,
+            content_hash: "b".to_string(),
+            structure_hash: None,
+            public_api_hash: None,
+            parse_status: ParseStatus::Parsed,
+            parse_error: None,
+            symbol_count: 1,
+            chunk_count: 0,
+            is_barrel: false,
+            last_indexed_at_unix_ms: None,
+            deleted_at_unix_ms: None,
+        })?;
+
+        db.insert_symbols(&[
+            Symbol {
+                id: 100,
+                workspace_id: 1,
+                file_id: 10,
+                parent_symbol_id: None,
+                kind: SymbolKind::Function,
+                name: "foo".to_string(),
+                qualified_name: "foo".to_string(),
+                signature: None,
+                detail: None,
+                visibility: Visibility::Public,
+                exported: true,
+                async_flag: false,
+                static_flag: false,
+                span: Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 1,
+                    start_column: 0,
+                    end_line: 1,
+                    end_column: 1,
+                },
+                symbol_hash: "foo".to_string(),
+            },
+            Symbol {
+                id: 101,
+                workspace_id: 1,
+                file_id: 11,
+                parent_symbol_id: None,
+                kind: SymbolKind::Function,
+                name: "bar".to_string(),
+                qualified_name: "bar".to_string(),
+                signature: None,
+                detail: None,
+                visibility: Visibility::Public,
+                exported: true,
+                async_flag: false,
+                static_flag: false,
+                span: Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 1,
+                    start_column: 0,
+                    end_line: 1,
+                    end_column: 1,
+                },
+                symbol_hash: "bar".to_string(),
+            },
+        ])?;
+
+        db.insert_imports(&[Import {
+            id: 200,
+            workspace_id: 1,
+            source_file_id: 10,
+            source_symbol_id: None,
+            raw_specifier: "./b".to_string(),
+            imported_name: Some("bar".to_string()),
+            local_name: Some("bar".to_string()),
+            alias: None,
+            kind: ImportKind::EsmNamed,
+            is_type_only: false,
+            is_reexport: false,
+            resolved_file_id: Some(11),
+            resolved_symbol_id: Some(101),
+            span: Span {
+                start_byte: 0,
+                end_byte: 1,
+                start_line: 1,
+                start_column: 0,
+                end_line: 1,
+                end_column: 1,
+            },
+            resolution_error: None,
+        }])?;
+
+        db.insert_references(&[Reference {
+            id: 300,
+            workspace_id: 1,
+            source_file_id: 10,
+            source_symbol_id: Some(100),
+            target_symbol_id: Some(101),
+            target_name: "bar".to_string(),
+            kind: ReferenceKind::Call,
+            resolved: true,
+            resolution_confidence: 1.0,
+            span: Span {
+                start_byte: 0,
+                end_byte: 1,
+                start_line: 2,
+                start_column: 0,
+                end_line: 2,
+                end_column: 1,
+            },
+        }])?;
+
+        db.insert_call_edges(&[CallEdge {
+            id: 400,
+            workspace_id: 1,
+            source_file_id: 10,
+            caller_symbol_id: Some(100),
+            callee_symbol_id: Some(101),
+            callee_qualified_name: Some("bar".to_string()),
+            callee_display_name: "bar".to_string(),
+            kind: CallKind::Direct,
+            resolved: true,
+            span: Span {
+                start_byte: 0,
+                end_byte: 1,
+                start_line: 2,
+                start_column: 0,
+                end_line: 2,
+                end_column: 1,
+            },
+        }])?;
+
+        let defs = db.find_symbol_definitions(1, "foo", 10)?;
+        assert_eq!(defs.len(), 1);
+        assert!(db.find_symbol_by_id(1, 100)?.is_some());
+        assert!(db.find_file_by_id(1, 10)?.is_some());
+        assert_eq!(db.find_reverse_imports_by_file(1, 11, 10)?.len(), 1);
+        assert_eq!(db.find_reverse_imports_by_symbol(1, 101, 10)?.len(), 1);
+        assert_eq!(db.find_references_to_symbol(1, 101, 10)?.len(), 1);
+        assert_eq!(db.find_references_to_target_name(1, "bar", 10)?.len(), 1);
+        assert_eq!(db.find_calls_from_symbol(1, 100, 10)?.len(), 1);
+        assert_eq!(db.find_calls_to_symbol(1, 101, 10)?.len(), 1);
+        assert!(!db.bounded_file_neighborhood(1, 10, 2, 8)?.is_empty());
+        assert!(!db.bounded_symbol_neighborhood(1, 100, 2, 8)?.is_empty());
+
         Ok(())
     }
 }

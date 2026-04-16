@@ -30,14 +30,14 @@ Formula/dh.rb
 macOS users install with:
 
 ```sh
-brew tap duypham2407/dh
+brew tap duypham2407/homebrew-dh
 brew install dh
 ```
 
 Or in one line:
 
 ```sh
-brew install duypham2407/dh/dh
+brew install duypham2407/homebrew-dh/dh
 ```
 
 ## Generating the Formula
@@ -79,3 +79,7 @@ The release workflow can be extended to:
 - Homebrew is primarily important for macOS
 - Linux users should prefer GitHub Releases + the one-line install script
 - The formula downloads pre-built binaries (no compilation during install)
+- Runtime install remains Rust-free by default; Homebrew formula should not add a Rust dependency for prebuilt binaries
+- Rust toolchain setup for source/development is opt-in and handled separately via `scripts/install-dev-tools.sh`
+- Homebrew distribution is part of the current macOS lifecycle, not a broad cross-platform parity claim
+- Windows installer parity is out of scope for current Homebrew/release lifecycle contract

@@ -35,6 +35,38 @@ describe("knowledge command presenters", () => {
           attempted: true,
           persisted: true,
         },
+        bridgeEvidence: {
+          enabled: true,
+          startupSucceeded: true,
+          method: "query.search",
+          requestId: 12,
+          rustBacked: true,
+          protocolVersion: "1",
+          engine: {
+            name: "dh-engine",
+            version: "0.1.0",
+          },
+          capabilities: {
+            protocolVersion: "1",
+            methods: ["dh.initialize", "query.search", "query.definition", "query.relationship"],
+            queryRelationship: {
+              supportedRelations: ["usage", "dependencies", "dependents"],
+            },
+          },
+        },
+        answer: "Best file-discovery match: src/a.ts [1-10].",
+        answerType: "search_match",
+        grounding: "grounded",
+        evidence: [
+          {
+            filePath: "src/a.ts",
+            lineStart: 1,
+            lineEnd: 10,
+            reason: "match",
+            sourceMethod: "query.search",
+            snippet: "export const a = 1",
+          },
+        ],
       }),
     );
     expect(text).toContain("command: ask");
@@ -43,11 +75,63 @@ describe("knowledge command presenters", () => {
     expect(text).toContain("compaction applied: true");
     expect(text).toContain("continuation summary persisted: true");
     expect(text).toContain("runtime persistence succeeded: true");
+    expect(text).toContain("bridge enabled: true");
+    expect(text).toContain("bridge startup succeeded: true");
+    expect(text).toContain("bridge rust backed: true");
+    expect(text).toContain("bridge method: query.search");
+    expect(text).toContain("bridge request id: 12");
+    expect(text).toContain("bridge protocol version: 1");
+    expect(text).toContain("bridge capability protocol: 1");
+    expect(text).toContain("bridge capability methods: dh.initialize, query.search, query.definition, query.relationship");
+    expect(text).toContain("bridge capability relationship relations: usage, dependencies, dependents");
+    expect(text).toContain("answer:");
+    expect(text).toContain("Best file-discovery match");
+    expect(text).toContain("evidence:");
+    expect(text).toContain("answer type: search_match");
+    expect(text).toContain("grounding: grounded");
+  });
+
+  it("renders ask limitations when grounding is partial", () => {
+    const text = renderKnowledgeCommandText(makeReport({
+      answer: "Partial answer: Best definition location: a.ts [10-10].",
+      answerType: "partial",
+      grounding: "partial",
+      evidence: [
+        {
+          filePath: "a.ts",
+          lineStart: 10,
+          lineEnd: 10,
+          reason: "candidate",
+          sourceMethod: "query.definition",
+        },
+      ],
+      limitations: ["Multiple possible definition locations were returned."],
+    }));
+
+    expect(text).toContain("grounding: partial");
+    expect(text).toContain("limitations:");
+    expect(text).toContain("Multiple possible definition locations were returned.");
   });
 
   it("renders failure text output", () => {
-    const text = renderKnowledgeCommandText(makeReport({ exitCode: 1, message: "missing input" }));
-    expect(text).toBe("missing input");
+    const text = renderKnowledgeCommandText(makeReport({
+      exitCode: 1,
+      message: "missing input",
+      bridgeEvidence: {
+        enabled: true,
+        startupSucceeded: false,
+        rustBacked: false,
+        failure: {
+          code: "BRIDGE_STARTUP_FAILED",
+          phase: "startup",
+          message: "spawn failed",
+          retryable: false,
+        },
+      },
+    }));
+    expect(text).toContain("missing input");
+    expect(text).toContain("bridge failure code: BRIDGE_STARTUP_FAILED");
+    expect(text).toContain("bridge failure phase: startup");
   });
 
   it("renders json payload", () => {

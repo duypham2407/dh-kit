@@ -1,0 +1,13 @@
+[package]
+name = "dh-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+dh-types = { path = "../dh-types" }
+tree-sitter.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter-javascript.workspace = true
+blake3.workspace = true

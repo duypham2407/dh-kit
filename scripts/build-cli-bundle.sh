@@ -2,12 +2,12 @@
 set -eu
 
 # Build a self-contained ESM bundle of the TypeScript CLI.
-# Output: packages/opencode-core/internal/clibundle/cli-bundle.mjs
+# Output: dist/cli-bundle/cli-bundle.mjs
 #
 # Usage: scripts/build-cli-bundle.sh
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT_DIR="$REPO_ROOT/packages/opencode-core/internal/clibundle"
+OUT_DIR="$REPO_ROOT/dist/cli-bundle"
 
 mkdir -p "$OUT_DIR"
 

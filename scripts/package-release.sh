@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-SOURCE_DIR="${1:-packages/opencode-core/dist/releases}"
+SOURCE_DIR="${1:-dist/rust-engine/releases}"
 OUTPUT_DIR="${2:-dist/releases}"
 VERSION="${3:-dev}"
 

@@ -165,7 +165,7 @@ Status: **Complete** (2026-04-08)
 
 Ket qua:
 
-- Created `docs/operations/upstream-sync-checklist.md` — full step-by-step checklist for upstream sync
+- Created `docs/archive/operations/upstream-sync-checklist.md` — full step-by-step checklist for upstream sync
 - Documented 8 conflict-prone files with merge risk rating and patch summary
 - Documented ~45 patch-owned (dh-original) files that will never conflict
 - Documented complete branding re-application table (25+ areas)

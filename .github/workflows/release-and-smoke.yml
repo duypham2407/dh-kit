@@ -40,9 +40,9 @@ jobs:
       - name: Run tests
         run: npm test
 
-  # ---------- Go tests ----------
-  go-test:
-    name: Go tests
+  # ---------- Rust tests ----------
+  rust-test:
+    name: Rust workspace tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,23 +56,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          go-version: "1.26.1"
-          cache-dependency-path: packages/opencode-core/go.sum
+          toolchain: 1.94.1
+          components: rustfmt,clippy
 
-      - name: Build embedded CLI bundle
-        run: scripts/build-cli-bundle.sh
-
-      - name: Run Go tests
-        run: go test ./...
-        working-directory: packages/opencode-core
+      - name: Run Rust tests
+        run: cargo test --workspace
+        working-directory: rust-engine
 
   # ---------- Cross-compile + package ----------
   build-release:
     name: Build release artifacts
-    needs: [ts-check, go-test]
+    needs: [ts-check, rust-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -86,11 +83,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          go-version: "1.26.1"
-          cache-dependency-path: packages/opencode-core/go.sum
+          toolchain: 1.94.1
+          components: rustfmt,clippy
 
       - name: Build release artifacts
         run: |
@@ -105,6 +102,9 @@ jobs:
 
       - name: Verify release artifacts
         run: scripts/verify-release-artifacts.sh dist/releases
+
+      - name: Test installer lifecycle
+        run: scripts/test-installers.sh dist/releases
 
       - name: Sign release artifacts
         env:
@@ -155,6 +155,11 @@ jobs:
         env:
           SKIP_GPG_VERIFY: "1"
         run: scripts/verify-release-artifacts.sh dist/releases
+
+      - name: Run installer lifecycle checks
+        env:
+          SKIP_GPG_VERIFY: "1"
+        run: scripts/test-installers.sh dist/releases
 
       - name: Install from release directory
         env:

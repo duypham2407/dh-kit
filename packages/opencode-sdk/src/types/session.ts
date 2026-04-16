@@ -1,6 +1,6 @@
 export type DhSessionStateBridge = {
   // TS-side context identity for bridge writes.
-  // Go sqlite_reader.go uses function argument `sessionID` and does not read
+  // Legacy sqlite reader uses function argument `sessionID` and does not read
   // `sessionId/session_id` from output_json for LatestSessionState.
   sessionId: string;
   lane: string;

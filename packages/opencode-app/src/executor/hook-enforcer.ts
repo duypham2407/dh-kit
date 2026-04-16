@@ -1,15 +1,15 @@
 /**
  * Hook Enforcer — DB-backed enforcement bridge between the TypeScript policy
- * layer and the Go runtime hook stubs.
+ * layer and runtime hook stubs.
  *
  * Design:
  * - TS enforcement decisions (allow / block / modify) are written to the
  *   `hook_invocation_logs` SQLite table.
- * - Go hook implementations read the latest decision for a given
+ * - Runtime hook implementations read the latest decision for a given
  *   (session_id, envelope_id, hook_name) tuple before allowing or blocking
  *   the operation at process level.
  *
- * This gives a single-binary compatible path: Go reads policy decisions
+ * This gives a single-binary compatible path: runtime hook handlers read policy decisions
  * from the same SQLite DB written by TS without a network hop or sidecar.
  */
 
@@ -32,7 +32,7 @@ export type HookDecision = {
 
 /**
  * Enforcer that runs TS policy logic and persists each decision to SQLite
- * so that Go runtime hooks can read and honour them.
+ * so that runtime hook handlers can read and honour them.
  */
 export class HookEnforcer {
   private readonly logs: HookInvocationLogsRepo;

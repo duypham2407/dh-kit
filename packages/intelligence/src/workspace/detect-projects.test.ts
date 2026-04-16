@@ -93,8 +93,8 @@ describe("detectProjects", () => {
     fs.mkdirSync(path.join(repo, "services", "api", "src"), { recursive: true });
 
     fs.writeFileSync(path.join(repo, "packages", "a", "package.json"), "{}\n", "utf8");
-    fs.writeFileSync(path.join(repo, "packages", "a", "nested", "go.mod"), "module nested\n", "utf8");
-    fs.writeFileSync(path.join(repo, "services", "api", "go.mod"), "module api\n", "utf8");
+    fs.writeFileSync(path.join(repo, "packages", "a", "nested", "Cargo.toml"), "[package]\nname = \"nested\"\n", "utf8");
+    fs.writeFileSync(path.join(repo, "services", "api", "Cargo.toml"), "[package]\nname = \"api\"\n", "utf8");
 
     fs.writeFileSync(path.join(repo, "packages", "a", "src", "parent.ts"), "export const parent = 1;\n", "utf8");
     fs.writeFileSync(path.join(repo, "packages", "a", "nested", "src", "leaf.ts"), "export const leaf = 1;\n", "utf8");

@@ -1,5 +1,8 @@
 # DH Structure
 
+> **Archive-only note:** This document captures historical Go-era structure framing.
+> It is retained for provenance and is not authoritative for the current supported runtime path.
+
 Last reviewed against code: 2026-04-05
 
 Để build app kiểu Cursor hoặc Antigravity, bạn cần hiểu nó không phải 1 app đơn giản, mà là nhiều lớp hệ thống chồng lên nhau.

@@ -36,7 +36,7 @@ describe("runDoctorCommand", () => {
     expect(payload.ok).toBe(true);
     expect(payload.summary).toContain("dh doctor");
     expect(payload.hookReadiness).toEqual({
-      goBinaryReady: false,
+      runtimeBinaryReady: false,
       sqliteBridgeReady: false,
       hookLogsPresent: false,
     });

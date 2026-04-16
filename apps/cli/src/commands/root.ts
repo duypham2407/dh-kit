@@ -77,6 +77,13 @@ function buildHomeScreen(repoRoot: string): string {
   if (chunkCount === 0) {
     lines.push(
       "",
+      "surface: CLI home/onboarding",
+      "condition: degraded",
+      "why: repository index has not been created yet",
+      "works: doctor and indexing commands are available",
+      "limited: ask/explain/trace quality is limited before indexing",
+      "next: run dh doctor, then dh index",
+      "",
       "first-run onboarding:",
       "  looks like this repo has not been indexed yet.",
       "  run these commands:",
@@ -86,6 +93,13 @@ function buildHomeScreen(repoRoot: string): string {
     );
   } else {
     lines.push(
+      "",
+      "surface: CLI home/onboarding",
+      "condition: ready",
+      "why: repository index already exists",
+      "works: ask/explain/trace commands can use indexed data",
+      "limited: provider-backed quality still depends on doctor/config state",
+      "next: run a knowledge command such as dh ask",
       "",
       "ready to use:",
       "  try:",

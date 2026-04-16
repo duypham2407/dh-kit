@@ -189,11 +189,11 @@ function resolveOptions(options?: ScanOptions): Required<ScanOptions> {
 }
 
 async function detectWorkspaceMarkers(root: string): Promise<WorkspaceMarkers> {
-  const [hasPackageJson, hasGoMod] = await Promise.all([
+  const [hasPackageJson, hasCargoToml] = await Promise.all([
     markerExists(path.join(root, "package.json")),
-    markerExists(path.join(root, "go.mod")),
+    markerExists(path.join(root, "Cargo.toml")),
   ]);
-  return { hasPackageJson, hasGoMod };
+  return { hasPackageJson, hasCargoToml };
 }
 
 async function buildWorkspace(workspaceRoot: string, options: Required<ScanOptions>): Promise<IndexedWorkspace> {
@@ -223,7 +223,7 @@ async function discoverWorkspaceRootsByMarkers(repoRoot: string, options: Requir
     }
 
     const markers = await detectWorkspaceMarkers(scanPath);
-    if (markers.hasGoMod || markers.hasPackageJson) {
+    if (markers.hasCargoToml || markers.hasPackageJson) {
       discovered.add(canonicalizeAbsolutePath(scanPath));
     }
 
@@ -276,8 +276,8 @@ function detectWorkspaceType(markers: WorkspaceMarkers): string {
   if (markers.hasPackageJson) {
     return "node";
   }
-  if (markers.hasGoMod) {
-    return "go";
+  if (markers.hasCargoToml) {
+    return "rust";
   }
   return "unknown";
 }

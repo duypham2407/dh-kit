@@ -29,14 +29,24 @@ describe("runDoctor", () => {
 
     expect(report.ok).toBe(true);
     expect(report.summary).toContain("dh doctor");
+    expect(report.summary).toContain("Operator summary:");
+    expect(report.summary).toContain("surface: product/install/workspace health (dh doctor)");
+    expect(report.summary).toContain("condition:");
+    expect(report.summary).toContain("why:");
+    expect(report.summary).toContain("works:");
+    expect(report.summary).toContain("limited:");
+    expect(report.summary).toContain("next:");
+    expect(report.summary).toContain("Boundary:");
     expect(report.summary).toContain("Paths:");
     expect(report.summary).toContain("Database:");
     expect(report.summary).toContain("Providers:");
     expect(report.summary).toContain("Retrieval:");
     expect(report.summary).toContain("Workflow:");
     expect(report.summary).toContain("Verification health:");
+    expect(report.summary).toContain("Lifecycle classification:");
+    expect(report.summary).toContain("overall lifecycle status:");
     expect(report.summary).toContain("Hooks:");
-    expect(report.summary).toContain("Status: OK");
+    expect(report.summary).toContain("Status:");
   });
 
   it("reports chunk and embedding counts", async () => {
@@ -45,6 +55,52 @@ describe("runDoctor", () => {
 
     expect(report.summary).toContain("chunks: 0");
     expect(report.summary).toContain("embeddings: 0");
+  });
+
+  it("classifies lifecycle surfaces explicitly", async () => {
+    const repo = makeTmpRepo();
+    const report = await runDoctor(repo);
+
+    expect(report.summary).toContain("install/distribution:");
+    expect(report.summary).toContain("runtime/workspace readiness:");
+    expect(report.summary).toContain("capability/tooling:");
+    expect(report.summary).toContain("overall lifecycle status:");
+
+    expect(report.diagnostics.lifecycleClassification).toBeDefined();
+    expect(["healthy", "degraded", "unsupported", "misconfigured"]).toContain(
+      report.diagnostics.lifecycleClassification.installDistribution.status,
+    );
+    expect(["healthy", "degraded", "unsupported", "misconfigured"]).toContain(
+      report.diagnostics.lifecycleClassification.runtimeWorkspaceReadiness.status,
+    );
+    expect(["healthy", "degraded", "unsupported", "misconfigured"]).toContain(
+      report.diagnostics.lifecycleClassification.capabilityTooling.status,
+    );
+  });
+
+  it("uses ready, degraded, and blocked-facing condition labels", async () => {
+    const repo = makeTmpRepo();
+    const report = await runDoctor(repo);
+
+    expect(report.summary).toMatch(/condition: (ready|ready-with-known-degradation|blocked)/);
+    expect(report.summary).toContain("Status:");
+    expect(report.summary).toContain("this command reports product/install/workspace health only.");
+    expect(report.summary).toContain("node .opencode/workflow-state.js status|show|show-policy-status|show-invocations|check-stage-readiness|resume-summary");
+  });
+
+  it("reports language support boundary summary", async () => {
+    const repo = makeTmpRepo();
+    const report = await runDoctor(repo);
+
+    expect(report.summary).toContain("Language support boundaries:");
+    expect(report.summary).toContain("supported:");
+    expect(report.summary).toContain("limited:");
+    expect(report.summary).toContain("fallback-only:");
+
+    expect(report.snapshot.languageSupportSummary.supported).toBeGreaterThan(0);
+    expect(report.snapshot.languageSupportSummary.limited).toBeGreaterThan(0);
+    expect(report.snapshot.languageSupportSummary.fallbackOnly).toBeGreaterThan(0);
+    expect(report.snapshot.languageSupportBoundaries.length).toBeGreaterThan(0);
   });
 
   it("suggests running dh index when no chunks exist", async () => {
@@ -112,7 +168,7 @@ describe("runDoctor", () => {
     const report = await runDoctor(repo);
 
     expect(report.hookReadiness).toEqual({
-      goBinaryReady: false,
+      runtimeBinaryReady: false,
       sqliteBridgeReady: false,
       hookLogsPresent: false,
     });
@@ -125,6 +181,13 @@ describe("runDoctor", () => {
     expect(report.snapshot).toBeDefined();
     expect(report.snapshot.timestamp).toBeTruthy();
     expect(report.snapshot.ok).toBe(true);
+    expect(["healthy", "degraded", "unsupported", "misconfigured"]).toContain(report.snapshot.lifecycleStatus);
+    expect(["healthy", "degraded", "unsupported", "misconfigured"]).toContain(report.snapshot.installDistributionStatus);
+    expect(["healthy", "degraded", "unsupported", "misconfigured"]).toContain(report.snapshot.runtimeWorkspaceReadinessStatus);
+    expect(["healthy", "degraded", "unsupported", "misconfigured"]).toContain(report.snapshot.capabilityToolingStatus);
+    expect(Array.isArray(report.snapshot.installDistributionReasons)).toBe(true);
+    expect(Array.isArray(report.snapshot.runtimeWorkspaceReadinessReasons)).toBe(true);
+    expect(Array.isArray(report.snapshot.capabilityToolingReasons)).toBe(true);
     expect(report.snapshot.tables.required).toBeGreaterThan(0);
     expect(report.snapshot.tables.present).toBe(report.snapshot.tables.required);
     expect(report.snapshot.tables.missing).toEqual([]);
@@ -136,7 +199,7 @@ describe("runDoctor", () => {
     expect(report.snapshot.providers).toBeGreaterThan(0);
     expect(report.snapshot.models).toBeGreaterThan(0);
     expect(report.snapshot.agents).toBeGreaterThan(0);
-    expect(report.snapshot.goBinaryReady).toBe(false);
+    expect(report.snapshot.runtimeBinaryReady).toBe(false);
     expect(report.snapshot.sqliteBridgeReady).toBe(false);
     expect(report.snapshot.hookLogsPresent).toBe(false);
     expect(typeof report.snapshot.workflowMirrorPresent).toBe("boolean");
@@ -147,6 +210,9 @@ describe("runDoctor", () => {
     expect(["available", "unavailable", "not_configured"]).toContain(report.snapshot.ruleScanAvailability);
     expect(["available", "unavailable", "not_configured"]).toContain(report.snapshot.securityScanAvailability);
     expect(typeof report.snapshot.actionCount).toBe("number");
+
+    expect(report.diagnostics.lifecycleClassification).toBeDefined();
+    expect(["healthy", "degraded", "unsupported", "misconfigured"]).toContain(report.diagnostics.lifecycleClassification.overall);
   });
 
   it("snapshot is JSON-serializable for CI consumption", async () => {

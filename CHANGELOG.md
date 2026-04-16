@@ -7,6 +7,40 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 <!-- NEW_RELEASE_ENTRY -->
 
+## [Unreleased]
+
+### Added
+
+- Deepen the Rust engine with bounded graph, query, trace, impact, and evidence-backed code understanding support.
+- Harden the Rust↔TS bridge into a bounded V2 contract with capability advertisement and explicit lifecycle/failure semantics.
+- Complete workflow-engine inspectability across roster ownership, lane behavior, approval gates, reroutes, and resumability.
+- Polish operator-facing product surfaces across doctor summaries, degraded-mode messaging, lifecycle outputs, and next-step guidance.
+
+### Changed
+
+- Normalize operator-facing output vocabulary across doctor and lifecycle surfaces.
+- Improve startup vs request failure truthfulness in bridge-backed flows.
+- Clarify authoritative workflow state vs compatibility mirror responsibilities.
+- Align install/upgrade/uninstall and release-facing docs with actual shipped behavior.
+
+### Fixed
+
+- Usage/reference responses now include evidence and truthful partial vs grounded states.
+- Malformed startup protocol responses are no longer mislabeled as request-phase failures.
+- Full code review and QA unavailable-tool paths are now documented, inspectable, and stage-scoped.
+- Product-health vs workflow-state boundary wording is clearer and more consistent.
+
+### Validation
+
+- `cargo test --workspace`
+- `npm run check`
+- `npm test`
+- targeted bridge tests
+- targeted doctor tests
+- release artifact verification
+- installer lifecycle tests
+- Semgrep quality/security scans
+
 ## [0.1.0](https://github.com/duypham2407/dh-kit/releases/tag/v0.1.0) — 2026-04-05
 
 ### Other Changes
@@ -28,4 +62,3 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - Wire canonical version into Go binary and add Homebrew formula generation ([d8d6303](https://github.com/duypham2407/dh-kit/commit/d8d6303d65a9349609c29ca5c71f359fd67e28a8))
 
 ---
-

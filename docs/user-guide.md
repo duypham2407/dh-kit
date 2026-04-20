@@ -10,7 +10,7 @@ Bạn dùng nó để:
 
 - hỏi về codebase hiện tại
 - giải thích file, symbol, module
-- trace flow qua nhiều file
+- trace flow qua nhiều file khi trace-flow được hỗ trợ trong contract/lane tương lai (bounded contract hiện tại trả `unsupported`)
 - chạy workflow có cấu trúc cho task kỹ thuật
 
 ## Bạn có cần clone source code không?
@@ -23,7 +23,7 @@ Bạn chỉ cần:
 2. mở terminal trong repo bạn muốn phân tích
 3. chạy `dh doctor`
 4. chạy `dh index`
-5. dùng `dh ask`, `dh explain`, `dh trace`
+5. dùng `dh ask`, `dh explain` (và `dh trace` hiện đang trả `unsupported` trong bounded contract hiện tại)
 
 Bạn chỉ cần clone source nếu bạn là developer của chính `dh`.
 
@@ -121,13 +121,42 @@ Hỏi một câu tự nhiên về codebase.
 
 Nếu chưa có index hoặc chưa có enough data, command sẽ gợi ý bước tiếp theo như `dh index` hoặc `dh doctor`.
 
+Catalog query classes currently routed by `dh ask` (bounded, first-class):
+
+- search-aware file/path discovery
+- graph-aware definition lookup
+- graph-aware one-hop reference/usage lookup
+- graph-aware one-hop dependency lookup
+- graph-aware one-hop dependent/importer lookup
+
+Requests outside those bounded ask classes return `unsupported` instead of falling back to a hidden class.
+
+Result states are explicit and consistent:
+
+- `grounded`: directly supported by surfaced evidence
+- `partial`: some grounded evidence exists but coverage/depth is incomplete
+- `insufficient`: class is valid but not enough evidence was found
+- `unsupported`: request/class/depth is outside bounded support
+
+Internal retrieval/signal blending may still happen under the hood for supported ask classes, but it is not a separate first-class ask-class contract.
+
+When diagnostics mention keyword/structural/semantic signals, treat those as implementation diagnostics only, not as additional user-routed ask classes.
+
+Lifecycle/process diagnostics are currently surfaced via `dh doctor` and internal diagnostics surfaces, not as a stable ask/explain/trace result envelope in this bounded contract.
+
 ### `dh explain`
 
 Giải thích một symbol hoặc file cụ thể.
 
+`dh explain` is mapped to the definition-oriented query class through the same Rust bridge envelope (`answerState`, `evidence`, `languageCapabilitySummary`) used by hardened query paths.
+
 ### `dh trace`
 
 Trace luồng xử lý hoặc dependency flow.
+
+Trong bounded contract hiện tại của QUERY-EVIDENCE-HARDENING, `dh trace` được giữ ở trạng thái `unsupported`.
+
+Nghĩa là output phải nói rõ unsupported (không overclaim parser-backed trace proof, không fallback ngầm thành grounded).
 
 ### `dh quick`
 
@@ -152,14 +181,14 @@ Không có key thì app vẫn dùng được, nhưng semantic provider-backed be
 1. vào đúng repo
 2. chạy `dh doctor` nếu lâu rồi chưa dùng
 3. chạy `dh index` sau khi repo thay đổi nhiều
-4. dùng `ask`, `explain`, `trace`
+4. dùng `ask`, `explain`; với bounded contract hiện tại, `trace` trả `unsupported`
 
 ## Lệnh mẫu
 
 ```sh
 dh ask "where is session state stored?"
 dh explain "runIndexWorkflow"
-dh trace "authentication flow"
+dh trace "authentication flow"  # expected: unsupported in bounded mode
 dh quick "fix a failing doctor message"
 ```
 

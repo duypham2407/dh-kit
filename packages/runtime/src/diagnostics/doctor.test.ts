@@ -88,19 +88,29 @@ describe("runDoctor", () => {
     expect(report.summary).toContain("node .opencode/workflow-state.js status|show|show-policy-status|show-invocations|check-stage-readiness|resume-summary");
   });
 
-  it("reports language support boundary summary", async () => {
+  it("reports rust-backed capability and parser freshness summaries", async () => {
     const repo = makeTmpRepo();
     const report = await runDoctor(repo);
 
-    expect(report.summary).toContain("Language support boundaries:");
+    expect(report.summary).toContain("Capability state (Rust truth):");
+    expect(report.summary).toContain("Parser freshness (Rust truth):");
     expect(report.summary).toContain("supported:");
-    expect(report.summary).toContain("limited:");
-    expect(report.summary).toContain("fallback-only:");
+    expect(report.summary).toContain("unsupported:");
+    if (report.snapshot.capabilitySummary.available) {
+      expect(report.summary).toContain("partial:");
+      expect(report.summary).toContain("best-effort:");
+    } else {
+      expect(report.summary).toContain("unsupported: capability summary not reported on this surface");
+    }
 
-    expect(report.snapshot.languageSupportSummary.supported).toBeGreaterThan(0);
-    expect(report.snapshot.languageSupportSummary.limited).toBeGreaterThan(0);
-    expect(report.snapshot.languageSupportSummary.fallbackOnly).toBeGreaterThan(0);
-    expect(report.snapshot.languageSupportBoundaries.length).toBeGreaterThan(0);
+    expect(report.snapshot.capabilitySummary.source).toBe("rust_bridge");
+    expect(typeof report.snapshot.capabilitySummary.available).toBe("boolean");
+    expect(report.snapshot.parserFreshnessSummary.source).toBe("rust_status");
+    expect(typeof report.snapshot.parserFreshnessSummary.available).toBe("boolean");
+    expect(typeof report.snapshot.capabilityStateSummary.supported).toBe("number");
+    expect(typeof report.snapshot.capabilityStateSummary.partial).toBe("number");
+    expect(typeof report.snapshot.capabilityStateSummary.bestEffort).toBe("number");
+    expect(typeof report.snapshot.capabilityStateSummary.unsupported).toBe("number");
   });
 
   it("suggests running dh index when no chunks exist", async () => {

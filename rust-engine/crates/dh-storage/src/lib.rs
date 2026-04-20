@@ -2,9 +2,9 @@
 
 use anyhow::{Context, Result};
 use dh_types::{
-    CallEdge, CallKind, Chunk, ChunkId, EmbeddingStatus, File, FileId, Import, ImportKind,
-    IndexRunStatus, IndexState, LanguageId, ParseStatus, Reference, ReferenceKind, Span, Symbol,
-    SymbolId, SymbolKind, Visibility, WorkspaceId,
+    CallEdge, CallKind, Chunk, ChunkId, EmbeddingStatus, File, FileId, FreshnessReason,
+    FreshnessState, Import, ImportKind, IndexRunStatus, IndexState, LanguageId, ParseStatus,
+    Reference, ReferenceKind, Span, Symbol, SymbolId, SymbolKind, Visibility, WorkspaceId,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use thiserror::Error;
@@ -24,6 +24,14 @@ pub struct Database {
     conn: Connection,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FreshnessStateCounts {
+    pub refreshed_current: u64,
+    pub retained_current: u64,
+    pub degraded_partial: u64,
+    pub not_current: u64,
+}
+
 impl Database {
     pub fn new(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let conn = Connection::open(path).context("open sqlite database")?;
@@ -33,6 +41,7 @@ impl Database {
     pub fn initialize(&self) -> Result<()> {
         self.apply_pragmas()?;
         self.create_schema()?;
+        self.ensure_files_freshness_columns()?;
         self.create_indexes()?;
         self.create_fts()?;
         Ok(())
@@ -109,6 +118,9 @@ impl Database {
               is_barrel INTEGER NOT NULL DEFAULT 0,
               last_indexed_at_unix_ms INTEGER,
               deleted_at_unix_ms INTEGER,
+              freshness_state TEXT NOT NULL DEFAULT 'not_current',
+              freshness_reason TEXT,
+              last_freshness_run_id TEXT,
               UNIQUE(workspace_id, rel_path)
             );
 
@@ -314,6 +326,34 @@ impl Database {
         )?;
         Ok(())
     }
+
+    fn ensure_files_freshness_columns(&self) -> Result<()> {
+        let mut stmt = self.conn.prepare("PRAGMA table_info(files)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut columns = std::collections::HashSet::new();
+        for row in rows {
+            columns.insert(row?);
+        }
+
+        if !columns.contains("freshness_state") {
+            self.conn.execute(
+                "ALTER TABLE files ADD COLUMN freshness_state TEXT NOT NULL DEFAULT 'not_current'",
+                [],
+            )?;
+        }
+        if !columns.contains("freshness_reason") {
+            self.conn
+                .execute("ALTER TABLE files ADD COLUMN freshness_reason TEXT", [])?;
+        }
+        if !columns.contains("last_freshness_run_id") {
+            self.conn.execute(
+                "ALTER TABLE files ADD COLUMN last_freshness_run_id TEXT",
+                [],
+            )?;
+        }
+
+        Ok(())
+    }
 }
 
 pub trait FileRepository {
@@ -423,6 +463,7 @@ pub trait GraphRepository {
 
 pub trait IndexStateRepository {
     fn get_state(&self, workspace_id: WorkspaceId) -> Result<Option<IndexState>>;
+    fn freshness_state_counts(&self, workspace_id: WorkspaceId) -> Result<FreshnessStateCounts>;
     fn update_state(&self, state: &IndexState) -> Result<()>;
     fn upsert_run(
         &self,
@@ -444,8 +485,9 @@ impl FileRepository for Database {
             INSERT INTO files (
               id, workspace_id, root_id, package_id, rel_path, language, size_bytes, mtime_unix_ms,
               content_hash, structure_hash, public_api_hash, parse_status, parse_error,
-              symbol_count, chunk_count, is_barrel, last_indexed_at_unix_ms, deleted_at_unix_ms
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+              symbol_count, chunk_count, is_barrel, last_indexed_at_unix_ms, deleted_at_unix_ms,
+              freshness_state, freshness_reason, last_freshness_run_id
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
             ON CONFLICT(id) DO UPDATE SET
               workspace_id=excluded.workspace_id,
               root_id=excluded.root_id,
@@ -463,7 +505,10 @@ impl FileRepository for Database {
               chunk_count=excluded.chunk_count,
               is_barrel=excluded.is_barrel,
               last_indexed_at_unix_ms=excluded.last_indexed_at_unix_ms,
-              deleted_at_unix_ms=excluded.deleted_at_unix_ms
+              deleted_at_unix_ms=excluded.deleted_at_unix_ms,
+              freshness_state=excluded.freshness_state,
+              freshness_reason=excluded.freshness_reason,
+              last_freshness_run_id=excluded.last_freshness_run_id
             ",
             params![
                 file.id,
@@ -484,6 +529,9 @@ impl FileRepository for Database {
                 bool_to_int(file.is_barrel),
                 file.last_indexed_at_unix_ms,
                 file.deleted_at_unix_ms,
+                freshness_state_to_str(file.freshness_state),
+                file.freshness_reason.map(freshness_reason_to_str),
+                file.last_freshness_run_id,
             ],
         )?;
         Ok(file.id)
@@ -531,7 +579,8 @@ impl FileRepository for Database {
                 SELECT id, workspace_id, root_id, package_id, rel_path, language, size_bytes,
                        mtime_unix_ms, content_hash, structure_hash, public_api_hash, parse_status,
                        parse_error, symbol_count, chunk_count, is_barrel,
-                       last_indexed_at_unix_ms, deleted_at_unix_ms
+                       last_indexed_at_unix_ms, deleted_at_unix_ms,
+                       freshness_state, freshness_reason, last_freshness_run_id
                   FROM files
                  WHERE workspace_id = ?1 AND rel_path = ?2
                 ",
@@ -548,7 +597,8 @@ impl FileRepository for Database {
             SELECT id, workspace_id, root_id, package_id, rel_path, language, size_bytes,
                    mtime_unix_ms, content_hash, structure_hash, public_api_hash, parse_status,
                    parse_error, symbol_count, chunk_count, is_barrel,
-                   last_indexed_at_unix_ms, deleted_at_unix_ms
+                   last_indexed_at_unix_ms, deleted_at_unix_ms,
+                   freshness_state, freshness_reason, last_freshness_run_id
               FROM files
              WHERE workspace_id = ?1
              ORDER BY rel_path ASC
@@ -945,6 +995,47 @@ impl IndexStateRepository for Database {
             .map_err(Into::into)
     }
 
+    fn freshness_state_counts(&self, workspace_id: WorkspaceId) -> Result<FreshnessStateCounts> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT freshness_state, COUNT(*)
+              FROM files
+             WHERE workspace_id = ?1
+             GROUP BY freshness_state
+            ",
+        )?;
+
+        let rows = stmt.query_map(params![workspace_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+
+        let mut counts = FreshnessStateCounts::default();
+        for row in rows {
+            let (state_raw, count) = row?;
+            if count > 0 {
+                let state = freshness_state_from_str(&state_raw)?;
+                let count_u64 = count as u64;
+                match state {
+                    FreshnessState::RefreshedCurrent => {
+                        counts.refreshed_current = count_u64;
+                    }
+                    FreshnessState::RetainedCurrent => {
+                        counts.retained_current = count_u64;
+                    }
+                    FreshnessState::DegradedPartial => {
+                        counts.degraded_partial = count_u64;
+                    }
+                    FreshnessState::NotCurrent => {
+                        counts.not_current = count_u64;
+                    }
+                    FreshnessState::Deleted => {}
+                }
+            }
+        }
+
+        Ok(counts)
+    }
+
     fn update_state(&self, state: &IndexState) -> Result<()> {
         self.conn.execute(
             "
@@ -1086,7 +1177,8 @@ impl GraphRepository for Database {
                 SELECT id, workspace_id, root_id, package_id, rel_path, language, size_bytes,
                        mtime_unix_ms, content_hash, structure_hash, public_api_hash, parse_status,
                        parse_error, symbol_count, chunk_count, is_barrel,
-                       last_indexed_at_unix_ms, deleted_at_unix_ms
+                       last_indexed_at_unix_ms, deleted_at_unix_ms,
+                       freshness_state, freshness_reason, last_freshness_run_id
                   FROM files
                  WHERE workspace_id = ?1 AND id = ?2
                 ",
@@ -1386,6 +1478,14 @@ fn map_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<File> {
         is_barrel: int_to_bool(row.get(15)?),
         last_indexed_at_unix_ms: row.get(16)?,
         deleted_at_unix_ms: row.get(17)?,
+        freshness_state: freshness_state_from_str(&row.get::<_, String>(18)?)
+            .map_err(to_sqlite_err)?,
+        freshness_reason: row
+            .get::<_, Option<String>>(19)?
+            .map(|value| freshness_reason_from_str(&value))
+            .transpose()
+            .map_err(to_sqlite_err)?,
+        last_freshness_run_id: row.get(20)?,
     })
 }
 
@@ -1599,6 +1699,68 @@ fn parse_status_from_str(value: &str) -> std::result::Result<ParseStatus, Storag
         "Skipped" => Ok(ParseStatus::Skipped),
         _ => Err(StorageError::InvalidEnumValue {
             field: "parse_status",
+            value: value.to_string(),
+        }),
+    }
+}
+
+fn freshness_state_to_str(state: FreshnessState) -> &'static str {
+    match state {
+        FreshnessState::RetainedCurrent => "retained_current",
+        FreshnessState::RefreshedCurrent => "refreshed_current",
+        FreshnessState::DegradedPartial => "degraded_partial",
+        FreshnessState::NotCurrent => "not_current",
+        FreshnessState::Deleted => "deleted",
+    }
+}
+
+fn freshness_state_from_str(value: &str) -> std::result::Result<FreshnessState, StorageError> {
+    match value {
+        "retained_current" => Ok(FreshnessState::RetainedCurrent),
+        "refreshed_current" => Ok(FreshnessState::RefreshedCurrent),
+        "degraded_partial" => Ok(FreshnessState::DegradedPartial),
+        "not_current" => Ok(FreshnessState::NotCurrent),
+        "deleted" => Ok(FreshnessState::Deleted),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "freshness_state",
+            value: value.to_string(),
+        }),
+    }
+}
+
+fn freshness_reason_to_str(reason: FreshnessReason) -> &'static str {
+    match reason {
+        FreshnessReason::UnchangedUnaffected => "unchanged_unaffected",
+        FreshnessReason::ContentChanged => "content_changed",
+        FreshnessReason::StructureChanged => "structure_changed",
+        FreshnessReason::PublicApiChanged => "public_api_changed",
+        FreshnessReason::DependentInvalidated => "dependent_invalidated",
+        FreshnessReason::ResolutionScopeChanged => "resolution_scope_changed",
+        FreshnessReason::DeletedPath => "deleted_path",
+        FreshnessReason::PathInvalidated => "path_invalidated",
+        FreshnessReason::RecoverableParseIssues => "recoverable_parse_issues",
+        FreshnessReason::FatalReadFailure => "fatal_read_failure",
+        FreshnessReason::FatalParseFailure => "fatal_parse_failure",
+        FreshnessReason::FatalPersistFailure => "fatal_persist_failure",
+    }
+}
+
+fn freshness_reason_from_str(value: &str) -> std::result::Result<FreshnessReason, StorageError> {
+    match value {
+        "unchanged_unaffected" => Ok(FreshnessReason::UnchangedUnaffected),
+        "content_changed" => Ok(FreshnessReason::ContentChanged),
+        "structure_changed" => Ok(FreshnessReason::StructureChanged),
+        "public_api_changed" => Ok(FreshnessReason::PublicApiChanged),
+        "dependent_invalidated" => Ok(FreshnessReason::DependentInvalidated),
+        "resolution_scope_changed" => Ok(FreshnessReason::ResolutionScopeChanged),
+        "deleted_path" => Ok(FreshnessReason::DeletedPath),
+        "path_invalidated" => Ok(FreshnessReason::PathInvalidated),
+        "recoverable_parse_issues" => Ok(FreshnessReason::RecoverableParseIssues),
+        "fatal_read_failure" => Ok(FreshnessReason::FatalReadFailure),
+        "fatal_parse_failure" => Ok(FreshnessReason::FatalParseFailure),
+        "fatal_persist_failure" => Ok(FreshnessReason::FatalPersistFailure),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "freshness_reason",
             value: value.to_string(),
         }),
     }
@@ -1839,7 +2001,7 @@ fn call_kind_from_str(value: &str) -> std::result::Result<CallKind, StorageError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dh_types::{ChunkKind, ParseStatus};
+    use dh_types::{ChunkKind, FreshnessReason, FreshnessState, ParseStatus};
     use tempfile::NamedTempFile;
 
     fn setup_db() -> Result<Database> {
@@ -1891,6 +2053,9 @@ mod tests {
             is_barrel: false,
             last_indexed_at_unix_ms: Some(200),
             deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::RefreshedCurrent,
+            freshness_reason: Some(FreshnessReason::ContentChanged),
+            last_freshness_run_id: Some("run-1".to_string()),
         };
         db.upsert_file(&file)?;
 
@@ -1925,6 +2090,9 @@ mod tests {
             is_barrel: false,
             last_indexed_at_unix_ms: None,
             deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::RefreshedCurrent,
+            freshness_reason: Some(FreshnessReason::ContentChanged),
+            last_freshness_run_id: Some("run-2".to_string()),
         })?;
 
         let symbol = Symbol {
@@ -1982,6 +2150,9 @@ mod tests {
             is_barrel: false,
             last_indexed_at_unix_ms: None,
             deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::RefreshedCurrent,
+            freshness_reason: Some(FreshnessReason::ContentChanged),
+            last_freshness_run_id: Some("run-3".to_string()),
         })?;
 
         db.insert_chunks(&[Chunk {
@@ -2067,6 +2238,9 @@ mod tests {
             is_barrel: false,
             last_indexed_at_unix_ms: None,
             deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::RefreshedCurrent,
+            freshness_reason: Some(FreshnessReason::ContentChanged),
+            last_freshness_run_id: Some("run-4".to_string()),
         })?;
         db.upsert_file(&File {
             id: 11,
@@ -2087,6 +2261,9 @@ mod tests {
             is_barrel: false,
             last_indexed_at_unix_ms: None,
             deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::RefreshedCurrent,
+            freshness_reason: Some(FreshnessReason::ContentChanged),
+            last_freshness_run_id: Some("run-5".to_string()),
         })?;
 
         db.insert_symbols(&[

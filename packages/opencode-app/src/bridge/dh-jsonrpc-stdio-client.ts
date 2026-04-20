@@ -9,8 +9,7 @@ export type BridgeFailureCode =
   | "BRIDGE_TIMEOUT"
   | "METHOD_NOT_SUPPORTED"
   | "INVALID_REQUEST"
-  | "REQUEST_FAILED"
-  | "EMPTY_RESULT_TREATED_AS_FAILURE";
+  | "REQUEST_FAILED";
 
 export type BridgeFailurePhase = "startup" | "request";
 
@@ -21,6 +20,78 @@ export type BridgeSearchItem = {
   snippet: string;
   reason: string;
   score: number;
+};
+
+export type BridgeAnswerState = "grounded" | "partial" | "insufficient" | "unsupported";
+
+export type BridgeEvidenceConfidence = "grounded" | "partial";
+
+export type BridgeEvidenceEntry = {
+  kind: string;
+  filePath: string;
+  reason: string;
+  source: string;
+  confidence: BridgeEvidenceConfidence;
+  symbol?: string;
+  lineStart?: number;
+  lineEnd?: number;
+  snippet?: string;
+};
+
+export type BridgeEvidencePacket = {
+  answerState: BridgeAnswerState;
+  questionClass: string;
+  subject: string;
+  summary: string;
+  conclusion: string;
+  evidence: BridgeEvidenceEntry[];
+  gaps: string[];
+  bounds: {
+    hopCount?: number;
+    nodeLimit?: number;
+    traversalScope?: string;
+    stopReason?: string;
+  };
+};
+
+export type BridgeLanguageCapabilityState = "supported" | "partial" | "best-effort" | "unsupported";
+
+export type BridgeLanguageCapabilityLanguageSummary = {
+  language: string;
+  state: BridgeLanguageCapabilityState;
+  reason: string;
+  parserBacked: boolean;
+};
+
+export type BridgeLanguageCapabilitySummary = {
+  capability: string;
+  weakestState: BridgeLanguageCapabilityState;
+  languages: BridgeLanguageCapabilityLanguageSummary[];
+  retrievalOnly: boolean;
+};
+
+export type BridgeLanguageCapabilityEntry = {
+  language: string;
+  capability: string;
+  state: BridgeLanguageCapabilityState;
+  reason: string;
+  parserBacked: boolean;
+};
+
+export type BridgeInitializeCapabilities = {
+  protocolVersion: string;
+  methods: readonly ["dh.initialize", "query.search", "query.definition", "query.relationship"];
+  queryRelationship: {
+    supportedRelations: readonly ["usage", "dependencies", "dependents"];
+  };
+  languageCapabilityMatrix: BridgeLanguageCapabilityEntry[];
+};
+
+export type BridgeInitializeSnapshot = {
+  engineName: string;
+  engineVersion: string;
+  protocolVersion: string;
+  capabilities: BridgeInitializeCapabilities;
 };
 
 export type BridgeAskQueryClass =
@@ -45,19 +116,17 @@ export type BridgeAskResult = {
   engineName: string;
   engineVersion: string;
   protocolVersion: string;
-  capabilities: {
-    protocolVersion: string;
-    methods: readonly ["dh.initialize", "query.search", "query.definition", "query.relationship"];
-    queryRelationship: {
-      supportedRelations: readonly ["usage", "dependencies", "dependents"];
-    };
-  };
-  evidenceType: "search_match" | "definition" | "usage" | "dependencies" | "dependents";
+  capabilities: BridgeInitializeCapabilities;
+  answerState: BridgeAnswerState;
+  questionClass: string;
   items: BridgeSearchItem[];
+  evidence: BridgeEvidencePacket | null;
+  languageCapabilitySummary: BridgeLanguageCapabilitySummary | null;
 };
 
 export type BridgeClient = {
   runAskQuery: (input: BridgeAskRequest) => Promise<BridgeAskResult>;
+  getInitializeSnapshot?: () => Promise<BridgeInitializeSnapshot>;
   close: () => Promise<void>;
 };
 
@@ -149,6 +218,7 @@ class DhJsonRpcStdioClient implements BridgeClient {
     queryRelationship: {
       supportedRelations: V2_RELATIONS,
     },
+    languageCapabilityMatrix: [],
   };
 
   constructor(
@@ -186,18 +256,26 @@ class DhJsonRpcStdioClient implements BridgeClient {
     }
 
     const resultObj = asRecord(response.result);
+    const answerState = asBridgeAnswerState(resultObj.answerState);
+    const questionClass = asString(resultObj.questionClass);
+    const evidence = parseBridgeEvidencePacket(resultObj.evidence);
+    const languageCapabilitySummary = parseBridgeLanguageCapabilitySummary(resultObj.languageCapabilitySummary);
+
+    const resolvedAnswerState = answerState ?? evidence?.answerState ?? null;
+    if (!resolvedAnswerState) {
+      throw new DhBridgeError({
+        code: "INVALID_REQUEST",
+        phase: "request",
+        message: `Rust bridge response for '${call.method}' is missing answerState.`,
+      });
+    }
+
+    const resolvedQuestionClass = questionClass ?? evidence?.questionClass ?? inferQuestionClassFromCall(call);
+
     const resultItems = Array.isArray(resultObj.items) ? resultObj.items : [];
     const items: BridgeSearchItem[] = resultItems
       .map((raw) => toBridgeSearchItem(raw))
       .filter((item): item is BridgeSearchItem => item !== null);
-
-    if (items.length === 0) {
-      throw new DhBridgeError({
-        code: "EMPTY_RESULT_TREATED_AS_FAILURE",
-        phase: "request",
-        message: `Rust bridge returned an empty result set for '${call.method}'.`,
-      });
-    }
 
     return {
       method: call.method,
@@ -206,15 +284,27 @@ class DhJsonRpcStdioClient implements BridgeClient {
       engineVersion: this.engineVersion,
       protocolVersion: this.protocolVersion,
       capabilities: this.capabilities,
-      evidenceType: call.evidenceType,
+      answerState: resolvedAnswerState,
+      questionClass: resolvedQuestionClass,
       items,
+      evidence,
+      languageCapabilitySummary,
+    };
+  }
+
+  async getInitializeSnapshot(): Promise<BridgeInitializeSnapshot> {
+    await this.ensureInitialized(this.repoRoot);
+    return {
+      engineName: this.engineName,
+      engineVersion: this.engineVersion,
+      protocolVersion: this.protocolVersion,
+      capabilities: this.capabilities,
     };
   }
 
   private buildAskCall(input: BridgeAskRequest, requestId: number): {
     method: "query.search" | "query.definition" | "query.relationship";
     params: Record<string, unknown>;
-    evidenceType: "search_match" | "definition" | "usage" | "dependencies" | "dependents";
     requestId: number;
   } {
     const limit = input.limit ?? 5;
@@ -226,9 +316,9 @@ class DhJsonRpcStdioClient implements BridgeClient {
           params: {
             query: input.query,
             workspaceRoot: input.repoRoot,
+            mode: "file_path",
             limit,
           },
-          evidenceType: "search_match",
           requestId,
         };
       case "graph_definition":
@@ -239,7 +329,6 @@ class DhJsonRpcStdioClient implements BridgeClient {
             workspaceRoot: input.repoRoot,
             limit,
           },
-          evidenceType: "definition",
           requestId,
         };
       case "graph_relationship_usage":
@@ -251,7 +340,6 @@ class DhJsonRpcStdioClient implements BridgeClient {
             workspaceRoot: input.repoRoot,
             limit,
           },
-          evidenceType: "usage",
           requestId,
         };
       case "graph_relationship_dependencies":
@@ -263,7 +351,6 @@ class DhJsonRpcStdioClient implements BridgeClient {
             workspaceRoot: input.repoRoot,
             limit,
           },
-          evidenceType: "dependencies",
           requestId,
         };
       case "graph_relationship_dependents":
@@ -275,7 +362,6 @@ class DhJsonRpcStdioClient implements BridgeClient {
             workspaceRoot: input.repoRoot,
             limit,
           },
-          evidenceType: "dependents",
           requestId,
         };
       default: {
@@ -600,11 +686,11 @@ function toBridgeSearchItem(raw: unknown): BridgeSearchItem | null {
   const filePath = asString(value.filePath) ?? asString(value.file_path);
   const lineStart = asNumber(value.lineStart) ?? asNumber(value.line_start);
   const lineEnd = asNumber(value.lineEnd) ?? asNumber(value.line_end);
-  const snippet = asString(value.snippet);
+  const snippet = asString(value.snippet) ?? "";
   const reason = asString(value.reason) ?? "rust query match";
   const score = asNumber(value.score) ?? 0.5;
 
-  if (!filePath || lineStart === null || lineEnd === null || !snippet) {
+  if (!filePath || lineStart === null || lineEnd === null) {
     return null;
   }
 
@@ -633,6 +719,201 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function asBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function asBridgeAnswerState(value: unknown): BridgeAnswerState | null {
+  if (value === "grounded" || value === "partial" || value === "insufficient" || value === "unsupported") {
+    return value;
+  }
+  return null;
+}
+
+function asBridgeLanguageCapabilityState(value: unknown): BridgeLanguageCapabilityState | null {
+  if (value === "supported" || value === "partial" || value === "best-effort" || value === "unsupported") {
+    return value;
+  }
+  if (value === "best_effort") {
+    return "best-effort";
+  }
+  return null;
+}
+
+function parseBridgeEvidencePacket(value: unknown): BridgeEvidencePacket | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const raw = asRecord(value);
+  const answerState = asBridgeAnswerState(raw.answerState ?? raw.answer_state);
+  const questionClass = asString(raw.questionClass) ?? asString(raw.question_class);
+  const subject = asString(raw.subject);
+  const summary = asString(raw.summary);
+  const conclusion = asString(raw.conclusion);
+  if (!answerState || !questionClass || !subject || !summary || !conclusion) {
+    return null;
+  }
+
+  const evidence = Array.isArray(raw.evidence)
+    ? raw.evidence.map(parseBridgeEvidenceEntry).filter((entry): entry is BridgeEvidenceEntry => entry !== null)
+    : [];
+
+  const gaps = Array.isArray(raw.gaps) ? raw.gaps.filter((gap): gap is string => typeof gap === "string") : [];
+
+  const boundsRaw = asRecord(raw.bounds);
+  const hopCount = asNumber(boundsRaw.hopCount) ?? asNumber(boundsRaw.hop_count);
+  const nodeLimit = asNumber(boundsRaw.nodeLimit) ?? asNumber(boundsRaw.node_limit);
+
+  return {
+    answerState,
+    questionClass,
+    subject,
+    summary,
+    conclusion,
+    evidence,
+    gaps,
+    bounds: {
+      hopCount: hopCount === null ? undefined : hopCount,
+      nodeLimit: nodeLimit === null ? undefined : nodeLimit,
+      traversalScope: asString(boundsRaw.traversalScope) ?? asString(boundsRaw.traversal_scope) ?? undefined,
+      stopReason: asString(boundsRaw.stopReason) ?? asString(boundsRaw.stop_reason) ?? undefined,
+    },
+  };
+}
+
+function parseBridgeEvidenceEntry(value: unknown): BridgeEvidenceEntry | null {
+  const raw = asRecord(value);
+  const kind = asString(raw.kind);
+  const filePath = asString(raw.filePath) ?? asString(raw.file_path);
+  const reason = asString(raw.reason);
+  const source = asString(raw.source);
+  const confidence = asBridgeEvidenceConfidence(raw.confidence);
+  if (!kind || !filePath || !reason || !source || !confidence) {
+    return null;
+  }
+
+  const lineStart = asNumber(raw.lineStart) ?? asNumber(raw.line_start);
+  const lineEnd = asNumber(raw.lineEnd) ?? asNumber(raw.line_end);
+  return {
+    kind,
+    filePath,
+    reason,
+    source,
+    confidence,
+    symbol: asString(raw.symbol) ?? undefined,
+    lineStart: lineStart === null ? undefined : lineStart,
+    lineEnd: lineEnd === null ? undefined : lineEnd,
+    snippet: asString(raw.snippet) ?? undefined,
+  };
+}
+
+function asBridgeEvidenceConfidence(value: unknown): BridgeEvidenceConfidence | null {
+  if (value === "grounded" || value === "partial") {
+    return value;
+  }
+  return null;
+}
+
+function parseBridgeLanguageCapabilitySummary(value: unknown): BridgeLanguageCapabilitySummary | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const raw = asRecord(value);
+  const capability = asString(raw.capability);
+  const weakestState = asBridgeLanguageCapabilityState(raw.weakestState);
+  const retrievalOnly = asBoolean(raw.retrievalOnly);
+  if (!capability || !weakestState || retrievalOnly === null) {
+    return null;
+  }
+
+  const languages = Array.isArray(raw.languages)
+    ? raw.languages
+      .map(parseBridgeLanguageCapabilityLanguageSummary)
+      .filter((entry): entry is BridgeLanguageCapabilityLanguageSummary => entry !== null)
+    : [];
+
+  return {
+    capability,
+    weakestState,
+    languages,
+    retrievalOnly,
+  };
+}
+
+function parseBridgeLanguageCapabilityLanguageSummary(value: unknown): BridgeLanguageCapabilityLanguageSummary | null {
+  const raw = asRecord(value);
+  const language = asString(raw.language);
+  const state = asBridgeLanguageCapabilityState(raw.state);
+  const reason = asString(raw.reason);
+  const parserBacked = asBoolean(raw.parserBacked);
+  if (!language || !state || !reason || parserBacked === null) {
+    return null;
+  }
+
+  return {
+    language,
+    state,
+    reason,
+    parserBacked,
+  };
+}
+
+function parseBridgeLanguageCapabilityEntry(value: unknown): BridgeLanguageCapabilityEntry | null {
+  const raw = asRecord(value);
+  const language = asString(raw.language);
+  const capability = asString(raw.capability);
+  const state = asBridgeLanguageCapabilityState(raw.state);
+  const reason = asString(raw.reason);
+  const parserBacked = asBoolean(raw.parserBacked);
+  if (!language || !capability || !state || !reason || parserBacked === null) {
+    return null;
+  }
+
+  return {
+    language,
+    capability,
+    state,
+    reason,
+    parserBacked,
+  };
+}
+
+function inferQuestionClassFromCall(call: {
+  method: "query.search" | "query.definition" | "query.relationship";
+  params: Record<string, unknown>;
+}): string {
+  if (call.method === "query.search") {
+    const mode = asString(call.params.mode) ?? "symbol";
+    if (mode === "file_path") {
+      return "search_file_discovery";
+    }
+    if (mode === "structural") {
+      return "search_structural";
+    }
+    if (mode === "concept") {
+      return "search_concept_relevance";
+    }
+    return "search_symbol";
+  }
+  if (call.method === "query.definition") {
+    return "definition";
+  }
+
+  const relation = asString(call.params.relation);
+  if (relation === "usage") {
+    return "references";
+  }
+  if (relation === "dependencies") {
+    return "dependencies";
+  }
+  if (relation === "dependents") {
+    return "dependents";
+  }
+  return "unknown";
+}
+
 function parseV2Capabilities(value: unknown): BridgeAskResult["capabilities"] | null {
   const capabilities = asRecord(value);
   const protocolVersion = asString(capabilities.protocolVersion);
@@ -651,12 +932,24 @@ function parseV2Capabilities(value: unknown): BridgeAskResult["capabilities"] | 
     return null;
   }
 
+  if (!Array.isArray(capabilities.languageCapabilityMatrix) || capabilities.languageCapabilityMatrix.length === 0) {
+    return null;
+  }
+
+  const languageCapabilityMatrix = capabilities.languageCapabilityMatrix
+    .map(parseBridgeLanguageCapabilityEntry)
+    .filter((entry): entry is BridgeLanguageCapabilityEntry => entry !== null);
+  if (languageCapabilityMatrix.length !== capabilities.languageCapabilityMatrix.length) {
+    return null;
+  }
+
   return {
     protocolVersion,
     methods: V2_METHODS,
     queryRelationship: {
       supportedRelations: V2_RELATIONS,
     },
+    languageCapabilityMatrix,
   };
 }
 

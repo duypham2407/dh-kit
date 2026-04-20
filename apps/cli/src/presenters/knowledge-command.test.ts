@@ -52,11 +52,56 @@ describe("knowledge command presenters", () => {
             queryRelationship: {
               supportedRelations: ["usage", "dependencies", "dependents"],
             },
+            languageCapabilityMatrix: [
+              {
+                language: "typescript",
+                capability: "trace_flow",
+                state: "unsupported",
+                reason: "Trace flow remains outside bounded support for this release.",
+                parserBacked: false,
+              },
+            ],
           },
         },
         answer: "Best file-discovery match: src/a.ts [1-10].",
         answerType: "search_match",
-        grounding: "grounded",
+        answerState: "grounded",
+        languageCapabilitySummary: {
+          capability: "structural_indexing",
+          weakestState: "partial",
+          retrievalOnly: true,
+          languages: [
+            {
+              language: "typescript",
+              state: "supported",
+              reason: "bounded search",
+              parserBacked: false,
+            },
+          ],
+        },
+        rustEvidence: {
+          answerState: "grounded",
+          questionClass: "find_symbol",
+          subject: "auth",
+          summary: "search results",
+          conclusion: "grounded symbol search evidence available",
+          evidence: [
+            {
+              kind: "definition",
+              filePath: "src/a.ts",
+              lineStart: 1,
+              lineEnd: 10,
+              reason: "match",
+              source: "storage",
+              confidence: "grounded",
+            },
+          ],
+          gaps: [],
+          bounds: {
+            hopCount: 0,
+            traversalScope: "search_symbol",
+          },
+        },
         evidence: [
           {
             filePath: "src/a.ts",
@@ -65,6 +110,9 @@ describe("knowledge command presenters", () => {
             reason: "match",
             sourceMethod: "query.search",
             snippet: "export const a = 1",
+            source: "storage",
+            confidence: "grounded",
+            kind: "definition",
           },
         ],
       }),
@@ -86,16 +134,23 @@ describe("knowledge command presenters", () => {
     expect(text).toContain("bridge capability relationship relations: usage, dependencies, dependents");
     expect(text).toContain("answer:");
     expect(text).toContain("Best file-discovery match");
+    expect(text).toContain("state:");
+    expect(text).toContain("answer state: grounded");
+    expect(text).toContain("capability:");
+    expect(text).toContain("weakest state: partial");
+    expect(text).toContain("retrieval only: true");
     expect(text).toContain("evidence:");
     expect(text).toContain("answer type: search_match");
-    expect(text).toContain("grounding: grounded");
+    expect(text).toContain("confidence=grounded");
+    expect(text).toContain("rust envelope:");
+    expect(text).toContain("subject: auth");
   });
 
   it("renders ask limitations when grounding is partial", () => {
     const text = renderKnowledgeCommandText(makeReport({
       answer: "Partial answer: Best definition location: a.ts [10-10].",
       answerType: "partial",
-      grounding: "partial",
+      answerState: "partial",
       evidence: [
         {
           filePath: "a.ts",
@@ -108,9 +163,79 @@ describe("knowledge command presenters", () => {
       limitations: ["Multiple possible definition locations were returned."],
     }));
 
-    expect(text).toContain("grounding: partial");
+    expect(text).toContain("answer state: partial");
     expect(text).toContain("limitations:");
     expect(text).toContain("Multiple possible definition locations were returned.");
+  });
+
+  it("renders explain answer-state/evidence/capability sections", () => {
+    const text = renderKnowledgeCommandText(makeReport({
+      command: "explain",
+      intent: "bridge_query_definition",
+      tools: ["rust_bridge_jsonrpc"],
+      answer: "Definition found at packages/opencode-app/src/workflows/run-knowledge-command.ts:111",
+      answerType: "definition",
+      answerState: "grounded",
+      rustEvidence: {
+        answerState: "grounded",
+        questionClass: "definition",
+        subject: "runKnowledgeCommand",
+        summary: "Definition located",
+        conclusion: "Definition found at packages/opencode-app/src/workflows/run-knowledge-command.ts:111",
+        evidence: [
+          {
+            kind: "definition",
+            filePath: "packages/opencode-app/src/workflows/run-knowledge-command.ts",
+            lineStart: 111,
+            lineEnd: 117,
+            reason: "symbol definition",
+            source: "storage",
+            confidence: "grounded",
+          },
+        ],
+        gaps: [],
+        bounds: {
+          traversalScope: "goto_definition",
+          hopCount: 0,
+        },
+      },
+      evidence: [
+        {
+          filePath: "packages/opencode-app/src/workflows/run-knowledge-command.ts",
+          lineStart: 111,
+          lineEnd: 117,
+          reason: "symbol definition",
+          sourceMethod: "query.definition",
+          source: "storage",
+          confidence: "grounded",
+          kind: "definition",
+        },
+      ],
+      languageCapabilitySummary: {
+        capability: "definition_lookup",
+        weakestState: "supported",
+        retrievalOnly: false,
+        languages: [
+          {
+            language: "typescript",
+            state: "supported",
+            reason: "parser-backed",
+            parserBacked: true,
+          },
+        ],
+      },
+    }));
+
+    expect(text).toContain("command: explain");
+    expect(text).toContain("intent: bridge_query_definition");
+    expect(text).toContain("answer:");
+    expect(text).toContain("answer state: grounded");
+    expect(text).toContain("answer type: definition");
+    expect(text).toContain("capability:");
+    expect(text).toContain("capability: definition_lookup");
+    expect(text).toContain("evidence:");
+    expect(text).toContain("via=query.definition");
+    expect(text).toContain("rust envelope:");
   });
 
   it("renders failure text output", () => {

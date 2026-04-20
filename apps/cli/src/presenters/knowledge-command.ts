@@ -28,20 +28,68 @@ export function renderKnowledgeCommandText(report: KnowledgeCommandReport): stri
     ...report.evidencePreview,
   ];
 
-  if (report.command === "ask") {
+  if (
+    report.command === "ask"
+    || report.command === "explain"
+    || report.command === "trace"
+  ) {
     lines.push("", "answer:");
     lines.push(`  ${report.answer ?? "(no answer provided)"}`);
-    lines.push("evidence:");
+    lines.push("state:");
+    lines.push(`  answer state: ${report.answerState ?? "unknown"}`);
     lines.push(`  answer type: ${report.answerType ?? "unknown"}`);
-    lines.push(`  grounding: ${report.grounding ?? "unknown"}`);
+    if (report.languageCapabilitySummary) {
+      lines.push("capability:");
+      lines.push(`  capability: ${report.languageCapabilitySummary.capability}`);
+      lines.push(`  weakest state: ${report.languageCapabilitySummary.weakestState}`);
+      lines.push(`  retrieval only: ${report.languageCapabilitySummary.retrievalOnly}`);
+      if (report.languageCapabilitySummary.languages.length > 0) {
+        lines.push("  languages:");
+        for (const language of report.languageCapabilitySummary.languages) {
+          lines.push(
+            `    - ${language.language}: ${language.state} (parser-backed=${language.parserBacked}) — ${language.reason}`,
+          );
+        }
+      }
+    }
+    lines.push("evidence:");
     if (report.evidence && report.evidence.length > 0) {
       for (const item of report.evidence) {
+        const location =
+          typeof item.lineStart === "number" && typeof item.lineEnd === "number"
+            ? `[${item.lineStart}-${item.lineEnd}]`
+            : "[line unknown]";
+        const metadata = [
+          item.kind ? `kind=${item.kind}` : null,
+          item.source ? `source=${item.source}` : null,
+          item.confidence ? `confidence=${item.confidence}` : null,
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join(" ");
         lines.push(
-          `  - ${item.filePath} [${item.lineStart}-${item.lineEnd}] via=${item.sourceMethod} reason=${item.reason}`,
+          `  - ${item.filePath} ${location} via=${item.sourceMethod} reason=${item.reason}${metadata ? ` ${metadata}` : ""}`,
         );
       }
     } else {
       lines.push("  - (none)");
+    }
+    if (report.rustEvidence) {
+      lines.push("rust envelope:");
+      lines.push(`  subject: ${report.rustEvidence.subject}`);
+      lines.push(`  summary: ${report.rustEvidence.summary}`);
+      lines.push(`  conclusion: ${report.rustEvidence.conclusion}`);
+      if (report.rustEvidence.bounds.traversalScope) {
+        lines.push(`  traversal scope: ${report.rustEvidence.bounds.traversalScope}`);
+      }
+      if (typeof report.rustEvidence.bounds.hopCount === "number") {
+        lines.push(`  hop count: ${report.rustEvidence.bounds.hopCount}`);
+      }
+      if (typeof report.rustEvidence.bounds.nodeLimit === "number") {
+        lines.push(`  node limit: ${report.rustEvidence.bounds.nodeLimit}`);
+      }
+      if (report.rustEvidence.bounds.stopReason) {
+        lines.push(`  stop reason: ${report.rustEvidence.bounds.stopReason}`);
+      }
     }
     if (report.limitations && report.limitations.length > 0) {
       lines.push("limitations:");

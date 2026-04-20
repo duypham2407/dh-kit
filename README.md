@@ -10,7 +10,7 @@ Current repository direction:
 
 Nó giúp bạn:
 
-- hiểu codebase bằng `ask`, `explain`, `trace`
+- hiểu codebase bằng `ask`, `explain` (và `trace` hiện trả `unsupported` trong bounded contract hiện tại)
 - index project để có structural + semantic retrieval
 - chạy workflow theo 3 lane: `quick`, `delivery`, `migration`
 - kiểm tra health/config bằng `doctor`
@@ -36,7 +36,7 @@ Nó giúp bạn:
 `dh` phù hợp nếu bạn muốn:
 
 - hỏi về codebase local của mình
-- trace flow qua nhiều file
+- trace flow qua nhiều file khi trace-flow class được hỗ trợ trong một contract/lane tương lai
 - hiểu symbol/module/dependency nhanh hơn grep đơn thuần
 - dùng một AI workflow tool chạy local-first trên terminal
 
@@ -56,8 +56,14 @@ Script sẽ:
 
 - detect macOS/Linux và CPU architecture
 - tải đúng binary release
-- verify checksum từ `SHA256SUMS`
+- verify checksum từ `SHA256SUMS` (bounded verification tier)
 - cài vào `$HOME/.local/bin/dh`
+- in lifecycle summary với `surface/condition/why/works/limited/next`
+
+Lưu ý quan trọng về trust level:
+
+- GitHub install path là **narrower path**: checksum-verified, nhưng không verify `manifest.json`/file-size
+- path trust mạnh nhất vẫn là install từ local release directory (`install-from-release.sh`)
 
 Nếu muốn cài vào thư mục riêng:
 
@@ -80,11 +86,12 @@ thì cài bằng:
 scripts/install-from-release.sh dist/releases
 ```
 
-Lệnh này sẽ:
+Lệnh này là trust path mạnh nhất hiện tại và sẽ:
 
 - tự chọn binary đúng với hệ điều hành và CPU
-- verify checksum từ `SHA256SUMS`
+- verify release metadata (`SHA256SUMS` + `manifest.json` + file-size)
 - cài `dh` vào `$HOME/.local/bin/dh`
+- report rõ signature status (`verified` / `skipped` / `unavailable` / `absent`)
 
 Nếu muốn cài vào thư mục khác:
 
@@ -101,6 +108,9 @@ mkdir -p "$HOME/.local/bin"
 cp dh-darwin-arm64 "$HOME/.local/bin/dh"
 chmod +x "$HOME/.local/bin/dh"
 ```
+
+Manual/direct binary path là bounded/manual trust path; không tương đương local
+release-directory verification.
 
 ### Add `dh` to PATH
 
@@ -161,9 +171,9 @@ Sau khi cài `dh`, cách bắt đầu đúng là:
 1. mở terminal trong project bạn muốn phân tích
 2. chạy `dh doctor`
 3. chạy `dh index`
-4. bắt đầu dùng `dh ask`, `dh explain`, `dh trace`
+4. bắt đầu dùng `dh ask`, `dh explain` (`dh trace` hiện trả `unsupported` trong bounded contract này)
 
-Nếu bạn chạy `dh ask`, `dh explain`, hoặc `dh trace` quá sớm khi chưa index, CLI hiện sẽ gợi ý chạy `dh index` và `dh doctor`.
+Nếu bạn chạy `dh ask`, `dh explain` quá sớm khi chưa index, CLI hiện sẽ gợi ý chạy `dh index` và `dh doctor`.
 
 ### Step 1: Go to your project
 
@@ -240,22 +250,24 @@ dh index
 ```sh
 dh ask "how does authentication work?"
 dh explain "createServer"
-dh trace "login flow"
 ```
+
+`dh trace` trong bounded contract hiện tại của QUERY-EVIDENCE-HARDENING trả về `unsupported` (truthful by design).
 
 ## Most Important Commands
 
-Nếu bạn là user mới, hãy nhớ 6 lệnh này trước:
+Nếu bạn là user mới, hãy nhớ các lệnh này trước:
 
 ```sh
 dh doctor
 dh index
 dh ask "..."
 dh explain "..."
-dh trace "..."
 dh quick "..."
 dh clean --yes
 ```
+
+`dh trace` là lệnh bounded; trong contract hiện tại nó được giữ ở trạng thái unsupported.
 
 ## Version
 
@@ -279,12 +291,11 @@ dh explain "runIndexWorkflow"
 dh explain "packages/runtime/src/diagnostics/doctor.ts"
 ```
 
-### Trace a flow
+### Trace a flow (bounded)
 
-```sh
-dh trace "request lifecycle"
-dh trace "semantic search path"
-```
+`dh trace` hiện được giữ ở trạng thái `unsupported` trong bounded contract hiện tại.
+
+Output đúng sẽ nói rõ unsupported thay vì fallback thành parser-backed proof.
 
 ### Use workflow lanes
 
@@ -310,13 +321,17 @@ dh migrate "upgrade provider integration to a new API contract"
 
 ## Language Support Boundary (bounded)
 
-`dh` surface language support theo 3 mức rõ ràng:
+`dh` tách rõ 2 lớp trạng thái:
 
-- `supported`: capability path hiện hữu và ổn định cho surface đó
-- `limited`: có hỗ trợ một phần, chưa đảm bảo toàn bộ downstream capability
-- `fallback-only`: chủ yếu dựa vào fallback/degraded behavior
+- answer/result state: `grounded | partial | insufficient | unsupported`
+- language/capability state: `supported | partial | best-effort | unsupported`
 
-Phase 5 chỉ surfacing boundary truthfully, không claim broad multi-language parity.
+Các state này không thay thế cho nhau. Một answer `grounded` không tự động nghĩa là
+mọi capability của ngôn ngữ đều supported; và capability `supported` cũng không tự động
+làm mọi invocation trở thành grounded.
+
+Ngoài ra, retrieval-backed output vẫn có thể hữu ích nhưng không được diễn giải như
+parser-backed proof khi evidence packet không chứng minh điều đó.
 
 Nếu muốn semantic retrieval dùng embedding provider thật, set `OPENAI_API_KEY`:
 
@@ -441,6 +456,9 @@ Script này sẽ:
 - verify binary mới bằng `dh --version`
 - rollback nếu verify thất bại
 
+Lưu ý: đây vẫn là GitHub checksum-bounded path (không manifest/file-size parity
+với local release-directory path).
+
 ### Upgrade từ release directory local
 
 Chỉ dùng cách này nếu bạn chắc chắn `dist/releases` là bản mới bạn vừa build hoặc vừa tải về:
@@ -455,6 +473,9 @@ Script upgrade sẽ:
 - verify checksum
 - backup binary cũ
 - rollback nếu binary mới lỗi khi verify
+
+Path này giữ trust level mạnh nhất cho lifecycle từ local release bundle vì có
+manifest/checksum/file-size verification trước khi mutate install target.
 
 ## Uninstall
 

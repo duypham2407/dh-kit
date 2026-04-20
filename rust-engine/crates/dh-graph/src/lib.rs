@@ -539,8 +539,9 @@ mod tests {
         ReferenceRepository, SymbolRepository,
     };
     use dh_types::{
-        CallEdge, CallKind, Chunk, ChunkKind, EmbeddingStatus, File, Import, ImportKind,
-        LanguageId, ParseStatus, Reference, ReferenceKind, Span, Symbol, SymbolKind, Visibility,
+        CallEdge, CallKind, Chunk, ChunkKind, EmbeddingStatus, File, FreshnessReason,
+        FreshnessState, Import, ImportKind, LanguageId, ParseStatus, Reference, ReferenceKind,
+        Span, Symbol, SymbolKind, Visibility,
     };
     use tempfile::NamedTempFile;
 
@@ -579,6 +580,9 @@ mod tests {
             is_barrel: false,
             last_indexed_at_unix_ms: None,
             deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::RefreshedCurrent,
+            freshness_reason: Some(FreshnessReason::ContentChanged),
+            last_freshness_run_id: Some("run-graph-1".into()),
         })?;
         db.upsert_file(&File {
             id: 2,
@@ -599,6 +603,9 @@ mod tests {
             is_barrel: false,
             last_indexed_at_unix_ms: None,
             deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::RefreshedCurrent,
+            freshness_reason: Some(FreshnessReason::ContentChanged),
+            last_freshness_run_id: Some("run-graph-2".into()),
         })?;
 
         db.insert_symbols(&[

@@ -5,8 +5,11 @@ use dh_graph::{EdgeResolution, GraphService, NodeId};
 use dh_storage::{Database, FileRepository, GraphRepository, ImportRepository};
 use dh_types::{
     AnswerState, EvidenceBounds, EvidenceConfidence, EvidenceEntry, EvidenceKind, EvidencePacket,
-    EvidenceSource, QuestionClass, SymbolId, SymbolKind, WorkspaceId,
+    EvidenceSource, LanguageCapability, LanguageCapabilityEntry, LanguageCapabilityLanguageSummary,
+    LanguageCapabilityState, LanguageCapabilitySummary, LanguageId, QuestionClass, SymbolId,
+    SymbolKind, WorkspaceId,
 };
+use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct FindSymbolQuery {
@@ -142,6 +145,350 @@ pub struct ImpactAnalysisResult {
     pub answer_state: AnswerState,
     pub impacted: Vec<String>,
     pub evidence: EvidencePacket,
+}
+
+const IN_SCOPE_QUERY_LANGUAGES: [LanguageId; 7] = [
+    LanguageId::TypeScript,
+    LanguageId::Tsx,
+    LanguageId::JavaScript,
+    LanguageId::Jsx,
+    LanguageId::Python,
+    LanguageId::Go,
+    LanguageId::Rust,
+];
+
+const ALL_CAPABILITIES: [LanguageCapability; 10] = [
+    LanguageCapability::ParseDiagnostics,
+    LanguageCapability::StructuralIndexing,
+    LanguageCapability::SymbolSearch,
+    LanguageCapability::DefinitionLookup,
+    LanguageCapability::Dependencies,
+    LanguageCapability::Dependents,
+    LanguageCapability::References,
+    LanguageCapability::CallHierarchy,
+    LanguageCapability::TraceFlow,
+    LanguageCapability::Impact,
+];
+
+pub fn language_capability_matrix() -> Vec<LanguageCapabilityEntry> {
+    let mut entries = Vec::new();
+    for language in IN_SCOPE_QUERY_LANGUAGES {
+        for capability in ALL_CAPABILITIES {
+            entries.push(language_capability_for(language, capability));
+        }
+    }
+    for capability in ALL_CAPABILITIES {
+        entries.push(language_capability_for(LanguageId::Unknown, capability));
+    }
+    entries
+}
+
+pub fn language_capability_for(
+    language: LanguageId,
+    capability: LanguageCapability,
+) -> LanguageCapabilityEntry {
+    let (state, reason, parser_backed) = capability_state_for(language, capability);
+    LanguageCapabilityEntry {
+        language,
+        capability,
+        state,
+        reason: reason.to_string(),
+        parser_backed,
+    }
+}
+
+pub fn summarize_language_capability(
+    capability: LanguageCapability,
+    languages: &[LanguageId],
+    retrieval_only: bool,
+) -> LanguageCapabilitySummary {
+    let input_languages: Vec<LanguageId> = if languages.is_empty() {
+        IN_SCOPE_QUERY_LANGUAGES.to_vec()
+    } else {
+        let mut seen = HashSet::new();
+        let mut deduped = Vec::new();
+        for language in languages {
+            if seen.insert(*language) {
+                deduped.push(*language);
+            }
+        }
+        deduped
+    };
+
+    let mut summaries = input_languages
+        .into_iter()
+        .map(|language| {
+            let entry = language_capability_for(language, capability);
+            LanguageCapabilityLanguageSummary {
+                language: entry.language,
+                state: entry.state,
+                reason: entry.reason,
+                parser_backed: entry.parser_backed,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    summaries.sort_by_key(|entry| language_order_rank(entry.language));
+
+    let weakest_state = summaries
+        .iter()
+        .map(|entry| entry.state)
+        .min_by_key(|state| capability_state_rank(*state))
+        .unwrap_or(LanguageCapabilityState::Supported);
+
+    LanguageCapabilitySummary {
+        capability,
+        weakest_state,
+        languages: summaries,
+        retrieval_only,
+    }
+}
+
+pub fn classify_relationship_support(
+    relation: &str,
+    languages: &[LanguageId],
+    retrieval_only: bool,
+) -> LanguageCapabilitySummary {
+    let capability = map_relation_to_capability(relation);
+    summarize_language_capability(capability, languages, retrieval_only)
+}
+
+pub fn classify_search_support(
+    mode: &str,
+    languages: &[LanguageId],
+    retrieval_only: bool,
+) -> LanguageCapabilitySummary {
+    let capability = match mode {
+        "symbol" => LanguageCapability::SymbolSearch,
+        _ => LanguageCapability::StructuralIndexing,
+    };
+    summarize_language_capability(capability, languages, retrieval_only)
+}
+
+pub fn infer_query_languages_from_paths(paths: &[String]) -> Vec<LanguageId> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+
+    for path in paths {
+        if let Some(language) = infer_language_from_path(path) {
+            if seen.insert(language) {
+                out.push(language);
+            }
+        }
+    }
+
+    out
+}
+
+pub fn infer_language_from_path(path: &str) -> Option<LanguageId> {
+    let lower = path.to_ascii_lowercase();
+
+    if lower.ends_with(".tsx") {
+        return Some(LanguageId::Tsx);
+    }
+    if lower.ends_with(".ts") || lower.ends_with(".mts") || lower.ends_with(".cts") {
+        return Some(LanguageId::TypeScript);
+    }
+    if lower.ends_with(".jsx") {
+        return Some(LanguageId::Jsx);
+    }
+    if lower.ends_with(".js") || lower.ends_with(".mjs") || lower.ends_with(".cjs") {
+        return Some(LanguageId::JavaScript);
+    }
+    if lower.ends_with(".py") {
+        return Some(LanguageId::Python);
+    }
+    if lower.ends_with(".go") {
+        return Some(LanguageId::Go);
+    }
+    if lower.ends_with(".rs") {
+        return Some(LanguageId::Rust);
+    }
+
+    None
+}
+
+pub fn language_id_to_wire(language: LanguageId) -> &'static str {
+    match language {
+        LanguageId::TypeScript => "typescript",
+        LanguageId::Tsx => "tsx",
+        LanguageId::JavaScript => "javascript",
+        LanguageId::Jsx => "jsx",
+        LanguageId::Python => "python",
+        LanguageId::Go => "go",
+        LanguageId::Rust => "rust",
+        LanguageId::Unknown => "unknown",
+    }
+}
+
+pub fn capability_state_to_wire(state: LanguageCapabilityState) -> &'static str {
+    match state {
+        LanguageCapabilityState::Supported => "supported",
+        LanguageCapabilityState::Partial => "partial",
+        LanguageCapabilityState::BestEffort => "best_effort",
+        LanguageCapabilityState::Unsupported => "unsupported",
+    }
+}
+
+pub fn capability_to_wire(capability: LanguageCapability) -> &'static str {
+    match capability {
+        LanguageCapability::ParseDiagnostics => "parse_diagnostics",
+        LanguageCapability::StructuralIndexing => "structural_indexing",
+        LanguageCapability::SymbolSearch => "symbol_search",
+        LanguageCapability::DefinitionLookup => "definition_lookup",
+        LanguageCapability::Dependencies => "dependencies",
+        LanguageCapability::Dependents => "dependents",
+        LanguageCapability::References => "references",
+        LanguageCapability::CallHierarchy => "call_hierarchy",
+        LanguageCapability::TraceFlow => "trace_flow",
+        LanguageCapability::Impact => "impact",
+    }
+}
+
+fn map_relation_to_capability(relation: &str) -> LanguageCapability {
+    match relation {
+        "usage" => LanguageCapability::References,
+        "dependencies" => LanguageCapability::Dependencies,
+        "dependents" => LanguageCapability::Dependents,
+        "call_hierarchy" => LanguageCapability::CallHierarchy,
+        "trace_flow" => LanguageCapability::TraceFlow,
+        "impact" => LanguageCapability::Impact,
+        _ => LanguageCapability::StructuralIndexing,
+    }
+}
+
+fn capability_state_for(
+    language: LanguageId,
+    capability: LanguageCapability,
+) -> (LanguageCapabilityState, &'static str, bool) {
+    match language {
+        LanguageId::TypeScript
+        | LanguageId::Tsx
+        | LanguageId::JavaScript
+        | LanguageId::Jsx => (
+            LanguageCapabilityState::Supported,
+            "TS/JS baseline is the strongest bounded parser-backed path for this capability.",
+            true,
+        ),
+        LanguageId::Python => match capability {
+            LanguageCapability::ParseDiagnostics
+            | LanguageCapability::StructuralIndexing
+            | LanguageCapability::SymbolSearch
+            | LanguageCapability::DefinitionLookup => (
+                LanguageCapabilityState::Supported,
+                "Python support is parser-backed for bounded structural parse/index and direct retrieval capabilities.",
+                true,
+            ),
+            LanguageCapability::Dependencies | LanguageCapability::Dependents => (
+                LanguageCapabilityState::Partial,
+                "Python dependency/dependent lookup remains partial because import resolution is bounded and unresolved imports are expected.",
+                true,
+            ),
+            LanguageCapability::References => (
+                LanguageCapabilityState::Partial,
+                "Python reference depth is intentionally partial in this release.",
+                true,
+            ),
+            LanguageCapability::CallHierarchy
+            | LanguageCapability::TraceFlow
+            | LanguageCapability::Impact => (
+                LanguageCapabilityState::Unsupported,
+                "Python deep relation capabilities are intentionally unsupported in this release boundary.",
+                false,
+            ),
+        },
+        LanguageId::Go => match capability {
+            LanguageCapability::ParseDiagnostics
+            | LanguageCapability::StructuralIndexing
+            | LanguageCapability::SymbolSearch => (
+                LanguageCapabilityState::Supported,
+                "Go support is parser-backed for bounded structural parse/index and direct retrieval capabilities.",
+                true,
+            ),
+            LanguageCapability::DefinitionLookup => (
+                LanguageCapabilityState::Partial,
+                "Go definition lookup remains partial until same-package awareness is complete for bounded direct definition cases.",
+                true,
+            ),
+            LanguageCapability::Dependencies | LanguageCapability::Dependents => (
+                LanguageCapabilityState::Partial,
+                "Go dependency/dependent lookup remains partial because import resolution is bounded and unresolved imports are expected.",
+                true,
+            ),
+            LanguageCapability::References => (
+                LanguageCapabilityState::Partial,
+                "Go reference/usage depth is intentionally partial in this release.",
+                true,
+            ),
+            LanguageCapability::CallHierarchy => (
+                LanguageCapabilityState::BestEffort,
+                "Go call hierarchy is best-effort and syntax-first for this release.",
+                true,
+            ),
+            LanguageCapability::TraceFlow | LanguageCapability::Impact => (
+                LanguageCapabilityState::Unsupported,
+                "Go trace/impact capabilities are intentionally unsupported in this release boundary.",
+                false,
+            ),
+        },
+        LanguageId::Rust => match capability {
+            LanguageCapability::ParseDiagnostics
+            | LanguageCapability::StructuralIndexing
+            | LanguageCapability::SymbolSearch
+            | LanguageCapability::DefinitionLookup => (
+                LanguageCapabilityState::Supported,
+                "Rust support is parser-backed for bounded structural parse/index and direct retrieval capabilities.",
+                true,
+            ),
+            LanguageCapability::Dependencies | LanguageCapability::Dependents => (
+                LanguageCapabilityState::Partial,
+                "Rust dependency/dependent lookup remains partial because use-path resolution is bounded and unresolved imports are expected.",
+                true,
+            ),
+            LanguageCapability::References => (
+                LanguageCapabilityState::Partial,
+                "Rust reference/usage depth is intentionally partial in this release.",
+                true,
+            ),
+            LanguageCapability::CallHierarchy => (
+                LanguageCapabilityState::BestEffort,
+                "Rust call hierarchy is best-effort when macro/trait-heavy code reduces certainty.",
+                true,
+            ),
+            LanguageCapability::TraceFlow | LanguageCapability::Impact => (
+                LanguageCapabilityState::Unsupported,
+                "Rust trace/impact capabilities are intentionally unsupported in this release boundary.",
+                false,
+            ),
+        },
+        LanguageId::Unknown => (
+            LanguageCapabilityState::Unsupported,
+            "Unsupported language family for parser-backed code intelligence in this release.",
+            false,
+        ),
+    }
+}
+
+fn capability_state_rank(state: LanguageCapabilityState) -> u8 {
+    match state {
+        LanguageCapabilityState::Supported => 3,
+        LanguageCapabilityState::Partial => 2,
+        LanguageCapabilityState::BestEffort => 1,
+        LanguageCapabilityState::Unsupported => 0,
+    }
+}
+
+fn language_order_rank(language: LanguageId) -> u8 {
+    match language {
+        LanguageId::TypeScript => 0,
+        LanguageId::Tsx => 1,
+        LanguageId::JavaScript => 2,
+        LanguageId::Jsx => 3,
+        LanguageId::Python => 4,
+        LanguageId::Go => 5,
+        LanguageId::Rust => 6,
+        LanguageId::Unknown => 255,
+    }
 }
 
 pub trait QueryEngine {
@@ -389,6 +736,7 @@ impl QueryEngine for Database {
         let files = self.list_files_by_workspace(query.workspace_id)?;
         let mut items = Vec::new();
         let mut evidence = Vec::new();
+        let mut unresolved_seen = false;
 
         if let Some(target_file) = files.iter().find(|f| f.rel_path == query.target) {
             for imp in self
@@ -418,6 +766,9 @@ impl QueryEngine for Database {
                     .into_iter()
                 {
                     if let Some(src) = files.iter().find(|f| f.id == r.source_file_id) {
+                        if !r.resolved {
+                            unresolved_seen = true;
+                        }
                         items.push(src.rel_path.clone());
                         evidence.push(entry(
                             EvidenceKind::Dependent,
@@ -441,6 +792,8 @@ impl QueryEngine for Database {
 
         let state = if items.is_empty() {
             AnswerState::Insufficient
+        } else if unresolved_seen {
+            AnswerState::Partial
         } else {
             AnswerState::Grounded
         };
@@ -454,15 +807,19 @@ impl QueryEngine for Database {
                 query.target.clone(),
                 "Dependents lookup".into(),
                 if state == AnswerState::Grounded {
-                    "Found direct dependents".into()
+                    "Found grounded direct dependents".into()
+                } else if state == AnswerState::Partial {
+                    "Found dependents with unresolved edges".into()
                 } else {
                     "No direct dependents found in indexed facts".into()
                 },
                 evidence,
-                if state == AnswerState::Grounded {
-                    Vec::new()
-                } else {
+                if state == AnswerState::Insufficient {
                     vec!["no direct reverse import/reference edges".into()]
+                } else if state == AnswerState::Partial {
+                    vec!["one or more dependent edges are unresolved".into()]
+                } else {
+                    Vec::new()
                 },
                 EvidenceBounds {
                     hop_count: Some(1),
@@ -1043,8 +1400,9 @@ mod tests {
         ReferenceRepository, SymbolRepository,
     };
     use dh_types::{
-        CallEdge, CallKind, Chunk, ChunkKind, EmbeddingStatus, File, Import, ImportKind,
-        LanguageId, ParseStatus, Reference, ReferenceKind, Span, Symbol, Visibility,
+        CallEdge, CallKind, Chunk, ChunkKind, EmbeddingStatus, File, FreshnessReason,
+        FreshnessState, Import, ImportKind, LanguageId, ParseStatus, Reference, ReferenceKind,
+        Span, Symbol, Visibility,
     };
     use tempfile::NamedTempFile;
 
@@ -1083,6 +1441,9 @@ mod tests {
             is_barrel: false,
             last_indexed_at_unix_ms: None,
             deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::RefreshedCurrent,
+            freshness_reason: Some(FreshnessReason::ContentChanged),
+            last_freshness_run_id: Some("run-query-1".into()),
         })?;
         db.upsert_file(&File {
             id: 2,
@@ -1103,6 +1464,9 @@ mod tests {
             is_barrel: false,
             last_indexed_at_unix_ms: None,
             deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::RefreshedCurrent,
+            freshness_reason: Some(FreshnessReason::ContentChanged),
+            last_freshness_run_id: Some("run-query-2".into()),
         })?;
 
         db.insert_symbols(&[
@@ -1381,5 +1745,69 @@ mod tests {
             .any(|gap| gap.contains("unresolved")));
 
         Ok(())
+    }
+
+    #[test]
+    fn dependents_are_partial_when_unresolved_references_contribute() -> anyhow::Result<()> {
+        let db = setup_db()?;
+        seed(&db)?;
+
+        db.insert_references(&[Reference {
+            id: 888,
+            workspace_id: 1,
+            source_file_id: 1,
+            source_symbol_id: Some(10),
+            target_symbol_id: Some(11),
+            target_name: "helper".into(),
+            kind: ReferenceKind::Call,
+            resolved: false,
+            resolution_confidence: 0.1,
+            span: Span {
+                start_byte: 0,
+                end_byte: 1,
+                start_line: 4,
+                start_column: 0,
+                end_line: 4,
+                end_column: 1,
+            },
+        }])?;
+
+        let dependents = db.find_dependents(FindDependentsQuery {
+            workspace_id: 1,
+            target: "helper".into(),
+            limit: 10,
+        })?;
+
+        assert_eq!(dependents.answer_state, AnswerState::Partial);
+        assert_eq!(dependents.evidence.answer_state, AnswerState::Partial);
+        assert!(dependents
+            .evidence
+            .gaps
+            .iter()
+            .any(|gap| gap.contains("unresolved")));
+
+        Ok(())
+    }
+
+    #[test]
+    fn dependency_and_go_definition_capabilities_are_not_overclaimed() {
+        let go_definition =
+            language_capability_for(LanguageId::Go, LanguageCapability::DefinitionLookup);
+        assert_eq!(go_definition.state, LanguageCapabilityState::Partial);
+        assert!(go_definition.parser_backed);
+        assert!(go_definition.reason.contains("same-package"));
+
+        for language in [LanguageId::Python, LanguageId::Go, LanguageId::Rust] {
+            for capability in [
+                LanguageCapability::Dependencies,
+                LanguageCapability::Dependents,
+            ] {
+                let entry = language_capability_for(language, capability);
+                assert_eq!(entry.state, LanguageCapabilityState::Partial);
+                assert!(entry.parser_backed);
+                assert!(entry.reason.contains("partial"));
+                assert!(entry.reason.contains("unresolved"));
+            }
+        }
     }
 }

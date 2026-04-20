@@ -34,8 +34,12 @@ fn loads_parity_baselines() {
         .expect("parity baselines should load");
 
     assert_eq!(baselines.len(), 5);
-    assert!(baselines.iter().any(|baseline| baseline.file == "simple-module.ts"));
-    assert!(baselines.iter().any(|baseline| baseline.file == "syntax-error.ts"));
+    assert!(baselines
+        .iter()
+        .any(|baseline| baseline.file == "simple-module.ts"));
+    assert!(baselines
+        .iter()
+        .any(|baseline| baseline.file == "syntax-error.ts"));
 }
 
 #[test]
@@ -44,7 +48,10 @@ fn fixture_corpus_parity_report_is_passing() {
     let report = harness.run().expect("parity harness should run");
 
     assert_eq!(report.total_cases, 5);
-    assert_eq!(report.failed_cases, 0, "all curated fixtures should pass baseline parity");
+    assert_eq!(
+        report.failed_cases, 0,
+        "all curated fixtures should pass baseline parity"
+    );
     assert_eq!(report.passed_cases, report.total_cases);
 }
 

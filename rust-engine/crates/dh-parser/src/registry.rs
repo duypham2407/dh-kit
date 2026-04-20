@@ -33,7 +33,8 @@ impl LanguageRegistry {
     pub fn register_arc(&mut self, adapter: Arc<dyn LanguageAdapter>) {
         let language_id = adapter.language_id();
         self.by_id.insert(language_id, Arc::clone(&adapter));
-        self.adapters.retain(|existing| existing.language_id() != language_id);
+        self.adapters
+            .retain(|existing| existing.language_id() != language_id);
         self.adapters.push(adapter);
     }
 

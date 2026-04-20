@@ -61,6 +61,7 @@
 - [x] Structured parity report JSON output (`parity-report.json`)
 - [x] CLI command: `dh-engine parity --workspace <path> [--output <path>]`
 - [x] Metrics reported: symbol/import/call/reference/chunk parity + cold/incremental timing
+- [x] Benchmark hardening follow-up: canonical `dh-engine benchmark` artifact path now separates correctness from index/query timing classes and carries explicit memory-measurement status (`measured|not_measured|measurement_failed`) for each result
 - [x] Syntax-error fixture handled honestly (`ParsedWithErrors` + diagnostics)
 - [x] Regression test for over-count mismatch parity formula
 - [x] Code review passed after narrowed-boundary re-review and metric-formula fix
@@ -98,3 +99,8 @@ cargo run -p dh-engine -- parity --workspace crates/dh-indexer/tests/fixtures/pa
 - `cargo test`: ✅ 18 tests pass (3 indexer + 5 parity + 5 parser + 5 storage)
 - CLI smoke test: ✅ `dh-engine init/status/index/parity` work
 - Installer tests: ✅ 15/15 pass
+
+## Benchmark wording boundary
+
+- Benchmark outputs in this migration track are local corpus-bound evidence only.
+- They do not imply SLA guarantees, hardware-independent performance promises, or universal behavior across all repositories.

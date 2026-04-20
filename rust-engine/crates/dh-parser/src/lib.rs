@@ -11,11 +11,13 @@ pub mod adapters;
 pub mod pool;
 pub mod registry;
 
+use adapters::{
+    go::GoAdapter, python::PythonAdapter, rust::RustAdapter, typescript::TypeScriptAdapter,
+};
 use anyhow::{anyhow, Context, Result};
-use adapters::typescript::TypeScriptAdapter;
 use dh_types::{
-    CallEdge, Chunk, ExportFact, FileChangeEvent, Import, IndexProgressEvent, LanguageId, ParseDiagnostic,
-    ParseStatus, Reference, Symbol,
+    CallEdge, Chunk, ExportFact, FileChangeEvent, Import, IndexProgressEvent, LanguageId,
+    ParseDiagnostic, ParseStatus, Reference, Symbol,
 };
 use std::path::Path;
 use tree_sitter::{Parser, Tree};
@@ -72,6 +74,9 @@ pub fn default_language_registry() -> LanguageRegistry {
     registry.register(TypeScriptAdapter::for_language(LanguageId::Tsx));
     registry.register(TypeScriptAdapter::for_language(LanguageId::JavaScript));
     registry.register(TypeScriptAdapter::for_language(LanguageId::Jsx));
+    registry.register(PythonAdapter);
+    registry.register(GoAdapter);
+    registry.register(RustAdapter);
     registry
 }
 
@@ -155,16 +160,41 @@ pub trait LanguageAdapter: Send + Sync {
     fn matches_path(&self, path: &Path) -> bool;
     fn detect_from_shebang(&self, shebang: &str) -> bool;
 
-    fn parse(&self, parser: &mut Parser, source: &str, old_tree: Option<&Tree>) -> Result<ParseOutput>;
+    fn parse(
+        &self,
+        parser: &mut Parser,
+        source: &str,
+        old_tree: Option<&Tree>,
+    ) -> Result<ParseOutput>;
     fn collect_diagnostics(&self, source: &str, tree: &Tree) -> Vec<ParseDiagnostic>;
 
     fn extract_symbols(&self, ctx: &ExtractionContext<'_>, tree: &Tree) -> Vec<Symbol>;
     fn extract_imports(&self, ctx: &ExtractionContext<'_>, tree: &Tree) -> Vec<Import>;
     fn extract_exports(&self, ctx: &ExtractionContext<'_>, tree: &Tree) -> Vec<ExportFact>;
-    fn extract_call_edges(&self, ctx: &ExtractionContext<'_>, tree: &Tree, symbols: &[Symbol]) -> Vec<CallEdge>;
-    fn extract_references(&self, ctx: &ExtractionContext<'_>, tree: &Tree, symbols: &[Symbol]) -> Vec<Reference>;
-    fn extract_inheritance(&self, ctx: &ExtractionContext<'_>, tree: &Tree, symbols: &[Symbol]) -> Vec<TypeRelation>;
-    fn extract_chunks(&self, ctx: &ExtractionContext<'_>, tree: &Tree, symbols: &[Symbol]) -> Vec<Chunk>;
+    fn extract_call_edges(
+        &self,
+        ctx: &ExtractionContext<'_>,
+        tree: &Tree,
+        symbols: &[Symbol],
+    ) -> Vec<CallEdge>;
+    fn extract_references(
+        &self,
+        ctx: &ExtractionContext<'_>,
+        tree: &Tree,
+        symbols: &[Symbol],
+    ) -> Vec<Reference>;
+    fn extract_inheritance(
+        &self,
+        ctx: &ExtractionContext<'_>,
+        tree: &Tree,
+        symbols: &[Symbol],
+    ) -> Vec<TypeRelation>;
+    fn extract_chunks(
+        &self,
+        ctx: &ExtractionContext<'_>,
+        tree: &Tree,
+        symbols: &[Symbol],
+    ) -> Vec<Chunk>;
     fn resolve_imports(
         &self,
         ctx: &ExtractionContext<'_>,
@@ -185,7 +215,12 @@ pub trait LanguageAdapter: Send + Sync {
         symbols: &[Symbol],
         import_map: &[Import],
     );
-    fn structure_fingerprint(&self, symbols: &[Symbol], imports: &[Import], exports: &[ExportFact]) -> String;
+    fn structure_fingerprint(
+        &self,
+        symbols: &[Symbol],
+        imports: &[Import],
+        exports: &[ExportFact],
+    ) -> String;
     fn public_api_fingerprint(&self, symbols: &[Symbol], exports: &[ExportFact]) -> String;
 }
 

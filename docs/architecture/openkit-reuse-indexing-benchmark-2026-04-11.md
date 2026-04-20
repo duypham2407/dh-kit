@@ -24,6 +24,11 @@ npx vitest run packages/intelligence/src/graph/graph-indexer.benchmark.test.ts -
 - Incremental run after touching one file indexed `1` file and skipped `119` files in `36ms`.
 - This validates content-hash incremental behavior and closes checklist item P5 benchmark evidence requirement.
 
+## Benchmark-truth boundary
+
+- This snapshot is local benchmark evidence on the declared synthetic fixture corpus and local environment.
+- It must not be presented as an SLA, hardware-independent guarantee, or universal claim for all repositories.
+
 ## Notes
 
 - Fixture size is synthetic but representative enough for regression tracking.

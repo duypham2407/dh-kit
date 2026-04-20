@@ -6,8 +6,8 @@
 use crate::{ExtractionContext, LanguageAdapter, ParseOutput, TypeRelation, UnresolvedImport};
 use anyhow::{anyhow, Result};
 use dh_types::{
-    CallEdge, CallKind, Chunk, ChunkKind, EmbeddingStatus, ExportFact, Import, ImportKind, LanguageId,
-    ParseDiagnostic, Reference, ReferenceKind, Span, Symbol, SymbolKind, Visibility,
+    CallEdge, CallKind, Chunk, ChunkKind, EmbeddingStatus, ExportFact, Import, ImportKind,
+    LanguageId, ParseDiagnostic, Reference, ReferenceKind, Span, Symbol, SymbolKind, Visibility,
 };
 use std::path::Path;
 use tree_sitter::{Node, Parser, Tree};
@@ -41,7 +41,9 @@ impl TypeScriptAdapter {
     #[must_use]
     pub fn for_language(language: LanguageId) -> Self {
         let language = match language {
-            LanguageId::TypeScript | LanguageId::Tsx | LanguageId::JavaScript | LanguageId::Jsx => language,
+            LanguageId::TypeScript | LanguageId::Tsx | LanguageId::JavaScript | LanguageId::Jsx => {
+                language
+            }
             _ => LanguageId::TypeScript,
         };
         Self { language }
@@ -215,9 +217,16 @@ impl TypeScriptAdapter {
                         let init_kind = init.kind();
                         if matches!(
                             init_kind,
-                            "arrow_function" | "function" | "function_expression" | "generator_function"
+                            "arrow_function"
+                                | "function"
+                                | "function_expression"
+                                | "generator_function"
                         ) {
-                            signature = Some(format!("{} = {}", name, first_line(&node_text(init, source), 180)));
+                            signature = Some(format!(
+                                "{} = {}",
+                                name,
+                                first_line(&node_text(init, source), 180)
+                            ));
                             async_flag = has_token_child(init, source, "async");
                         }
                     }
@@ -323,7 +332,12 @@ impl LanguageAdapter for TypeScriptAdapter {
         }
     }
 
-    fn parse(&self, parser: &mut Parser, source: &str, old_tree: Option<&Tree>) -> Result<ParseOutput> {
+    fn parse(
+        &self,
+        parser: &mut Parser,
+        source: &str,
+        old_tree: Option<&Tree>,
+    ) -> Result<ParseOutput> {
         parser
             .set_language(&self.grammar())
             .map_err(|err| anyhow!("failed to set parser language {:?}: {err}", self.language))?;
@@ -383,7 +397,13 @@ impl LanguageAdapter for TypeScriptAdapter {
 
     fn extract_symbols(&self, ctx: &ExtractionContext<'_>, tree: &Tree) -> Vec<Symbol> {
         let mut symbols = Vec::new();
-        self.parse_symbol_nodes(tree.root_node(), ctx, ctx.source, &mut Vec::new(), &mut symbols);
+        self.parse_symbol_nodes(
+            tree.root_node(),
+            ctx,
+            ctx.source,
+            &mut Vec::new(),
+            &mut symbols,
+        );
 
         symbols.sort_by(|a, b| {
             (
@@ -443,7 +463,9 @@ impl LanguageAdapter for TypeScriptAdapter {
         for node in walk_named_nodes(tree.root_node()) {
             match node.kind() {
                 "export_statement" => parse_export_statement(ctx, node, ctx.source, &mut exports),
-                "assignment_expression" => parse_commonjs_exports(ctx, node, ctx.source, &mut exports),
+                "assignment_expression" => {
+                    parse_commonjs_exports(ctx, node, ctx.source, &mut exports)
+                }
                 _ => {}
             }
         }
@@ -468,13 +490,21 @@ impl LanguageAdapter for TypeScriptAdapter {
         exports
     }
 
-    fn extract_call_edges(&self, ctx: &ExtractionContext<'_>, tree: &Tree, symbols: &[Symbol]) -> Vec<CallEdge> {
+    fn extract_call_edges(
+        &self,
+        ctx: &ExtractionContext<'_>,
+        tree: &Tree,
+        symbols: &[Symbol],
+    ) -> Vec<CallEdge> {
         let mut edges = Vec::new();
 
         for node in walk_named_nodes(tree.root_node()) {
             match node.kind() {
                 "call_expression" => {
-                    let Some(callee) = node.child_by_field_name("function").or_else(|| node.named_child(0)) else {
+                    let Some(callee) = node
+                        .child_by_field_name("function")
+                        .or_else(|| node.named_child(0))
+                    else {
                         continue;
                     };
                     let callee_text = node_text(callee, ctx.source);
@@ -562,7 +592,12 @@ impl LanguageAdapter for TypeScriptAdapter {
         edges
     }
 
-    fn extract_references(&self, ctx: &ExtractionContext<'_>, tree: &Tree, symbols: &[Symbol]) -> Vec<Reference> {
+    fn extract_references(
+        &self,
+        ctx: &ExtractionContext<'_>,
+        tree: &Tree,
+        symbols: &[Symbol],
+    ) -> Vec<Reference> {
         let mut references = Vec::new();
 
         for node in walk_named_nodes(tree.root_node()) {
@@ -655,7 +690,12 @@ impl LanguageAdapter for TypeScriptAdapter {
         Vec::new()
     }
 
-    fn extract_chunks(&self, ctx: &ExtractionContext<'_>, _tree: &Tree, symbols: &[Symbol]) -> Vec<Chunk> {
+    fn extract_chunks(
+        &self,
+        ctx: &ExtractionContext<'_>,
+        _tree: &Tree,
+        symbols: &[Symbol],
+    ) -> Vec<Chunk> {
         let mut chunks = Vec::new();
         let source_len = ctx.source.len() as u32;
 
@@ -694,7 +734,8 @@ impl LanguageAdapter for TypeScriptAdapter {
         });
 
         for symbol in symbols {
-            let content = text_by_byte_range(ctx.source, symbol.span.start_byte, symbol.span.end_byte);
+            let content =
+                text_by_byte_range(ctx.source, symbol.span.start_byte, symbol.span.end_byte);
             let (chunk_kind, title_prefix) = match symbol.kind {
                 SymbolKind::Method => (ChunkKind::Method, "method"),
                 _ => (ChunkKind::Symbol, "symbol"),
@@ -726,7 +767,10 @@ impl LanguageAdapter for TypeScriptAdapter {
                     .iter()
                     .filter(|candidate| {
                         candidate.parent_symbol_id == Some(symbol.id)
-                            && matches!(candidate.kind, SymbolKind::Method | SymbolKind::Field | SymbolKind::Property)
+                            && matches!(
+                                candidate.kind,
+                                SymbolKind::Method | SymbolKind::Field | SymbolKind::Property
+                            )
                     })
                     .map(|candidate| candidate.name.clone())
                     .collect::<Vec<_>>();
@@ -735,7 +779,11 @@ impl LanguageAdapter for TypeScriptAdapter {
                 let summary = if methods.is_empty() {
                     format!("class {}", symbol.qualified_name)
                 } else {
-                    format!("class {}\nchildren: {}", symbol.qualified_name, methods.join(", "))
+                    format!(
+                        "class {}\nchildren: {}",
+                        symbol.qualified_name,
+                        methods.join(", ")
+                    )
                 };
 
                 chunks.push(Chunk {
@@ -826,7 +874,12 @@ impl LanguageAdapter for TypeScriptAdapter {
         // Slice 2B: explicit no-op stub.
     }
 
-    fn structure_fingerprint(&self, symbols: &[Symbol], imports: &[Import], exports: &[ExportFact]) -> String {
+    fn structure_fingerprint(
+        &self,
+        symbols: &[Symbol],
+        imports: &[Import],
+        exports: &[ExportFact],
+    ) -> String {
         let mut entries = Vec::new();
 
         for symbol in symbols {
@@ -953,7 +1006,12 @@ fn build_symbol(
     }
 }
 
-fn parse_import_statement(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &str, out: &mut Vec<Import>) {
+fn parse_import_statement(
+    ctx: &ExtractionContext<'_>,
+    node: Node<'_>,
+    source: &str,
+    out: &mut Vec<Import>,
+) {
     let raw = node_text(node, source);
     let text = compact_ws(&raw);
     if !text.starts_with("import ") {
@@ -998,7 +1056,11 @@ fn parse_import_statement(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &
             .strip_prefix('{')
             .and_then(|value| value.strip_suffix('}'))
         {
-            for entry in named.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+            for entry in named
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+            {
                 let (item_type_only, normalized) = if let Some(rest) = entry.strip_prefix("type ") {
                     (true, rest.trim())
                 } else {
@@ -1070,8 +1132,16 @@ fn parse_import_statement(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &
     }
 }
 
-fn parse_call_import(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &str, out: &mut Vec<Import>) {
-    let Some(function_node) = node.child_by_field_name("function").or_else(|| node.named_child(0)) else {
+fn parse_call_import(
+    ctx: &ExtractionContext<'_>,
+    node: Node<'_>,
+    source: &str,
+    out: &mut Vec<Import>,
+) {
+    let Some(function_node) = node
+        .child_by_field_name("function")
+        .or_else(|| node.named_child(0))
+    else {
         return;
     };
     let fn_name = node_text(function_node, source);
@@ -1087,7 +1157,8 @@ fn parse_call_import(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &str, 
         || has_ancestor_kind(node, "if_statement")
         || has_ancestor_kind(node, "switch_case");
 
-    let (specifier, resolution_error) = if let Some(specifier) = first_string_argument(node, source) {
+    let (specifier, resolution_error) = if let Some(specifier) = first_string_argument(node, source)
+    {
         (specifier, None)
     } else {
         (
@@ -1118,7 +1189,12 @@ fn parse_call_import(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &str, 
     ));
 }
 
-fn parse_reexport_imports(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &str, out: &mut Vec<Import>) {
+fn parse_reexport_imports(
+    ctx: &ExtractionContext<'_>,
+    node: Node<'_>,
+    source: &str,
+    out: &mut Vec<Import>,
+) {
     let raw = node_text(node, source);
     let text = compact_ws(&raw);
 
@@ -1159,21 +1235,26 @@ fn parse_reexport_imports(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &
     if let Some(brace_start) = clause.find('{') {
         if let Some(brace_end) = clause.rfind('}') {
             let named = &clause[brace_start + 1..brace_end];
-            for entry in named.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+            for entry in named
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+            {
                 let (item_type_only, normalized) = if let Some(rest) = entry.strip_prefix("type ") {
                     (true, rest.trim())
                 } else {
                     (false, entry)
                 };
 
-                let (imported_name, local_name, alias) = if let Some((left, right)) = normalized.split_once(" as ") {
-                    let left = left.trim().to_string();
-                    let right = right.trim().to_string();
-                    (Some(left), Some(right.clone()), Some(right))
-                } else {
-                    let name = normalized.trim().to_string();
-                    (Some(name.clone()), Some(name), None)
-                };
+                let (imported_name, local_name, alias) =
+                    if let Some((left, right)) = normalized.split_once(" as ") {
+                        let left = left.trim().to_string();
+                        let right = right.trim().to_string();
+                        (Some(left), Some(right.clone()), Some(right))
+                    } else {
+                        let name = normalized.trim().to_string();
+                        (Some(name.clone()), Some(name), None)
+                    };
 
                 out.push(new_import(
                     ctx,
@@ -1192,7 +1273,12 @@ fn parse_reexport_imports(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &
     }
 }
 
-fn parse_export_statement(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &str, out: &mut Vec<ExportFact>) {
+fn parse_export_statement(
+    ctx: &ExtractionContext<'_>,
+    node: Node<'_>,
+    source: &str,
+    out: &mut Vec<ExportFact>,
+) {
     let raw = node_text(node, source);
     let text = compact_ws(&raw);
     if !text.starts_with("export ") {
@@ -1243,19 +1329,24 @@ fn parse_export_statement(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &
 
     if let Some(body) = export_brace_body(&text) {
         let global_type_only = text.starts_with("export type ");
-        for item in body.split(',').map(str::trim).filter(|item| !item.is_empty()) {
+        for item in body
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
             let (item_type_only, normalized) = if let Some(rest) = item.strip_prefix("type ") {
                 (true, rest.trim())
             } else {
                 (false, item)
             };
 
-            let (local_name, exported_name) = if let Some((left, right)) = normalized.split_once(" as ") {
-                (left.trim().to_string(), right.trim().to_string())
-            } else {
-                let name = normalized.trim().to_string();
-                (name.clone(), name)
-            };
+            let (local_name, exported_name) =
+                if let Some((left, right)) = normalized.split_once(" as ") {
+                    (left.trim().to_string(), right.trim().to_string())
+                } else {
+                    let name = normalized.trim().to_string();
+                    (name.clone(), name)
+                };
 
             out.push(ExportFact {
                 source_file_id: ctx.file_id,
@@ -1287,7 +1378,12 @@ fn parse_export_statement(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &
     }
 }
 
-fn parse_commonjs_exports(ctx: &ExtractionContext<'_>, node: Node<'_>, source: &str, out: &mut Vec<ExportFact>) {
+fn parse_commonjs_exports(
+    ctx: &ExtractionContext<'_>,
+    node: Node<'_>,
+    source: &str,
+    out: &mut Vec<ExportFact>,
+) {
     let text = compact_ws(&node_text(node, source));
     let span = span_from_node(node);
 
@@ -1569,7 +1665,11 @@ fn stable_id(material: &str) -> i64 {
     let mut bytes = [0_u8; 8];
     bytes.copy_from_slice(&hash.as_bytes()[..8]);
     let id = (u64::from_le_bytes(bytes) & 0x7FFF_FFFF_FFFF_FFFF) as i64;
-    if id == 0 { 1 } else { id }
+    if id == 0 {
+        1
+    } else {
+        id
+    }
 }
 
 fn blake3_hex(input: &str) -> String {
@@ -1757,7 +1857,10 @@ fn is_write_position(node: Node<'_>, source: &str) -> bool {
             }
         }
 
-        if matches!(parent.kind(), "assignment_expression" | "augmented_assignment_expression") {
+        if matches!(
+            parent.kind(),
+            "assignment_expression" | "augmented_assignment_expression"
+        ) {
             if let Some(left) = parent.child_by_field_name("left") {
                 if contains_range(left, node) {
                     return true;
@@ -1833,7 +1936,11 @@ fn text_by_byte_range(source: &str, start: u32, end: u32) -> String {
 
 fn estimate_tokens(content: &str) -> u32 {
     let count = content.split_whitespace().count() as u32;
-    if count == 0 { 1 } else { count }
+    if count == 0 {
+        1
+    } else {
+        count
+    }
 }
 
 fn byte_end_for_first_n_lines(source: &str, line_count: usize) -> u32 {

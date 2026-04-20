@@ -15,9 +15,10 @@ import { getQualityGateAvailabilitySnapshot } from "../workflow/quality-gates-ru
 import fsSync from "node:fs";
 import path from "node:path";
 import {
-  listLanguageSupportBoundaries,
-  type LanguageSupportBoundary,
-} from "../../../intelligence/src/symbols/extract-symbols.js";
+  probeRustCapabilitySummary,
+  probeRustEngineStatus,
+  type RustParserFreshnessSummary,
+} from "./rust-engine-status.js";
 
 export type DoctorReport = {
   ok: boolean;
@@ -30,7 +31,8 @@ export type DoctorReport = {
   };
   diagnostics: {
     lifecycleClassification: DoctorLifecycleClassification;
-    languageSupportBoundaries: LanguageSupportBoundary[];
+    capabilitySummary: RustCapabilitySummary;
+    parserFreshnessSummary: RustParserFreshnessView;
     providerCoverage: {
       providersWithoutModels: string[];
       totalProviders: number;
@@ -99,18 +101,47 @@ export type DoctorSnapshot = {
   ruleScanAvailability: "available" | "unavailable" | "not_configured";
   securityScanAvailability: "available" | "unavailable" | "not_configured";
   actionCount: number;
-  languageSupportBoundaries: Array<{
-    language: string;
-    status: "supported" | "limited" | "fallback-only";
-  }>;
-  languageSupportSummary: {
+  capabilitySummary: RustCapabilitySummary;
+  parserFreshnessSummary: RustParserFreshnessView;
+  capabilityStateSummary: {
     supported: number;
-    limited: number;
-    fallbackOnly: number;
+    partial: number;
+    bestEffort: number;
+    unsupported: number;
   };
 };
 
 type OperatorReadinessCondition = "ready" | "ready-with-known-degradation" | "blocked";
+
+type RustCapabilitySummary =
+  | {
+    source: "rust_bridge";
+    available: true;
+    states: {
+      supported: number;
+      partial: number;
+      bestEffort: number;
+      unsupported: number;
+    };
+    capabilityCount: number;
+  }
+  | {
+    source: "rust_bridge";
+    available: false;
+    reason: string;
+  };
+
+type RustParserFreshnessView =
+  | {
+    source: "rust_status";
+    available: true;
+    summary: RustParserFreshnessSummary;
+  }
+  | {
+    source: "rust_status";
+    available: false;
+    reason: string;
+  };
 
 export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   const paths = resolveDhPaths(repoRoot);
@@ -195,20 +226,28 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
 
   const sqliteBridgeReady = availableTables.has("hook_invocation_logs") && runtimeBinaryReady;
   const qualityGateAvailability = getQualityGateAvailabilitySnapshot(repoRoot);
-  const languageSupportBoundaries = listLanguageSupportBoundaries();
-  const languageSupportSummary = languageSupportBoundaries.reduce(
-    (acc, boundary) => {
-      if (boundary.status === "supported") {
-        acc.supported += 1;
-      } else if (boundary.status === "limited") {
-        acc.limited += 1;
-      } else {
-        acc.fallbackOnly += 1;
-      }
-      return acc;
-    },
-    { supported: 0, limited: 0, fallbackOnly: 0 },
-  );
+  const rustCapabilitySummary = await summarizeRustCapabilityState(repoRoot);
+  const rustFreshnessProbe = await probeRustEngineStatus(repoRoot);
+  const parserFreshnessSummary: RustParserFreshnessView = rustFreshnessProbe.ok && rustFreshnessProbe.freshness
+    ? {
+      source: "rust_status",
+      available: true,
+      summary: rustFreshnessProbe.freshness,
+    }
+    : {
+      source: "rust_status",
+      available: false,
+      reason: rustFreshnessProbe.unavailableReason ?? "rust status output did not expose parser freshness summary",
+    };
+
+  const capabilityStateSummary = rustCapabilitySummary.available
+    ? rustCapabilitySummary.states
+    : {
+      supported: 0,
+      partial: 0,
+      bestEffort: 0,
+      unsupported: 0,
+    };
 
   const installDistributionReasons: string[] = [];
   const runtimeWorkspaceReasons: string[] = [];
@@ -374,10 +413,36 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     `  rule_scan: ${qualityGateAvailability.gates.rule_scan.availability}`,
     `  security_scan: ${qualityGateAvailability.gates.security_scan.availability}`,
     "",
-    "Language support boundaries:",
-    `  supported: ${languageSupportSummary.supported}`,
-    `  limited: ${languageSupportSummary.limited}`,
-    `  fallback-only: ${languageSupportSummary.fallbackOnly}`,
+    "Capability state (Rust truth):",
+    rustCapabilitySummary.available
+      ? `  source: rust bridge capability matrix`
+      : "  source: rust bridge capability matrix unavailable",
+    rustCapabilitySummary.available
+      ? `  supported: ${capabilityStateSummary.supported}`
+      : `  reason: ${rustCapabilitySummary.reason}`,
+    rustCapabilitySummary.available
+      ? `  partial: ${capabilityStateSummary.partial}`
+      : "  action: run a Rust-backed knowledge query (dh ask/dh explain) to surface capability details",
+    rustCapabilitySummary.available
+      ? `  best-effort: ${capabilityStateSummary.bestEffort}`
+      : "  note: this surface is bounded and will not infer capability from TS extraction heuristics",
+    rustCapabilitySummary.available
+      ? `  unsupported: ${capabilityStateSummary.unsupported}`
+      : "  unsupported: capability summary not reported on this surface",
+    "",
+    "Parser freshness (Rust truth):",
+    parserFreshnessSummary.available
+      ? "  source: rust-engine status"
+      : "  source: rust-engine status unavailable",
+    parserFreshnessSummary.available
+      ? `  condition: ${parserFreshnessSummary.summary.condition}`
+      : `  reason: ${parserFreshnessSummary.reason}`,
+    parserFreshnessSummary.available
+      ? `  why: ${parserFreshnessSummary.summary.reason}`
+      : "  action: run cargo run -q -p dh-engine -- status --workspace <repo> from rust-engine",
+    parserFreshnessSummary.available
+      ? `  counts: refreshed=${parserFreshnessSummary.summary.refreshedCurrentFiles} retained=${parserFreshnessSummary.summary.retainedCurrentFiles} degraded=${parserFreshnessSummary.summary.degradedPartialFiles} not_current=${parserFreshnessSummary.summary.notCurrentFiles}`
+      : "  unsupported: parser freshness summary not reported on this surface",
     "",
     "Lifecycle classification:",
     `  install/distribution: ${installDistributionStatus}${installDistributionReasons.length > 0 ? ` — ${installDistributionReasons.join(" ")}` : ""}`,
@@ -429,7 +494,8 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
           reasons: capabilityToolingReasons,
         },
       },
-      languageSupportBoundaries,
+      capabilitySummary: rustCapabilitySummary,
+      parserFreshnessSummary,
       providerCoverage: {
         providersWithoutModels,
         totalProviders: providers.length,
@@ -482,11 +548,32 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
       ruleScanAvailability: qualityGateAvailability.gates.rule_scan.availability,
       securityScanAvailability: qualityGateAvailability.gates.security_scan.availability,
       actionCount: actions.length,
-      languageSupportBoundaries: languageSupportBoundaries.map((boundary) => ({
-        language: boundary.language,
-        status: boundary.status,
-      })),
-      languageSupportSummary,
+      capabilitySummary: rustCapabilitySummary,
+      parserFreshnessSummary,
+      capabilityStateSummary,
     },
+  };
+}
+
+async function summarizeRustCapabilityState(repoRoot: string): Promise<RustCapabilitySummary> {
+  const probe = await probeRustCapabilitySummary(repoRoot);
+  if (!probe.ok) {
+    return {
+      source: "rust_bridge",
+      available: false,
+      reason: probe.unavailableReason,
+    };
+  }
+
+  return {
+    source: "rust_bridge",
+    available: true,
+    states: {
+      supported: probe.summary.supported,
+      partial: probe.summary.partial,
+      bestEffort: probe.summary.bestEffort,
+      unsupported: probe.summary.unsupported,
+    },
+    capabilityCount: probe.summary.capabilityCount,
   };
 }

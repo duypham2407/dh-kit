@@ -1,11 +1,11 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use dh_indexer::{IndexWorkspaceRequest, Indexer, IndexerApi};
-use dh_indexer::parity::{parity_summary_lines, write_report_json, ParityHarness};
 use dh_storage::{Database, IndexStateRepository};
-use dh_types::{IndexRunStatus, IndexState};
+use dh_types::{BenchmarkClass, IndexRunStatus, IndexState};
 use std::path::PathBuf;
 
+mod benchmark;
 mod bridge;
 
 const DEFAULT_DB_NAME: &str = "dh-index.db";
@@ -43,10 +43,41 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    Benchmark {
+        #[arg(long, value_enum)]
+        class: BenchmarkClassArg,
+        #[arg(long)]
+        workspace: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     Serve {
         #[arg(long, default_value = ".")]
         workspace: PathBuf,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum BenchmarkClassArg {
+    ColdFullIndex,
+    WarmNoChangeIndex,
+    IncrementalReindex,
+    ColdQuery,
+    WarmQuery,
+    ParityBenchmark,
+}
+
+impl From<BenchmarkClassArg> for BenchmarkClass {
+    fn from(value: BenchmarkClassArg) -> Self {
+        match value {
+            BenchmarkClassArg::ColdFullIndex => BenchmarkClass::ColdFullIndex,
+            BenchmarkClassArg::WarmNoChangeIndex => BenchmarkClass::WarmNoChangeIndex,
+            BenchmarkClassArg::IncrementalReindex => BenchmarkClass::IncrementalReindex,
+            BenchmarkClassArg::ColdQuery => BenchmarkClass::ColdQuery,
+            BenchmarkClassArg::WarmQuery => BenchmarkClass::WarmQuery,
+            BenchmarkClassArg::ParityBenchmark => BenchmarkClass::ParityBenchmark,
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -117,7 +148,33 @@ fn main() -> Result<()> {
                     println!("dirty_files: {}", state.dirty_files);
                     println!("deleted_files: {}", state.deleted_files);
                     println!("queued_embeddings: {}", state.queued_embeddings);
-                    println!("last_error: {}", state.last_error.unwrap_or_else(|| "<none>".to_string()));
+                    let freshness_counts = db.freshness_state_counts(workspace_id)?;
+                    let refreshed_current_files = freshness_counts.refreshed_current;
+                    let retained_current_files = freshness_counts.retained_current;
+                    let degraded_partial_files = freshness_counts.degraded_partial;
+                    let not_current_files = freshness_counts.not_current;
+                    println!("freshness_scope: workspace");
+                    println!(
+                        "freshness_counts: refreshed_current={} retained_current={} degraded_partial={} not_current={}",
+                        refreshed_current_files,
+                        retained_current_files,
+                        degraded_partial_files,
+                        not_current_files
+                    );
+                    let freshness_condition = if not_current_files > 0 {
+                        "not_current"
+                    } else if degraded_partial_files > 0 {
+                        "degraded_partial"
+                    } else if refreshed_current_files > 0 {
+                        "refreshed_current"
+                    } else {
+                        "retained_current"
+                    };
+                    println!("freshness_condition: {}", freshness_condition);
+                    println!(
+                        "last_error: {}",
+                        state.last_error.unwrap_or_else(|| "<none>".to_string())
+                    );
                 }
                 None => {
                     println!("no index state found for workspace_id={workspace_id}");
@@ -132,7 +189,10 @@ fn main() -> Result<()> {
                 anyhow::bail!("workspace path does not exist: {}", workspace.display());
             }
             if !workspace.is_dir() {
-                anyhow::bail!("workspace path must be a directory: {}", workspace.display());
+                anyhow::bail!(
+                    "workspace path must be a directory: {}",
+                    workspace.display()
+                );
             }
 
             let workspace = workspace.canonicalize()?;
@@ -201,19 +261,52 @@ fn main() -> Result<()> {
                 anyhow::bail!("workspace path does not exist: {}", workspace.display());
             }
             if !workspace.is_dir() {
-                anyhow::bail!("workspace path must be a directory: {}", workspace.display());
+                anyhow::bail!(
+                    "workspace path must be a directory: {}",
+                    workspace.display()
+                );
             }
 
-            let fixture_root = workspace.canonicalize()?;
-            let harness = ParityHarness::new(fixture_root);
-            let report = harness.run()?;
+            let response = benchmark::run_benchmark(benchmark::BenchmarkRunRequest {
+                class: BenchmarkClass::ParityBenchmark,
+                workspace,
+            })?;
 
-            for line in parity_summary_lines(&report) {
+            for line in benchmark::benchmark_summary_lines(&response.artifact) {
                 println!("{}", line);
             }
 
             if let Some(output_path) = output {
-                write_report_json(&report, &output_path)?;
+                benchmark::write_suite_json(&response.artifact, &output_path)?;
+                println!("report_json: {}", output_path.display());
+            }
+        }
+        Commands::Benchmark {
+            class,
+            workspace,
+            output,
+        } => {
+            if !workspace.exists() {
+                anyhow::bail!("workspace path does not exist: {}", workspace.display());
+            }
+            if !workspace.is_dir() {
+                anyhow::bail!(
+                    "workspace path must be a directory: {}",
+                    workspace.display()
+                );
+            }
+
+            let response = benchmark::run_benchmark(benchmark::BenchmarkRunRequest {
+                class: class.into(),
+                workspace,
+            })?;
+
+            for line in benchmark::benchmark_summary_lines(&response.artifact) {
+                println!("{}", line);
+            }
+
+            if let Some(output_path) = output {
+                benchmark::write_suite_json(&response.artifact, &output_path)?;
                 println!("report_json: {}", output_path.display());
             }
         }

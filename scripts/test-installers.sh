@@ -33,6 +33,28 @@ fail() {
   echo "  FAIL: $1" >&2
 }
 
+assert_contains() {
+  haystack="$1"
+  needle="$2"
+  label="$3"
+  if printf '%s\n' "$haystack" | grep "$needle" >/dev/null 2>&1; then
+    pass "$label"
+  else
+    fail "$label"
+  fi
+}
+
+assert_not_contains() {
+  haystack="$1"
+  needle="$2"
+  label="$3"
+  if printf '%s\n' "$haystack" | grep "$needle" >/dev/null 2>&1; then
+    fail "$label"
+  else
+    pass "$label"
+  fi
+}
+
 # Resolve binary for current platform
 BIN_PATH=$($SCRIPT_DIR/resolve-release-binary.sh "$RELEASE_DIR")
 BIN_NAME=$(basename "$BIN_PATH")
@@ -57,12 +79,15 @@ fi
 
 echo "=== Test: Fresh install ==="
 INSTALL_DIR=$(mktemp_dir)
-sh "$SCRIPT_DIR/install.sh" "$BIN_PATH" "$INSTALL_DIR"
+INSTALL_OUTPUT=$(sh "$SCRIPT_DIR/install.sh" "$BIN_PATH" "$INSTALL_DIR" 2>&1)
 if [ -x "$INSTALL_DIR/dh" ]; then
   pass "binary installed and executable"
 else
   fail "binary not found or not executable"
 fi
+assert_contains "$INSTALL_OUTPUT" "surface: lifecycle install (install.sh direct-binary)" "install.sh prints lifecycle surface"
+assert_contains "$INSTALL_OUTPUT" "condition: completed" "install.sh reports completed condition"
+assert_contains "$INSTALL_OUTPUT" "release manifest/file-size verification is not performed in direct-binary install paths" "install.sh reports bounded verification limitation"
 
 echo "=== Test: Upgrade creates backup ==="
 INSTALL_DIR2=$(mktemp_dir)
@@ -76,6 +101,20 @@ if [ "$backup_count" -ge 1 ]; then
 else
   fail "no backup created on upgrade"
 fi
+
+echo "=== Test: upgrade.sh reports mutation on post-install bootstrap failure ==="
+UPGRADE_FAIL_DIR=$(mktemp_dir)
+sh "$SCRIPT_DIR/install.sh" "$BIN_PATH" "$UPGRADE_FAIL_DIR" >/dev/null 2>&1
+UPGRADE_FAIL_OUTPUT=""
+if UPGRADE_FAIL_OUTPUT=$(sh "$SCRIPT_DIR/upgrade.sh" --with-rust-tools "$BIN_PATH" "$UPGRADE_FAIL_DIR" 2>&1); then
+  fail "upgrade.sh unexpectedly succeeded without rust bootstrap consent"
+else
+  pass "upgrade.sh failed when post-install rust bootstrap consent was missing"
+fi
+assert_contains "$UPGRADE_FAIL_OUTPUT" "condition: failed" "upgrade.sh reports failed when install mutates then optional post-install bootstrap fails"
+assert_contains "$UPGRADE_FAIL_OUTPUT" "install stage failed after binary replacement/mutation" "upgrade.sh reports post-mutation install-stage failure class"
+assert_contains "$UPGRADE_FAIL_OUTPUT" "upgrade mutation occurred at" "upgrade.sh reports mutation occurred for post-install failure path"
+assert_not_contains "$UPGRADE_FAIL_OUTPUT" "existing target remains unchanged when install stage fails before replacement" "upgrade.sh no longer overclaims unchanged target for post-mutation failure"
 
 echo "=== Test: Checksum verification (correct) ==="
 INSTALL_DIR3=$(mktemp_dir)
@@ -120,7 +159,8 @@ fi
 
 echo "=== Test: Install from release directory ==="
 INSTALL_DIR7=$(mktemp_dir)
-if sh "$SCRIPT_DIR/install-from-release.sh" "$RELEASE_DIR" "$INSTALL_DIR7" >/dev/null 2>&1; then
+INSTALL_FROM_RELEASE_OUTPUT=""
+if INSTALL_FROM_RELEASE_OUTPUT=$(sh "$SCRIPT_DIR/install-from-release.sh" "$RELEASE_DIR" "$INSTALL_DIR7" 2>&1); then
   if [ -x "$INSTALL_DIR7/dh" ]; then
     pass "install-from-release.sh succeeded"
   else
@@ -129,6 +169,35 @@ if sh "$SCRIPT_DIR/install-from-release.sh" "$RELEASE_DIR" "$INSTALL_DIR7" >/dev
 else
   fail "install-from-release.sh failed"
 fi
+assert_contains "$INSTALL_FROM_RELEASE_OUTPUT" "surface: lifecycle install (install-from-release)" "install-from-release emits lifecycle surface"
+assert_contains "$INSTALL_FROM_RELEASE_OUTPUT" "condition: completed" "install-from-release reports completed"
+assert_contains "$INSTALL_FROM_RELEASE_OUTPUT" "tier=release-directory-verified" "install-from-release reports strong verification tier"
+assert_contains "$INSTALL_FROM_RELEASE_OUTPUT" "runtime/workspace readiness is not verified by install lifecycle" "install-from-release keeps doctor boundary explicit"
+
+echo "=== Test: verify-release-artifacts structured output ==="
+VERIFY_JSON=$(sh "$SCRIPT_DIR/verify-release-artifacts.sh" --json "$RELEASE_DIR")
+VERIFY_TIER=$(node -e 'const d=JSON.parse(process.argv[1]); process.stdout.write(String(d.verificationTier));' "$VERIFY_JSON")
+VERIFY_MANIFEST=$(node -e 'const d=JSON.parse(process.argv[1]); process.stdout.write(String(d.checks?.manifest));' "$VERIFY_JSON")
+VERIFY_SIGNATURE=$(node -e 'const d=JSON.parse(process.argv[1]); process.stdout.write(String(d.signature?.status));' "$VERIFY_JSON")
+if [ "$VERIFY_TIER" = "release-directory-verified" ] && [ "$VERIFY_MANIFEST" = "true" ] && [ -n "$VERIFY_SIGNATURE" ]; then
+  pass "verify-release-artifacts --json exposes structured verification facts"
+else
+  fail "verify-release-artifacts --json missing required verification fields"
+fi
+
+echo "=== Test: Upgrade from release directory ==="
+INSTALL_DIR_UPGRADE=$(mktemp_dir)
+sh "$SCRIPT_DIR/install-from-release.sh" "$RELEASE_DIR" "$INSTALL_DIR_UPGRADE" >/dev/null 2>&1
+UPGRADE_FROM_RELEASE_OUTPUT=""
+if UPGRADE_FROM_RELEASE_OUTPUT=$(sh "$SCRIPT_DIR/upgrade-from-release.sh" "$RELEASE_DIR" "$INSTALL_DIR_UPGRADE" 2>&1); then
+  pass "upgrade-from-release.sh succeeded"
+else
+  fail "upgrade-from-release.sh failed"
+fi
+assert_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "surface: lifecycle upgrade (upgrade-from-release)" "upgrade-from-release emits lifecycle surface"
+assert_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "condition: completed" "upgrade-from-release reports completed"
+assert_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "rollback=" "upgrade-from-release reports rollback outcome"
+assert_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "runtime/workspace readiness is not verified by upgrade lifecycle" "upgrade-from-release keeps doctor boundary explicit"
 
 echo "=== Test: install-from-release fails without manifest ==="
 BAD_RELEASE_DIR=$(mktemp_dir)
@@ -148,6 +217,54 @@ if sh "$SCRIPT_DIR/upgrade-from-release.sh" "$BAD_RELEASE_DIR2" "$(mktemp_dir)" 
   fail "upgrade-from-release.sh accepted release dir without manifest"
 else
   pass "upgrade-from-release.sh rejected release dir without manifest"
+fi
+
+echo "=== Test: GitHub install fixture seam ==="
+GITHUB_FIXTURE=$(mktemp_dir)
+mkdir -p "$GITHUB_FIXTURE/latest/download"
+cp "$BIN_PATH" "$GITHUB_FIXTURE/latest/download/$BIN_NAME"
+(
+  cd "$GITHUB_FIXTURE/latest/download"
+  shasum -a 256 "$BIN_NAME" > SHA256SUMS
+)
+GITHUB_INSTALL_DIR=$(mktemp_dir)
+GITHUB_INSTALL_OUTPUT=""
+if GITHUB_INSTALL_OUTPUT=$(DH_RELEASE_BASE_URL="file://$GITHUB_FIXTURE" sh "$SCRIPT_DIR/install-github-release.sh" latest "$GITHUB_INSTALL_DIR" 2>&1); then
+  if [ -x "$GITHUB_INSTALL_DIR/dh" ]; then
+    pass "install-github-release.sh succeeded with fixture seam"
+  else
+    fail "install-github-release.sh did not produce executable"
+  fi
+else
+  fail "install-github-release.sh failed with fixture seam"
+fi
+assert_contains "$GITHUB_INSTALL_OUTPUT" "surface: lifecycle install (install-github-release)" "install-github-release emits lifecycle surface"
+assert_contains "$GITHUB_INSTALL_OUTPUT" "condition: completed" "install-github-release reports completed"
+assert_contains "$GITHUB_INSTALL_OUTPUT" "manifest/file-size verification is not performed in GitHub release install path" "install-github-release reports bounded verification limitation"
+assert_contains "$GITHUB_INSTALL_OUTPUT" "signature verification is not performed in GitHub release install path" "install-github-release reports signature limitation"
+assert_contains "$GITHUB_INSTALL_OUTPUT" "Windows runtime installer parity remains unsupported" "install-github-release reports unsupported Windows parity across supported hosts"
+
+echo "=== Test: GitHub upgrade fixture seam ==="
+GITHUB_UPGRADE_OUTPUT=""
+if GITHUB_UPGRADE_OUTPUT=$(DH_RELEASE_BASE_URL="file://$GITHUB_FIXTURE" sh "$SCRIPT_DIR/upgrade-github-release.sh" latest "$GITHUB_INSTALL_DIR" 2>&1); then
+  pass "upgrade-github-release.sh succeeded with fixture seam"
+else
+  fail "upgrade-github-release.sh failed with fixture seam"
+fi
+assert_contains "$GITHUB_UPGRADE_OUTPUT" "surface: lifecycle upgrade (upgrade-github-release)" "upgrade-github-release emits lifecycle surface"
+assert_contains "$GITHUB_UPGRADE_OUTPUT" "condition: completed" "upgrade-github-release reports completed"
+assert_contains "$GITHUB_UPGRADE_OUTPUT" "manifest/file-size verification is not performed in GitHub release upgrade path" "upgrade-github-release reports bounded verification limitation"
+assert_contains "$GITHUB_UPGRADE_OUTPUT" "Windows runtime installer parity remains unsupported" "upgrade-github-release reports unsupported Windows parity across supported hosts"
+
+echo "=== Test: GitHub install rejects checksum drift ==="
+GITHUB_BAD_FIXTURE=$(mktemp_dir)
+mkdir -p "$GITHUB_BAD_FIXTURE/latest/download"
+cp "$BIN_PATH" "$GITHUB_BAD_FIXTURE/latest/download/$BIN_NAME"
+printf '0000000000000000000000000000000000000000000000000000000000000000  %s\n' "$BIN_NAME" > "$GITHUB_BAD_FIXTURE/latest/download/SHA256SUMS"
+if DH_RELEASE_BASE_URL="file://$GITHUB_BAD_FIXTURE" sh "$SCRIPT_DIR/install-github-release.sh" latest "$(mktemp_dir)" >/dev/null 2>&1; then
+  fail "install-github-release.sh accepted checksum drift"
+else
+  pass "install-github-release.sh rejected checksum drift"
 fi
 
 echo "=== Test: Check dev prerequisites (no Rust install default) ==="
@@ -211,12 +328,17 @@ fi
 echo "=== Test: Uninstall ==="
 INSTALL_DIR8=$(mktemp_dir)
 sh "$SCRIPT_DIR/install.sh" "$BIN_PATH" "$INSTALL_DIR8"
-sh "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR8"
+UNINSTALL_OUTPUT=$(sh "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR8" 2>&1)
 if [ ! -f "$INSTALL_DIR8/dh" ]; then
   pass "uninstall removed binary"
 else
   fail "uninstall did not remove binary"
 fi
+assert_contains "$UNINSTALL_OUTPUT" "condition: completed" "uninstall reports completed when deletion occurs"
+
+echo "=== Test: Uninstall noop ==="
+UNINSTALL_NOOP_OUTPUT=$(sh "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR8" 2>&1)
+assert_contains "$UNINSTALL_NOOP_OUTPUT" "condition: noop" "uninstall reports noop when target is absent"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

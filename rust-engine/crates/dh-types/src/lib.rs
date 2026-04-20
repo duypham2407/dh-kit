@@ -32,6 +32,33 @@ pub enum ParseStatus {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FreshnessState {
+    RetainedCurrent,
+    RefreshedCurrent,
+    DegradedPartial,
+    NotCurrent,
+    Deleted,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FreshnessReason {
+    UnchangedUnaffected,
+    ContentChanged,
+    StructureChanged,
+    PublicApiChanged,
+    DependentInvalidated,
+    ResolutionScopeChanged,
+    DeletedPath,
+    PathInvalidated,
+    RecoverableParseIssues,
+    FatalReadFailure,
+    FatalParseFailure,
+    FatalPersistFailure,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Span {
     pub start_byte: u32,
     pub end_byte: u32,
@@ -61,6 +88,9 @@ pub struct File {
     pub is_barrel: bool,
     pub last_indexed_at_unix_ms: Option<i64>,
     pub deleted_at_unix_ms: Option<i64>,
+    pub freshness_state: FreshnessState,
+    pub freshness_reason: Option<FreshnessReason>,
+    pub last_freshness_run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -367,6 +397,58 @@ pub enum QuestionClass {
     Impact,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum LanguageCapabilityState {
+    Supported,
+    Partial,
+    BestEffort,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum LanguageCapability {
+    ParseDiagnostics,
+    StructuralIndexing,
+    SymbolSearch,
+    DefinitionLookup,
+    Dependencies,
+    Dependents,
+    References,
+    CallHierarchy,
+    TraceFlow,
+    Impact,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageCapabilityEntry {
+    pub language: LanguageId,
+    pub capability: LanguageCapability,
+    pub state: LanguageCapabilityState,
+    pub reason: String,
+    pub parser_backed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageCapabilityLanguageSummary {
+    pub language: LanguageId,
+    pub state: LanguageCapabilityState,
+    pub reason: String,
+    pub parser_backed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageCapabilitySummary {
+    pub capability: LanguageCapability,
+    pub weakest_state: LanguageCapabilityState,
+    pub languages: Vec<LanguageCapabilityLanguageSummary>,
+    pub retrieval_only: bool,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceKind {
@@ -426,4 +508,161 @@ pub struct EvidencePacket {
     pub evidence: Vec<EvidenceEntry>,
     pub gaps: Vec<String>,
     pub bounds: EvidenceBounds,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BenchmarkClass {
+    ColdFullIndex,
+    WarmNoChangeIndex,
+    IncrementalReindex,
+    ColdQuery,
+    WarmQuery,
+    ParityBenchmark,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BenchmarkCorpusKind {
+    CuratedFixture,
+    DhRepo,
+    ExternalRealRepo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BenchmarkCorpusRef {
+    pub kind: BenchmarkCorpusKind,
+    pub label: String,
+    pub revision_or_snapshot: String,
+    pub root_path: String,
+    pub query_set_label: Option<String>,
+    pub mutation_set_label: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BenchmarkPreparationState {
+    pub state_label: String,
+    pub cleared_reusable_state: Option<bool>,
+    pub preserved_reusable_state: Option<bool>,
+    pub baseline_run_ref: Option<String>,
+    pub mutation_set_label: Option<String>,
+    pub mutation_paths: Vec<String>,
+    pub query_set_label: Option<String>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BenchmarkRunMetadata {
+    pub run_id: String,
+    pub benchmark_class: BenchmarkClass,
+    pub suite_id: String,
+    pub started_at_unix_ms: i64,
+    pub finished_at_unix_ms: i64,
+    pub engine_version: String,
+    pub build_profile: String,
+    pub host_os: String,
+    pub host_arch: String,
+    pub cpu_count: usize,
+    pub corpus: BenchmarkCorpusRef,
+    pub preparation: BenchmarkPreparationState,
+    pub baseline_run_ref: Option<String>,
+    pub comparison_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BenchmarkResultStatus {
+    Complete,
+    Degraded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryMeasurementStatus {
+    Measured,
+    NotMeasured,
+    MeasurementFailed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MemoryMeasurement {
+    pub status: MemoryMeasurementStatus,
+    pub peak_rss_bytes: Option<u64>,
+    pub method: Option<String>,
+    pub scope: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IndexBenchmarkMetrics {
+    pub elapsed_ms: f64,
+    pub scanned_files: u64,
+    pub changed_files: u64,
+    pub reindexed_files: u64,
+    pub deleted_files: u64,
+    pub refreshed_current_files: u64,
+    pub retained_current_files: u64,
+    pub degraded_partial_files: u64,
+    pub not_current_files: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct QueryLatencyMetrics {
+    pub sample_count_requested: u32,
+    pub sample_count_completed: u32,
+    pub p50_ms: f64,
+    pub p95_ms: f64,
+    pub query_set_label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ParityBenchmarkMetrics {
+    pub total_cases: u32,
+    pub passed_cases: u32,
+    pub failed_cases: u32,
+    pub symbol_parity_pct: f32,
+    pub import_parity_pct: f32,
+    pub call_edge_parity_pct: f32,
+    pub reference_parity_pct: f32,
+    pub chunk_parity_pct: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BenchmarkComparison {
+    pub eligible: bool,
+    pub baseline_run_ref: Option<String>,
+    pub comparison_key: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BenchmarkResult {
+    pub metadata: BenchmarkRunMetadata,
+    pub status: BenchmarkResultStatus,
+    pub memory: MemoryMeasurement,
+    pub comparison: BenchmarkComparison,
+    pub correctness: Option<ParityBenchmarkMetrics>,
+    pub index_timing: Option<IndexBenchmarkMetrics>,
+    pub query_latency: Option<QueryLatencyMetrics>,
+    pub degradation_notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BenchmarkSummary {
+    pub local_evidence_statement: String,
+    pub corpus_summary: String,
+    pub environment_summary: String,
+    pub degraded: bool,
+    pub result_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BenchmarkSuiteArtifact {
+    pub schema_version: u32,
+    pub suite_id: String,
+    pub generated_at_unix_ms: i64,
+    pub summary: BenchmarkSummary,
+    pub results: Vec<BenchmarkResult>,
 }

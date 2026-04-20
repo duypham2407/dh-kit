@@ -42,6 +42,11 @@ describe("runDoctorCommand", () => {
     });
     expect(payload.diagnostics.providerCoverage.totalProviders).toBeGreaterThan(0);
     expect(payload.diagnostics.providerCoverage.totalModels).toBeGreaterThan(0);
+    expect(payload.diagnostics.capabilitySummary).toBeDefined();
+    expect(payload.diagnostics.parserFreshnessSummary).toBeDefined();
+    expect(payload.snapshot.capabilitySummary).toBeDefined();
+    expect(payload.snapshot.parserFreshnessSummary).toBeDefined();
+    expect(payload.snapshot.capabilityStateSummary).toBeDefined();
     expect(payload.debugDumpPath).toBeUndefined();
   });
 

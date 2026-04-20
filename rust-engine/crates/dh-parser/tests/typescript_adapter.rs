@@ -1,6 +1,6 @@
 use dh_parser::{
-    adapters::typescript::TypeScriptAdapter, pool::ParserPool, registry::LanguageRegistry, ExtractionContext,
-    LanguageAdapter,
+    adapters::typescript::TypeScriptAdapter, pool::ParserPool, registry::LanguageRegistry,
+    ExtractionContext, LanguageAdapter,
 };
 use dh_types::{CallKind, ChunkKind, ImportKind, LanguageId, ReferenceKind, SymbolKind};
 use std::path::Path;
@@ -73,12 +73,18 @@ fn registry_and_pool_dispatch_for_ts_js_variants() {
 
     let samples = [
         (LanguageId::TypeScript, "export const value: number = 1;"),
-        (LanguageId::Tsx, "export const App = () => <div>Hello</div>;"),
+        (
+            LanguageId::Tsx,
+            "export const App = () => <div>Hello</div>;",
+        ),
         (
             LanguageId::JavaScript,
             "const dep = require('./dep'); function run(){ dep(); }",
         ),
-        (LanguageId::Jsx, "function App(){ return <section/>; } export default App;"),
+        (
+            LanguageId::Jsx,
+            "function App(){ return <section/>; } export default App;",
+        ),
     ];
 
     let mut pool = ParserPool::new();
@@ -104,54 +110,46 @@ fn extracts_normalized_facts_from_ts_fixture() {
     let (parsed, ctx) = parse_with_adapter(&adapter, "tests/fixtures/sample.ts", source);
 
     let symbols = adapter.extract_symbols(&ctx, &parsed.tree);
-    assert!(
-        symbols
-            .iter()
-            .any(|symbol| symbol.kind == SymbolKind::Function && symbol.name == "helper")
-    );
-    assert!(
-        symbols
-            .iter()
-            .any(|symbol| symbol.kind == SymbolKind::Class && symbol.name == "Service")
-    );
-    assert!(
-        symbols
-            .iter()
-            .any(|symbol| symbol.kind == SymbolKind::Method && symbol.name == "method")
-    );
-    assert!(
-        symbols
-            .iter()
-            .any(|symbol| symbol.kind == SymbolKind::Interface && symbol.name == "User")
-    );
-    assert!(
-        symbols
-            .iter()
-            .any(|symbol| symbol.kind == SymbolKind::TypeAlias && symbol.name == "Id")
-    );
-    assert!(
-        symbols
-            .iter()
-            .any(|symbol| symbol.kind == SymbolKind::Enum && symbol.name == "Role")
-    );
-    assert!(
-        symbols
-            .iter()
-            .any(|symbol| matches!(symbol.kind, SymbolKind::Constant | SymbolKind::Variable))
-    );
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol.kind == SymbolKind::Function && symbol.name == "helper"));
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol.kind == SymbolKind::Class && symbol.name == "Service"));
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol.kind == SymbolKind::Method && symbol.name == "method"));
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol.kind == SymbolKind::Interface && symbol.name == "User"));
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol.kind == SymbolKind::TypeAlias && symbol.name == "Id"));
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol.kind == SymbolKind::Enum && symbol.name == "Role"));
+    assert!(symbols
+        .iter()
+        .any(|symbol| matches!(symbol.kind, SymbolKind::Constant | SymbolKind::Variable)));
 
     let imports = adapter.extract_imports(&ctx, &parsed.tree);
-    assert!(imports.iter().any(|item| item.kind == ImportKind::EsmDefault));
+    assert!(imports
+        .iter()
+        .any(|item| item.kind == ImportKind::EsmDefault));
     assert!(imports.iter().any(|item| item.kind == ImportKind::EsmNamed));
-    assert!(imports.iter().any(|item| item.kind == ImportKind::EsmNamespace));
-    assert!(imports.iter().any(|item| item.kind == ImportKind::EsmSideEffect));
+    assert!(imports
+        .iter()
+        .any(|item| item.kind == ImportKind::EsmNamespace));
+    assert!(imports
+        .iter()
+        .any(|item| item.kind == ImportKind::EsmSideEffect));
     assert!(imports.iter().any(|item| item.kind == ImportKind::ReExport));
-    assert!(imports.iter().any(|item| item.kind == ImportKind::CommonJsRequire));
-    assert!(
-        imports
-            .iter()
-            .any(|item| item.kind == ImportKind::ConditionalRequire)
-    );
+    assert!(imports
+        .iter()
+        .any(|item| item.kind == ImportKind::CommonJsRequire));
+    assert!(imports
+        .iter()
+        .any(|item| item.kind == ImportKind::ConditionalRequire));
     assert!(imports.iter().any(|item| item.kind == ImportKind::Dynamic));
     assert!(imports.iter().any(|item| item.is_type_only));
     assert!(imports.iter().any(|item| {
@@ -180,9 +178,15 @@ fn extracts_normalized_facts_from_ts_fixture() {
     assert!(calls.iter().any(|item| item.kind == CallKind::Constructor));
 
     let references = adapter.extract_references(&ctx, &parsed.tree, &symbols);
-    assert!(references.iter().any(|item| item.kind == ReferenceKind::Read));
-    assert!(references.iter().any(|item| item.kind == ReferenceKind::Write));
-    assert!(references.iter().any(|item| item.kind == ReferenceKind::Type));
+    assert!(references
+        .iter()
+        .any(|item| item.kind == ReferenceKind::Read));
+    assert!(references
+        .iter()
+        .any(|item| item.kind == ReferenceKind::Write));
+    assert!(references
+        .iter()
+        .any(|item| item.kind == ReferenceKind::Type));
     assert!(!references.iter().any(|item| item.target_name == "alpha"));
     assert!(!references.iter().any(|item| item.target_name == "beta"));
 
@@ -194,11 +198,9 @@ fn extracts_normalized_facts_from_ts_fixture() {
     assert!(chunks.iter().any(|item| item.kind == ChunkKind::FileHeader));
     assert!(chunks.iter().any(|item| item.kind == ChunkKind::Symbol));
     assert!(chunks.iter().any(|item| item.kind == ChunkKind::Method));
-    assert!(
-        chunks
-            .iter()
-            .any(|item| item.kind == ChunkKind::ClassSummary)
-    );
+    assert!(chunks
+        .iter()
+        .any(|item| item.kind == ChunkKind::ClassSummary));
     assert!(
         header.span.end_byte >= header.span.start_byte
             && (header.content.is_empty() || header.span.end_byte > header.span.start_byte)
@@ -207,11 +209,9 @@ fn extracts_normalized_facts_from_ts_fixture() {
     let mut imports_for_resolve = imports.clone();
     let unresolved = adapter.resolve_imports(&ctx, &mut imports_for_resolve, &symbols);
     assert!(!unresolved.is_empty());
-    assert!(
-        imports_for_resolve
-            .iter()
-            .all(|item| item.resolution_error.is_some())
-    );
+    assert!(imports_for_resolve
+        .iter()
+        .all(|item| item.resolution_error.is_some()));
 
     let mut refs_for_bind = references.clone();
     let mut calls_for_bind = calls.clone();
@@ -298,11 +298,9 @@ fn parses_tsx_js_jsx_sources() {
 
         let imports = adapter.extract_imports(&ctx, &parsed.tree);
         if language == LanguageId::JavaScript {
-            assert!(
-                imports
-                    .iter()
-                    .any(|item| item.kind == ImportKind::CommonJsRequire)
-            );
+            assert!(imports
+                .iter()
+                .any(|item| item.kind == ImportKind::CommonJsRequire));
         }
 
         let exports = adapter.extract_exports(&ctx, &parsed.tree);

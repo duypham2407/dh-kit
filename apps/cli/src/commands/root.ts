@@ -13,7 +13,7 @@ import { DH_VERSION } from "../version.js";
 import { ChunksRepo } from "../../../../packages/storage/src/sqlite/repositories/chunks-repo.js";
 import { ConfigRepo } from "../../../../packages/storage/src/sqlite/repositories/config-repo.js";
 
-const HELP = `dh <command> [args]\n\nCommands:\n  quick <task> [--json]\n  delivery <goal> [--json]\n  migrate <goal> [--json]\n  ask <question> [--json]\n  explain <symbol> [--json]\n  trace <target> [--json]\n  semantic-cleanup --mode <dry-run|apply> [--since <iso>] [--until <iso>] [--batch-size <n>] [--examples <n>] [--json]\n  index\n  doctor [--json] [--debug-dump [path]]\n  clean --yes\n  config --agent\n  config --verify-agent [quick|delivery|migration]\n  config --semantic [always|auto|off]\n  config --embedding\n  config --show\n  --version\n\nFirst-time setup:\n  1. dh doctor\n  2. dh index\n  3. dh ask "how does auth work?"\n\nExamples:\n  dh ask "where is session state persisted?"\n  dh explain "runIndexWorkflow"\n  dh trace "authentication flow"\n  dh semantic-cleanup --mode dry-run --json\n  dh quick "fix semantic search ordering bug"\n  dh clean --yes`;
+const HELP = `dh <command> [args]\n\nCommands:\n  quick <task> [--json]\n  delivery <goal> [--json]\n  migrate <goal> [--json]\n  ask <question> [--json]\n  explain <symbol> [--json]\n  trace <target> [--json]   (currently returns unsupported in bounded mode)\n  semantic-cleanup --mode <dry-run|apply> [--since <iso>] [--until <iso>] [--batch-size <n>] [--examples <n>] [--json]\n  index\n  doctor [--json] [--debug-dump [path]]\n  clean --yes\n  config --agent\n  config --verify-agent [quick|delivery|migration]\n  config --semantic [always|auto|off]\n  config --embedding\n  config --show\n  --version\n\nFirst-time setup:\n  1. dh doctor\n  2. dh index\n  3. dh ask "how does auth work?"\n\nExamples:\n  dh ask "where is session state persisted?"\n  dh explain "runIndexWorkflow"   # definition-oriented query path\n  dh trace "authentication flow"   # expected to return unsupported in bounded mode\n  dh semantic-cleanup --mode dry-run --json\n  dh quick "fix semantic search ordering bug"\n  dh clean --yes`;
 
 export async function runCli(args: string[], repoRoot: string): Promise<number> {
   const [command, ...rest] = args;
@@ -81,7 +81,7 @@ function buildHomeScreen(repoRoot: string): string {
       "condition: degraded",
       "why: repository index has not been created yet",
       "works: doctor and indexing commands are available",
-      "limited: ask/explain/trace quality is limited before indexing",
+      "limited: ask/explain are limited before indexing; trace currently remains unsupported in bounded mode",
       "next: run dh doctor, then dh index",
       "",
       "first-run onboarding:",
@@ -97,15 +97,15 @@ function buildHomeScreen(repoRoot: string): string {
       "surface: CLI home/onboarding",
       "condition: ready",
       "why: repository index already exists",
-      "works: ask/explain/trace commands can use indexed data",
-      "limited: provider-backed quality still depends on doctor/config state",
+      "works: ask/explain commands can use indexed data",
+      "limited: trace currently remains unsupported in bounded mode; provider-backed quality still depends on doctor/config state",
       "next: run a knowledge command such as dh ask",
       "",
       "ready to use:",
       "  try:",
       "    dh ask \"how does this project work?\"",
       "    dh explain \"runIndexWorkflow\"",
-      "    dh trace \"authentication flow\"",
+      "    dh trace \"authentication flow\"   # returns unsupported in bounded mode",
     );
   }
 

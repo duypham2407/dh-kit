@@ -14,6 +14,15 @@ if [ -z "$PLATFORM" ]; then
   PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 fi
 
+case "$PLATFORM" in
+  darwin|linux)
+    ;;
+  *)
+    echo "unsupported platform for runtime release binary install: $PLATFORM (supported: darwin, linux)" >&2
+    exit 1
+    ;;
+esac
+
 if [ -z "$ARCH" ]; then
   ARCH=$(uname -m)
 fi
@@ -24,6 +33,12 @@ case "$ARCH" in
     ;;
   x86_64)
     ARCH="amd64"
+    ;;
+  arm64|amd64)
+    ;;
+  *)
+    echo "unsupported architecture for runtime release binary install: $ARCH (supported: arm64, amd64)" >&2
+    exit 1
     ;;
 esac
 

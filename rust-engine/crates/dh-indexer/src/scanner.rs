@@ -65,7 +65,11 @@ pub fn scan_workspace(root: &Path, config: &ScanConfig) -> anyhow::Result<Vec<Fi
             continue;
         }
 
-        if !entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) {
+        if !entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
+        {
             continue;
         }
 
@@ -121,6 +125,17 @@ pub fn scan_workspace(root: &Path, config: &ScanConfig) -> anyhow::Result<Vec<Fi
 }
 
 fn detect_language(path: &Path) -> Option<LanguageId> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_ascii_lowercase());
+
+    if let Some(file_name) = file_name {
+        if is_resolution_scope_file_name(&file_name) {
+            return Some(LanguageId::Unknown);
+        }
+    }
+
     let ext = path.extension().and_then(|ext| ext.to_str())?;
     match ext {
         "ts" => Some(LanguageId::TypeScript),
@@ -129,6 +144,13 @@ fn detect_language(path: &Path) -> Option<LanguageId> {
         "jsx" => Some(LanguageId::Jsx),
         _ => None,
     }
+}
+
+fn is_resolution_scope_file_name(file_name: &str) -> bool {
+    (file_name.starts_with("tsconfig") && file_name.ends_with(".json"))
+        || file_name == "jsconfig.json"
+        || file_name == "cargo.toml"
+        || file_name == "go.mod"
 }
 
 fn normalize_rel_path(path: &Path) -> String {

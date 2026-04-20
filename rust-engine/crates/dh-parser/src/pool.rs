@@ -40,6 +40,9 @@ fn grammar_for(language: LanguageId) -> Option<tree_sitter::Language> {
         LanguageId::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         LanguageId::Tsx => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         LanguageId::JavaScript | LanguageId::Jsx => Some(tree_sitter_javascript::LANGUAGE.into()),
+        LanguageId::Python => Some(tree_sitter_python::LANGUAGE.into()),
+        LanguageId::Go => Some(tree_sitter_go::LANGUAGE.into()),
+        LanguageId::Rust => Some(tree_sitter_rust::LANGUAGE.into()),
         _ => None,
     }
 }

@@ -1,9 +1,77 @@
 #!/usr/bin/env sh
 set -eu
 
-RELEASE_DIR="${1:-dist/releases}"
+usage() {
+  cat <<'EOF' >&2
+usage: scripts/verify-release-artifacts.sh [--json] [release-dir]
+
+options:
+  --json      emit structured verification result as JSON
+EOF
+}
+
+OUTPUT_JSON=0
+RELEASE_DIR="dist/releases"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --json)
+      OUTPUT_JSON=1
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -* )
+      echo "unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      RELEASE_DIR="$1"
+      shift
+      break
+      ;;
+  esac
+done
+
+if [ $# -gt 0 ]; then
+  echo "unexpected argument: $1" >&2
+  usage
+  exit 1
+fi
+
 SHA_FILE="$RELEASE_DIR/SHA256SUMS"
 MANIFEST_FILE="$RELEASE_DIR/manifest.json"
+
+SIGNATURE_STATUS="absent"
+SIGNATURE_REASON="no signature artifacts found in release bundle"
+SIGNATURE_LIMITATIONS=""
+
+append_signature_limitation() {
+  if [ -z "$SIGNATURE_LIMITATIONS" ]; then
+    SIGNATURE_LIMITATIONS="$1"
+  else
+    SIGNATURE_LIMITATIONS="$SIGNATURE_LIMITATIONS||$1"
+  fi
+}
+
+print_info() {
+  if [ "$OUTPUT_JSON" -ne 1 ]; then
+    echo "$1"
+  fi
+}
+
+print_warning() {
+  if [ "$OUTPUT_JSON" -ne 1 ]; then
+    echo "$1" >&2
+  fi
+}
 
 if [ ! -d "$RELEASE_DIR" ]; then
   echo "release directory not found: $RELEASE_DIR" >&2
@@ -37,6 +105,10 @@ while IFS= read -r line; do
   [ -z "$line" ] && continue
 
   set -- $line
+  if [ "$#" -lt 2 ]; then
+    echo "malformed SHA256SUMS entry: $line" >&2
+    exit 1
+  fi
   expected="$1"
   name="$2"
   file="$RELEASE_DIR/$name"
@@ -120,14 +192,20 @@ for file in "$RELEASE_DIR"/dh-*.sig; do
   fi
 done
 
+if [ "$sig_found" -eq 0 ] && [ -f "$RELEASE_DIR/SHA256SUMS.sig" ]; then
+  sig_found=1
+fi
+
 if [ "$sig_found" -eq 1 ]; then
   if [ "${SKIP_GPG_VERIFY:-0}" = "1" ]; then
-    echo "warning: SKIP_GPG_VERIFY=1; skipping signature verification"
-    echo "release artifacts verified: $RELEASE_DIR"
-    exit 0
-  fi
+    SIGNATURE_STATUS="skipped"
+    SIGNATURE_REASON="signature artifacts are present but verification was skipped via SKIP_GPG_VERIFY=1"
+    append_signature_limitation "signature artifacts were present but verification was explicitly skipped"
+    print_warning "warning: SKIP_GPG_VERIFY=1; skipping signature verification"
+  elif command -v gpg >/dev/null 2>&1; then
+    SIGNATURE_STATUS="verified"
+    SIGNATURE_REASON="signature artifacts are present and were verified with gpg"
 
-  if command -v gpg >/dev/null 2>&1; then
     for sigfile in "$RELEASE_DIR"/dh-*.sig; do
       if [ ! -f "$sigfile" ]; then
         continue
@@ -141,7 +219,7 @@ if [ "$sig_found" -eq 1 ]; then
         echo "GPG signature verification FAILED: $(basename "$target")" >&2
         exit 1
       fi
-      echo "GPG signature verified: $(basename "$target")"
+      print_info "GPG signature verified: $(basename "$target")"
     done
 
     sha_sig="$RELEASE_DIR/SHA256SUMS.sig"
@@ -150,11 +228,45 @@ if [ "$sig_found" -eq 1 ]; then
         echo "GPG signature verification FAILED: SHA256SUMS" >&2
         exit 1
       fi
-      echo "GPG signature verified: SHA256SUMS"
+      print_info "GPG signature verified: SHA256SUMS"
     fi
   else
-    echo "warning: gpg not found; skipping signature verification"
+    SIGNATURE_STATUS="unavailable"
+    SIGNATURE_REASON="signature artifacts are present but gpg is unavailable on this host"
+    append_signature_limitation "signature artifacts were present but gpg was not available"
+    print_warning "warning: gpg not found; skipping signature verification"
   fi
 fi
 
+if [ "$OUTPUT_JSON" -eq 1 ]; then
+  node -e '
+const [releaseDir, signatureStatus, signatureReason, limitationsArg] = process.argv.slice(1);
+const limitations = limitationsArg
+  ? limitationsArg.split("||").filter(Boolean)
+  : [];
+
+const payload = {
+  surface: "release-artifact-verification",
+  condition: "completed",
+  verificationTier: "release-directory-verified",
+  releaseDir,
+  checks: {
+    requiredMetadata: true,
+    checksums: true,
+    manifest: true,
+    fileSizes: true,
+  },
+  signature: {
+    status: signatureStatus,
+    reason: signatureReason,
+  },
+  limitations,
+};
+
+process.stdout.write(JSON.stringify(payload));
+' "$RELEASE_DIR" "$SIGNATURE_STATUS" "$SIGNATURE_REASON" "$SIGNATURE_LIMITATIONS"
+  exit 0
+fi
+
 echo "release artifacts verified: $RELEASE_DIR"
+echo "signature verification status: $SIGNATURE_STATUS"

@@ -7,8 +7,38 @@ INSTALL_DIR="${2:-$HOME/.local/bin}"
 RUST_BOOTSTRAP="${DH_INSTALL_RUST_TOOLS:-0}"
 RUST_ASSUME_YES="${DH_INSTALL_RUST_TOOLS_YES:-0}"
 RUST_DRY_RUN="${DH_RUST_BOOTSTRAP_DRY_RUN:-0}"
+BASE_URL_OVERRIDE="${DH_RELEASE_BASE_URL:-}"
+SUPPRESS_LIFECYCLE_SUMMARY="${DH_SUPPRESS_LIFECYCLE_SUMMARY:-0}"
 TMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t dh-install)
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+print_summary() {
+  if [ "$SUPPRESS_LIFECYCLE_SUMMARY" = "1" ]; then
+    return
+  fi
+  echo "$1"
+}
+
+CHECKSUM_STATUS="not_verified"
+CHECKSUM_REASON="checksum verification did not run"
+SIGNATURE_STATUS="absent"
+SIGNATURE_REASON="signature sidecar is not fetched by this GitHub release install path"
+LIMITED=""
+
+append_limited() {
+  if [ -z "$1" ]; then
+    return
+  fi
+  if [ -z "$LIMITED" ]; then
+    LIMITED="$1"
+  else
+    LIMITED="$LIMITED; $1"
+  fi
+}
+
+append_limited "manifest/file-size verification is not performed in GitHub release install path"
+append_limited "signature verification is not performed in GitHub release install path"
+append_limited "Windows runtime installer parity remains unsupported"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -39,15 +69,30 @@ case "$platform" in
     ;;
 esac
 
+if [ "$platform" = "darwin" ] && [ "$arch" = "amd64" ]; then
+  append_limited "macOS amd64 runtime distribution is bounded to current release artifacts"
+fi
+if [ "$platform" = "linux" ] && [ "$arch" = "arm64" ]; then
+  append_limited "Linux arm64 runtime distribution is bounded to current release artifacts"
+fi
+
 if ! command -v curl >/dev/null 2>&1; then
   echo "install dependency missing: curl is required" >&2
   exit 1
 fi
 
 if [ "$VERSION" = "latest" ]; then
-  base_url="https://github.com/$REPO/releases/latest/download"
+  if [ -n "$BASE_URL_OVERRIDE" ]; then
+    base_url="$BASE_URL_OVERRIDE/latest/download"
+  else
+    base_url="https://github.com/$REPO/releases/latest/download"
+  fi
 else
-  base_url="https://github.com/$REPO/releases/download/$VERSION"
+  if [ -n "$BASE_URL_OVERRIDE" ]; then
+    base_url="$BASE_URL_OVERRIDE/download/$VERSION"
+  else
+    base_url="https://github.com/$REPO/releases/download/$VERSION"
+  fi
 fi
 
 binary_path="$TMP_DIR/$asset"
@@ -78,6 +123,8 @@ if [ "$actual" != "$expected" ]; then
   echo "actual:   $actual" >&2
   exit 1
 fi
+CHECKSUM_STATUS="verified_sha256s"
+CHECKSUM_REASON="downloaded asset checksum matched SHA256SUMS entry"
 
 mkdir -p "$INSTALL_DIR"
 target="$INSTALL_DIR/dh"
@@ -86,28 +133,62 @@ backup=""
 if [ -f "$target" ]; then
   backup="$target.backup.$(date +%s)"
   cp "$target" "$backup"
-  echo "[dh] backed up existing binary to $backup"
+  print_summary "[dh] backed up existing binary to $backup"
 fi
 
 cp "$binary_path" "$target"
 chmod +x "$target"
 
-echo "[dh] installed to $target"
-echo "[dh] verify with: $target --help"
-
 if "$target" --version >/dev/null 2>&1; then
-  echo "[dh] install verified: $($target --version)"
+  if [ -n "$backup" ]; then
+    ROLLBACK_NOTE="replacement path had backup protection at $backup"
+  else
+    ROLLBACK_NOTE="fresh install path had no prior binary, so rollback backup was not applicable"
+  fi
+
+  append_limited "runtime/workspace readiness is not verified by install lifecycle; run 'dh doctor'"
+  print_summary "[dh] surface: lifecycle install (install-github-release)"
+  print_summary "[dh] condition: completed"
+  print_summary "[dh] why: downloaded GitHub asset $asset and verified checksum (status=$CHECKSUM_STATUS: $CHECKSUM_REASON); signature=$SIGNATURE_STATUS ($SIGNATURE_REASON); installed binary at $target; $ROLLBACK_NOTE"
+  print_summary "[dh] works: dh binary is installed and executable at $target"
+  print_summary "[dh] limited: $LIMITED"
+  print_summary "[dh] next: run '$target --version' then '$target doctor' (or 'dh doctor')"
 else
+  ROLLBACK_RESULT="unavailable"
+  ROLLBACK_NOTE="post-install verification failed and no backup was available"
+
   if [ -f "$backup" ]; then
-    echo "[dh] post-install verification failed; rolling back to $backup" >&2
-    mv "$backup" "$target"
-    chmod +x "$target"
+    if mv "$backup" "$target" && chmod +x "$target"; then
+      ROLLBACK_RESULT="succeeded"
+      ROLLBACK_NOTE="post-install verification failed; rollback succeeded via $backup"
+    else
+      ROLLBACK_RESULT="failed"
+      ROLLBACK_NOTE="post-install verification failed; rollback attempt failed for $backup"
+    fi
+  fi
+
+  append_limited "runtime/workspace readiness is not verified by install lifecycle; run 'dh doctor'"
+  print_summary "[dh] surface: lifecycle install (install-github-release)"
+  print_summary "[dh] condition: failed"
+  print_summary "[dh] why: binary install mutation occurred but post-install verification (--version) failed; rollback=$ROLLBACK_RESULT ($ROLLBACK_NOTE)"
+  if [ "$ROLLBACK_RESULT" = "succeeded" ]; then
+    print_summary "[dh] works: previous binary was restored at $target"
+    print_summary "[dh] limited: $LIMITED"
+    print_summary "[dh] next: inspect release integrity and retry install or use local release-directory install for stronger verification"
+  elif [ "$ROLLBACK_RESULT" = "failed" ]; then
+    print_summary "[dh] works: rollback failed and target state requires manual repair"
+    print_summary "[dh] limited: $LIMITED"
+    print_summary "[dh] next: restore a known-good binary manually, then run '$target --version' and '$target doctor'"
+  else
+    print_summary "[dh] works: no rollback could run because no prior backup existed"
+    print_summary "[dh] limited: $LIMITED"
+    print_summary "[dh] next: reinstall a known-good binary and verify with '$target --version' and '$target doctor'"
   fi
   exit 1
 fi
 
 if [ -x "$SCRIPT_DIR/verify-release-artifacts.sh" ]; then
-  echo "[dh] lifecycle note: artifact-level verification is available for local release dirs via scripts/verify-release-artifacts.sh"
+  print_summary "[dh] lifecycle note: stronger release-directory verification (manifest+checksum+size) is available via scripts/install-from-release.sh"
 fi
 
 if [ "$RUST_BOOTSTRAP" = "1" ]; then

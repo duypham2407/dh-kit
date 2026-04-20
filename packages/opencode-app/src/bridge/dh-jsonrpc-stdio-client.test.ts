@@ -67,6 +67,15 @@ const v2InitializeResult = {
     queryRelationship: {
       supportedRelations: ["usage", "dependencies", "dependents"],
     },
+    languageCapabilityMatrix: [
+      {
+        language: "typescript",
+        capability: "trace_flow",
+        state: "unsupported",
+        reason: "Trace flow remains outside bounded support for this release.",
+        parserBacked: false,
+      },
+    ],
   },
 };
 
@@ -88,6 +97,8 @@ describe("dh-jsonrpc-stdio-client", () => {
             jsonrpc: "2.0",
             id: request.id,
             result: {
+              answerState: "partial",
+              questionClass: "search_file_discovery",
               items: [
                 {
                   filePath: "src/auth.ts",
@@ -98,6 +109,42 @@ describe("dh-jsonrpc-stdio-client", () => {
                   score: 0.88,
                 },
               ],
+              evidence: {
+                answerState: "partial",
+                questionClass: "search_file_discovery",
+                subject: "auth",
+                summary: "search results",
+                conclusion: "partial retrieval-backed search evidence available",
+                evidence: [
+                  {
+                    kind: "chunk",
+                    filePath: "src/auth.ts",
+                    lineStart: 10,
+                    lineEnd: 10,
+                    reason: "unicode payload",
+                    source: "query",
+                    confidence: "partial",
+                    snippet: "đăng nhập 🔐 thành công",
+                  },
+                ],
+                gaps: [],
+                bounds: {
+                  traversalScope: "search_file_discovery",
+                },
+              },
+              languageCapabilitySummary: {
+                capability: "structural_indexing",
+                weakestState: "partial",
+                retrievalOnly: true,
+                languages: [
+                  {
+                    language: "typescript",
+                    state: "supported",
+                    reason: "bounded search",
+                    parserBacked: false,
+                  },
+                ],
+              },
             },
           },
           37,
@@ -115,6 +162,10 @@ describe("dh-jsonrpc-stdio-client", () => {
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.snippet).toBe("đăng nhập 🔐 thành công");
+    expect(result.answerState).toBe("partial");
+    expect(result.questionClass).toBe("search_file_discovery");
+    expect(result.evidence?.answerState).toBe("partial");
+    expect(result.languageCapabilitySummary?.retrievalOnly).toBe(true);
     await client.close();
   });
 

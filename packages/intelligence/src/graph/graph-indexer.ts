@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import { detectProjects } from "../workspace/detect-projects.js";
 import { parseSource, type TreeSitterNode } from "../parser/tree-sitter-init.js";
-import { extractImportEdges, extractImportEdgesRegex } from "./extract-import-edges.js";
+import { extractImportEdgesRegex, extractImportEdgesWithDiagnostics, type ImportResolutionDiagnostic } from "./extract-import-edges.js";
 import { GraphRepo, hashContent } from "../../../storage/src/sqlite/repositories/graph-repo.js";
 import { extractCallGraphFromTree } from "./extract-call-graph.js";
 import { extractSymbolReferencesFromTree } from "./reference-tracker.js";
@@ -39,7 +39,8 @@ export class GraphIndexer {
     }
     const symbolCache = new Map<string, IndexedSymbol[]>();
 
-    const mergedImportEdges = await this.buildMergedImportEdges(files);
+    const importExtraction = await this.buildMergedImportEdges(files);
+    const mergedImportEdges = importExtraction.edges;
     const importEdgesByFromId = groupImportEdgesByFromId(mergedImportEdges);
 
     let filesDeleted = 0;
@@ -226,6 +227,7 @@ export class GraphIndexer {
       filesSkipped,
       filesDeleted,
       durationMs: Date.now() - started,
+      ...summarizeImportDiagnostics(mergedImportEdges.length, importExtraction.diagnostics),
     };
   }
 
@@ -243,8 +245,9 @@ export class GraphIndexer {
     return filtered;
   }
 
-  private async buildMergedImportEdges(files: IndexedFile[]): Promise<IndexedEdge[]> {
-    const importEdges = await extractImportEdges(this.repoRoot, files);
+  private async buildMergedImportEdges(files: IndexedFile[]): Promise<{ edges: IndexedEdge[]; diagnostics: ImportResolutionDiagnostic[] }> {
+    const importResult = await extractImportEdgesWithDiagnostics(this.repoRoot, files);
+    const importEdges = importResult.edges;
     const regexImportEdges = await extractImportEdgesRegex(this.repoRoot, files);
     const merged = new Map<string, IndexedEdge>();
     for (const edge of [...importEdges, ...regexImportEdges]) {
@@ -253,8 +256,19 @@ export class GraphIndexer {
         merged.set(key, edge);
       }
     }
-    return [...merged.values()];
+    return { edges: [...merged.values()], diagnostics: importResult.diagnostics };
   }
+}
+
+function summarizeImportDiagnostics(resolvedCount: number, diagnostics: ImportResolutionDiagnostic[]): Pick<GraphIndexStats, "importsResolved" | "importsUnresolved" | "importsExternal" | "importsAmbiguous" | "importsUnsafe" | "importsDegraded"> {
+  return {
+    importsResolved: resolvedCount,
+    importsUnresolved: diagnostics.filter((item) => item.status === "unresolved").length,
+    importsExternal: diagnostics.filter((item) => item.status === "external").length,
+    importsAmbiguous: diagnostics.filter((item) => item.status === "ambiguous").length,
+    importsUnsafe: diagnostics.filter((item) => item.status === "unsafe").length,
+    importsDegraded: diagnostics.filter((item) => item.status === "degraded").length,
+  };
 }
 
 function groupImportEdgesByFromId(edges: IndexedEdge[]): Map<string, IndexedEdge[]> {

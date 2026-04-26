@@ -9,6 +9,13 @@ export type BridgeFailureCode =
   | "BRIDGE_TIMEOUT"
   | "METHOD_NOT_SUPPORTED"
   | "INVALID_REQUEST"
+  | "ACCESS_DENIED"
+  | "NOT_FOUND"
+  | "TIMEOUT"
+  | "EXECUTION_FAILED"
+  | "RUNTIME_UNAVAILABLE"
+  | "BINARY_FILE_UNSUPPORTED"
+  | "CAPABILITY_UNSUPPORTED"
   | "REQUEST_FAILED";
 
 export type BridgeFailurePhase = "startup" | "request";
@@ -80,9 +87,9 @@ export type BridgeLanguageCapabilityEntry = {
 
 export type BridgeInitializeCapabilities = {
   protocolVersion: string;
-  methods: readonly ["dh.initialize", "query.search", "query.definition", "query.relationship"];
+  methods: readonly string[];
   queryRelationship: {
-    supportedRelations: readonly ["usage", "dependencies", "dependents"];
+    supportedRelations: readonly string[];
   };
   languageCapabilityMatrix: BridgeLanguageCapabilityEntry[];
 };
@@ -99,7 +106,43 @@ export type BridgeAskQueryClass =
   | "graph_definition"
   | "graph_relationship_usage"
   | "graph_relationship_dependencies"
-  | "graph_relationship_dependents";
+  | "graph_relationship_dependents"
+  | "graph_build_evidence";
+
+export type BridgeBuildEvidenceIntent = "explain";
+
+export type BridgeBuildEvidenceFreshness = "indexed" | "requireFresh" | "require_fresh";
+
+export type BridgeBuildEvidenceBudget = {
+  maxFiles?: number;
+  maxSymbols?: number;
+  maxSnippets?: number;
+};
+
+export type BridgeDelegatedSessionQueryClass = BridgeAskQueryClass;
+
+export type BridgeSessionDelegatedMethod = "query.search" | "query.definition" | "query.relationship" | "query.buildEvidence";
+
+export type BridgeSessionRunCommandRequest = {
+  query: string;
+  repoRoot: string;
+  queryClass: BridgeDelegatedSessionQueryClass;
+  limit?: number;
+  symbol?: string;
+  targetPath?: string;
+  intent?: BridgeBuildEvidenceIntent;
+  targets?: string[];
+  budget?: BridgeBuildEvidenceBudget;
+  freshness?: BridgeBuildEvidenceFreshness;
+};
+
+export type BridgeDirectQueryMethod =
+  | "query.search"
+  | "query.definition"
+  | "query.relationship"
+  | "query.buildEvidence";
+
+type BridgeQueryMethod = BridgeDirectQueryMethod;
 
 export type BridgeAskRequest = {
   query: string;
@@ -108,10 +151,16 @@ export type BridgeAskRequest = {
   limit?: number;
   symbol?: string;
   targetPath?: string;
+  intent?: BridgeBuildEvidenceIntent;
+  targets?: string[];
+  budget?: BridgeBuildEvidenceBudget;
+  freshness?: BridgeBuildEvidenceFreshness;
 };
 
 export type BridgeAskResult = {
-  method: "query.search" | "query.definition" | "query.relationship";
+  method: BridgeQueryMethod;
+  seamMethod?: "direct.query" | "session.runCommand";
+  delegatedMethod?: BridgeSessionDelegatedMethod;
   requestId: number;
   engineName: string;
   engineVersion: string;
@@ -124,8 +173,31 @@ export type BridgeAskResult = {
   languageCapabilitySummary: BridgeLanguageCapabilitySummary | null;
 };
 
+type BridgeDirectQueryClass = BridgeDelegatedSessionQueryClass;
+
+function isDelegatedSessionQueryClass(
+  queryClass: BridgeAskQueryClass,
+): queryClass is BridgeDelegatedSessionQueryClass {
+  return queryClass === "search_file_discovery"
+    || queryClass === "graph_definition"
+    || queryClass === "graph_relationship_usage"
+    || queryClass === "graph_relationship_dependencies"
+    || queryClass === "graph_relationship_dependents"
+    || queryClass === "graph_build_evidence";
+}
+
+type BridgeAskResultDerivedFields = Pick<
+  BridgeAskResult,
+  | "answerState"
+  | "questionClass"
+  | "items"
+  | "evidence"
+  | "languageCapabilitySummary"
+>;
+
 export type BridgeClient = {
   runAskQuery: (input: BridgeAskRequest) => Promise<BridgeAskResult>;
+  runSessionCommand?: (input: BridgeSessionRunCommandRequest) => Promise<BridgeAskResult>;
   getInitializeSnapshot?: () => Promise<BridgeInitializeSnapshot>;
   close: () => Promise<void>;
 };
@@ -177,7 +249,7 @@ type JsonRpcResponse = JsonRpcSuccess | JsonRpcFailure;
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const V2_PROTOCOL_VERSION = "1";
-const V2_METHODS = ["dh.initialize", "query.search", "query.definition", "query.relationship"] as const;
+const V2_METHODS = ["dh.initialize", "query.search", "query.definition", "query.relationship", "query.buildEvidence"] as const;
 const V2_RELATIONS = ["usage", "dependencies", "dependents"] as const;
 
 export function createDhJsonRpcStdioClient(
@@ -238,8 +310,27 @@ class DhJsonRpcStdioClient implements BridgeClient {
   async runAskQuery(input: BridgeAskRequest): Promise<BridgeAskResult> {
     await this.ensureInitialized(input.repoRoot);
 
+    if (!isDelegatedSessionQueryClass(input.queryClass)) {
+      throw new DhBridgeError({
+        code: "CAPABILITY_UNSUPPORTED",
+        phase: "request",
+        message: `Direct bridge ask does not support query class '${input.queryClass}' in this bounded path.`,
+      });
+    }
+
     const requestId = this.nextRequestId++;
-    const call = this.buildAskCall(input, requestId);
+    const call = this.buildAskCall({
+      query: input.query,
+      repoRoot: input.repoRoot,
+      queryClass: input.queryClass,
+      limit: input.limit,
+      symbol: input.symbol,
+      targetPath: input.targetPath,
+      intent: input.intent,
+      targets: input.targets,
+      budget: input.budget,
+      freshness: input.freshness,
+    }, requestId);
     const response = await this.request(
       {
         jsonrpc: "2.0",
@@ -252,10 +343,76 @@ class DhJsonRpcStdioClient implements BridgeClient {
     );
 
     if ("error" in response) {
-      throw this.mapRpcError(response.error.code, response.error.message, "request");
+      throw this.mapRpcError(response.error.code, response.error.message, "request", response.error.data);
     }
 
-    const resultObj = asRecord(response.result);
+    const parsed = this.parseBridgeAskResult({
+      result: response.result,
+      method: call.method,
+      params: call.params,
+    });
+
+    return {
+      method: call.method,
+      requestId,
+      engineName: this.engineName,
+      engineVersion: this.engineVersion,
+      protocolVersion: this.protocolVersion,
+      capabilities: this.capabilities,
+      ...parsed,
+    };
+  }
+
+  async runSessionCommand(input: BridgeSessionRunCommandRequest): Promise<BridgeAskResult> {
+    await this.ensureInitialized(input.repoRoot);
+
+    const requestId = this.nextRequestId++;
+    const call = this.buildAskCall(input, requestId);
+    const response = await this.request(
+      {
+        jsonrpc: "2.0",
+        id: requestId,
+        method: "session.runCommand",
+        params: {
+          query: {
+            method: call.method,
+            params: call.params,
+          },
+        },
+      },
+      "request",
+      this.requestTimeoutMs,
+    );
+
+    if ("error" in response) {
+      throw this.mapRpcError(response.error.code, response.error.message, "request", response.error.data);
+    }
+
+    const parsed = this.parseBridgeAskResult({
+      result: response.result,
+      method: call.method,
+      params: call.params,
+    });
+
+    return {
+      method: call.method,
+      seamMethod: "session.runCommand",
+      delegatedMethod: call.method,
+      requestId,
+      engineName: this.engineName,
+      engineVersion: this.engineVersion,
+      protocolVersion: this.protocolVersion,
+      capabilities: this.capabilities,
+      ...parsed,
+    };
+  }
+
+  private parseBridgeAskResult(input: {
+    result: unknown;
+    method: BridgeDirectQueryMethod;
+    params: Record<string, unknown>;
+  }): BridgeAskResultDerivedFields {
+    const resultObj = asRecord(input.result);
     const answerState = asBridgeAnswerState(resultObj.answerState);
     const questionClass = asString(resultObj.questionClass);
     const evidence = parseBridgeEvidencePacket(resultObj.evidence);
@@ -266,11 +423,13 @@ class DhJsonRpcStdioClient implements BridgeClient {
       throw new DhBridgeError({
         code: "INVALID_REQUEST",
         phase: "request",
-        message: `Rust bridge response for '${call.method}' is missing answerState.`,
+        message: `Rust bridge response for '${input.method}' is missing answerState.`,
       });
     }
 
-    const resolvedQuestionClass = questionClass ?? evidence?.questionClass ?? inferQuestionClassFromCall(call);
+    const resolvedQuestionClass = questionClass
+      ?? evidence?.questionClass
+      ?? inferQuestionClassFromCall({ method: input.method, params: input.params });
 
     const resultItems = Array.isArray(resultObj.items) ? resultObj.items : [];
     const items: BridgeSearchItem[] = resultItems
@@ -278,12 +437,6 @@ class DhJsonRpcStdioClient implements BridgeClient {
       .filter((item): item is BridgeSearchItem => item !== null);
 
     return {
-      method: call.method,
-      requestId,
-      engineName: this.engineName,
-      engineVersion: this.engineVersion,
-      protocolVersion: this.protocolVersion,
-      capabilities: this.capabilities,
       answerState: resolvedAnswerState,
       questionClass: resolvedQuestionClass,
       items,
@@ -302,8 +455,19 @@ class DhJsonRpcStdioClient implements BridgeClient {
     };
   }
 
-  private buildAskCall(input: BridgeAskRequest, requestId: number): {
-    method: "query.search" | "query.definition" | "query.relationship";
+  private buildAskCall(input: {
+    query: string;
+    repoRoot: string;
+    queryClass: BridgeDirectQueryClass;
+    limit?: number;
+    symbol?: string;
+    targetPath?: string;
+    intent?: BridgeBuildEvidenceIntent;
+    targets?: string[];
+    budget?: BridgeBuildEvidenceBudget;
+    freshness?: BridgeBuildEvidenceFreshness;
+  }, requestId: number): {
+    method: BridgeDirectQueryMethod;
     params: Record<string, unknown>;
     requestId: number;
   } {
@@ -364,6 +528,21 @@ class DhJsonRpcStdioClient implements BridgeClient {
           },
           requestId,
         };
+      case "graph_build_evidence": {
+        const params: Record<string, unknown> = {
+          query: input.query,
+          workspaceRoot: input.repoRoot,
+          intent: input.intent ?? "explain",
+          targets: input.targets ?? [],
+          budget: input.budget ?? boundedBuildEvidenceBudgetFromLimit(input.limit),
+          freshness: input.freshness ?? "indexed",
+        };
+        return {
+          method: "query.buildEvidence",
+          params,
+          requestId,
+        };
+      }
       default: {
         const _exhaustive: never = input.queryClass;
         throw new DhBridgeError({
@@ -474,7 +653,7 @@ class DhJsonRpcStdioClient implements BridgeClient {
     );
 
     if ("error" in initializeResponse) {
-      throw this.mapRpcError(initializeResponse.error.code, initializeResponse.error.message, "startup");
+      throw this.mapRpcError(initializeResponse.error.code, initializeResponse.error.message, "startup", initializeResponse.error.data);
     }
 
     const resultObj = asRecord(initializeResponse.result);
@@ -620,7 +799,58 @@ class DhJsonRpcStdioClient implements BridgeClient {
     }
   }
 
-  private mapRpcError(code: number, message: string, phase: BridgeFailurePhase): DhBridgeError {
+  private mapRpcError(code: number, message: string, phase: BridgeFailurePhase, data?: unknown): DhBridgeError {
+    const symbolicCode = asString(asRecord(data).code);
+    if (symbolicCode === "CAPABILITY_UNSUPPORTED") {
+      return new DhBridgeError({
+        code: "CAPABILITY_UNSUPPORTED",
+        phase,
+        message,
+      });
+    }
+    if (symbolicCode === "ACCESS_DENIED") {
+      return new DhBridgeError({
+        code: "ACCESS_DENIED",
+        phase,
+        message,
+      });
+    }
+    if (symbolicCode === "NOT_FOUND") {
+      return new DhBridgeError({
+        code: "NOT_FOUND",
+        phase,
+        message,
+      });
+    }
+    if (symbolicCode === "TIMEOUT") {
+      return new DhBridgeError({
+        code: "TIMEOUT",
+        phase,
+        message,
+        retryable: true,
+      });
+    }
+    if (symbolicCode === "EXECUTION_FAILED") {
+      return new DhBridgeError({
+        code: "EXECUTION_FAILED",
+        phase,
+        message,
+      });
+    }
+    if (symbolicCode === "RUNTIME_UNAVAILABLE") {
+      return new DhBridgeError({
+        code: "RUNTIME_UNAVAILABLE",
+        phase,
+        message,
+      });
+    }
+    if (symbolicCode === "BINARY_FILE_UNSUPPORTED") {
+      return new DhBridgeError({
+        code: "BINARY_FILE_UNSUPPORTED",
+        phase,
+        message,
+      });
+    }
     if (code === -32601) {
       return new DhBridgeError({
         code: "METHOD_NOT_SUPPORTED",
@@ -738,6 +968,23 @@ function asBridgeLanguageCapabilityState(value: unknown): BridgeLanguageCapabili
     return "best-effort";
   }
   return null;
+}
+
+function boundedBuildEvidenceBudgetFromLimit(limit?: number): BridgeBuildEvidenceBudget {
+  if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
+    return {
+      maxFiles: 5,
+      maxSymbols: 8,
+      maxSnippets: 8,
+    };
+  }
+
+  const bounded = Math.max(1, Math.floor(limit));
+  return {
+    maxFiles: Math.min(bounded, 5),
+    maxSymbols: 8,
+    maxSnippets: 8,
+  };
 }
 
 function parseBridgeEvidencePacket(value: unknown): BridgeEvidencePacket | null {
@@ -881,7 +1128,7 @@ function parseBridgeLanguageCapabilityEntry(value: unknown): BridgeLanguageCapab
 }
 
 function inferQuestionClassFromCall(call: {
-  method: "query.search" | "query.definition" | "query.relationship";
+  method: BridgeDirectQueryMethod;
   params: Record<string, unknown>;
 }): string {
   if (call.method === "query.search") {
@@ -899,6 +1146,9 @@ function inferQuestionClassFromCall(call: {
   }
   if (call.method === "query.definition") {
     return "definition";
+  }
+  if (call.method === "query.buildEvidence") {
+    return "build_evidence";
   }
 
   const relation = asString(call.params.relation);

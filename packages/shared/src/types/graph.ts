@@ -59,4 +59,10 @@ export type GraphIndexStats = {
   filesSkipped: number;
   filesDeleted: number;
   durationMs: number;
+  importsResolved?: number;
+  importsUnresolved?: number;
+  importsExternal?: number;
+  importsAmbiguous?: number;
+  importsUnsafe?: number;
+  importsDegraded?: number;
 };

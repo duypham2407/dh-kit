@@ -4,6 +4,8 @@ import path from "node:path";
 
 export const QUALITY_GATE_RUNTIME_CONTRACT_VERSION = "v1" as const;
 
+const SEMGREP_CLI_DETECTION_TIMEOUT_MS = 5_000;
+
 export const QUALITY_GATE_CATALOG = [
   "rule_scan",
   "security_scan",
@@ -326,8 +328,12 @@ function resolveSecurityScanAvailability(repoRoot: string): QualityGateAvailabil
 
 function detectSemgrepCli(): boolean {
   try {
-    const result = spawnSync("semgrep", ["--version"], { stdio: "ignore" });
-    return result.status === 0;
+    const result = spawnSync("semgrep", ["--version"], {
+      killSignal: "SIGKILL",
+      stdio: "ignore",
+      timeout: SEMGREP_CLI_DETECTION_TIMEOUT_MS,
+    });
+    return result.status === 0 && !result.error && result.signal === null;
   } catch {
     return false;
   }

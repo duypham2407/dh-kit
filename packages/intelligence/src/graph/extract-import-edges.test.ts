@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { IndexedFile } from "../../../shared/src/types/indexing.js";
-import { extractImportEdges, extractImportEdgesRegex } from "./extract-import-edges.js";
+import { extractImportEdges, extractImportEdgesRegex, extractImportEdgesWithDiagnostics } from "./extract-import-edges.js";
 
 function makeRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "dh-import-edges-"));
@@ -103,5 +103,61 @@ describe("extractImportEdges (AST)", () => {
 
     const edges = await extractImportEdges(repo, segmentedFiles);
     expect(edges.some((edge) => edge.fromId === "seg-main" && edge.toId === "seg-dep")).toBe(true);
+  });
+
+  it("resolves configured alias edges and preserves non-resolved diagnostics", async () => {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@/*": ["src/*"], "@amb/*": ["src/*", "alt/*"] } } }), "utf8");
+    fs.mkdirSync(path.join(repo, "alt"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "alt", "dep.ts"), "export const dep = 2;\n", "utf8");
+    fs.writeFileSync(path.join(repo, "src", "main.ts"), [
+      "import { dep } from '@/dep';",
+      "import { missing } from '@/missing';",
+      "import { amb } from '@amb/dep';",
+      "import react from 'react';",
+      "void dep; void missing; void amb; void react;",
+    ].join("\n"), "utf8");
+
+    const result = await extractImportEdgesWithDiagnostics(repo, files());
+    expect(result.edges.some((edge) => edge.fromId === "f-main" && edge.toId === "f-dep")).toBe(true);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ specifier: "@/missing", status: "unresolved", reason: "target_missing" }),
+      expect.objectContaining({ specifier: "@amb/dep", status: "ambiguous", reason: "multiple_targets" }),
+      expect.objectContaining({ specifier: "react", status: "external", reason: "external_package" }),
+    ]));
+  });
+
+  it("does not create edges for unsafe alias targets outside workspace", async () => {
+    const repo = makeRepo();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "dh-import-unsafe-"));
+    fs.writeFileSync(path.join(outside, "secret.ts"), "export const secret = 1;\n", "utf8");
+    fs.writeFileSync(path.join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { paths: { "@secret": [path.join(outside, "secret")] } } }), "utf8");
+    fs.writeFileSync(path.join(repo, "src", "main.ts"), "import { secret } from '@secret';\nvoid secret;\n", "utf8");
+
+    const result = await extractImportEdgesWithDiagnostics(repo, files());
+    expect(result.edges.some((edge) => edge.fromId === "f-main" && edge.toId !== "f-main")).toBe(false);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ status: "unsafe", reason: "target_outside_workspace" }));
+  });
+
+  it("does not create edges for missing-config alias-like imports and keeps diagnostics inspectable", async () => {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, "src", "foo.ts"), "export const foo = 1;\n", "utf8");
+    fs.writeFileSync(path.join(repo, "src", "main.ts"), "import { foo } from '@/foo';\nvoid foo;\n", "utf8");
+
+    const result = await extractImportEdgesWithDiagnostics(repo, [
+      ...files(),
+      { id: "f-foo", path: "src/foo.ts", extension: ".ts", language: "typescript", sizeBytes: 1, status: "indexed" },
+    ]);
+
+    expect(result.edges.some((edge) => edge.fromId === "f-main" && edge.toId === "f-foo")).toBe(false);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        fromId: "f-main",
+        importType: "static",
+        specifier: "@/foo",
+        status: "unresolved",
+        reason: "alias_config_missing",
+      }),
+    ]));
   });
 });

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use dh_indexer::{IndexWorkspaceRequest, Indexer, IndexerApi};
 use dh_storage::{Database, IndexStateRepository};
 use dh_types::{BenchmarkClass, IndexRunStatus, IndexState};
@@ -7,6 +7,11 @@ use std::path::PathBuf;
 
 mod benchmark;
 mod bridge;
+mod host_commands;
+mod host_lifecycle;
+mod runtime_launch;
+mod worker_protocol;
+mod worker_supervisor;
 
 const DEFAULT_DB_NAME: &str = "dh-index.db";
 
@@ -51,10 +56,34 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    HostContract {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    Ask(KnowledgeCommandArgs),
+    Explain(KnowledgeCommandArgs),
+    Trace(KnowledgeCommandArgs),
     Serve {
         #[arg(long, default_value = ".")]
         workspace: PathBuf,
     },
+}
+
+#[derive(Debug, Args)]
+struct KnowledgeCommandArgs {
+    input: String,
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
+    #[arg(long = "node-runtime", default_value = "node")]
+    node_runtime: PathBuf,
+    #[arg(long = "worker-entry")]
+    worker_entry: Option<PathBuf>,
+    #[arg(long = "worker-manifest")]
+    worker_manifest: Option<PathBuf>,
+    #[arg(long = "resume-session")]
+    resume_session_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    json: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -310,6 +339,52 @@ fn main() -> Result<()> {
                 println!("report_json: {}", output_path.display());
             }
         }
+        Commands::HostContract { json } => {
+            let contract = host_lifecycle::lifecycle_contract();
+            let protocol = worker_protocol::worker_protocol_contract();
+            let payload = serde_json::json!({
+                "lifecycleContract": contract,
+                "workerProtocolContract": protocol,
+            });
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            } else {
+                println!(
+                    "topology: {}",
+                    payload["lifecycleContract"]["topology"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                );
+                println!(
+                    "support_boundary: {}",
+                    payload["lifecycleContract"]["supportBoundary"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                );
+                println!(
+                    "authority_owner: {}",
+                    payload["lifecycleContract"]["authorityOwner"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                );
+                println!(
+                    "worker_protocol: {}",
+                    payload["workerProtocolContract"]["protocolVersion"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                );
+            }
+        }
+        Commands::Ask(args) => {
+            run_knowledge_command(host_commands::HostKnowledgeCommandKind::Ask, args)?
+        }
+        Commands::Explain(args) => {
+            run_knowledge_command(host_commands::HostKnowledgeCommandKind::Explain, args)?
+        }
+        Commands::Trace(args) => {
+            run_knowledge_command(host_commands::HostKnowledgeCommandKind::Trace, args)?
+        }
         Commands::Serve { workspace } => {
             let workspace = workspace.canonicalize()?;
             bridge::run_bridge_server(workspace)?;
@@ -317,6 +392,106 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn run_knowledge_command(
+    kind: host_commands::HostKnowledgeCommandKind,
+    args: KnowledgeCommandArgs,
+) -> Result<()> {
+    let worker_bundle = runtime_launch::resolve_worker_bundle_paths(
+        args.worker_entry,
+        args.worker_manifest,
+        &knowledge_command_bundle_search_roots(&args.workspace),
+    );
+
+    let platform = runtime_launch::current_platform();
+    let platform_supported = host_lifecycle::classify_platform(&platform).supported;
+    if !platform_supported || !worker_bundle.worker_entry_path.exists() {
+        let launchability_issue = if platform_supported {
+            host_lifecycle::LaunchabilityIssue::BundleMissing
+        } else {
+            host_lifecycle::LaunchabilityIssue::UnsupportedPlatform
+        };
+        let report = host_lifecycle::classify_launchability_failure(platform, launchability_issue);
+        let launch_note = if platform_supported {
+            "Rust-hosted first-wave knowledge command path requires a TypeScript worker bundle."
+        } else {
+            "Rust-hosted first-wave knowledge command path currently supports Linux and macOS only."
+        };
+        let payload = serde_json::json!({
+            "command": kind.as_str(),
+            "topology": host_lifecycle::TOPOLOGY_RUST_HOST_TS_WORKER,
+            "supportBoundary": host_lifecycle::SUPPORT_BOUNDARY_FIRST_WAVE,
+            "legacyPathLabel": "legacy_ts_host_bridge_compatibility_only",
+            "rustLifecycle": report,
+            "workerResult": null,
+            "rustHostNotes": [
+                launch_note,
+                "No legacy TypeScript-host fallback was used; legacy bridge remains compatibility-only outside this supported path."
+            ]
+        });
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        } else {
+            println!("command: {}", kind.as_str());
+            println!("topology: {}", host_lifecycle::TOPOLOGY_RUST_HOST_TS_WORKER);
+            println!(
+                "support boundary: {}",
+                host_lifecycle::SUPPORT_BOUNDARY_FIRST_WAVE
+            );
+            println!("lifecycle authority: rust");
+            println!("legacy path label: legacy_ts_host_bridge_compatibility_only");
+            println!("rust host lifecycle:");
+            println!("  failure phase: Startup");
+            println!("  final status: StartupFailed");
+            println!("  final exit code: {}", report.final_exit_code);
+            println!("  launchability issue: {:?}", launchability_issue);
+            println!();
+            println!("rust host notes:");
+            println!("  - {launch_note}");
+            println!("  - No legacy TypeScript-host fallback was used; legacy bridge remains compatibility-only outside this supported path.");
+        }
+        std::process::exit(report.final_exit_code);
+    }
+
+    let report =
+        host_commands::run_hosted_knowledge_command(host_commands::HostKnowledgeCommandRequest {
+            kind,
+            input: args.input,
+            workspace_root: args.workspace,
+            node_runtime: args.node_runtime,
+            worker_entry: worker_bundle.worker_entry_path,
+            worker_manifest: worker_bundle.manifest_path,
+            replay_safety: worker_supervisor::ReplaySafety::ReplaySafeReadOnly,
+            output_json: args.json,
+            resume_session_id: args.resume_session_id,
+        })?;
+    let exit_code = report.rust_lifecycle.final_exit_code;
+
+    if args.json {
+        println!("{}", host_commands::render_hosted_knowledge_json(&report)?);
+    } else {
+        println!("{}", host_commands::render_hosted_knowledge_text(&report));
+    }
+
+    std::process::exit(exit_code);
+}
+
+fn knowledge_command_bundle_search_roots(workspace: &std::path::Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            roots.push(parent.to_path_buf());
+            if let Some(grandparent) = parent.parent() {
+                roots.push(grandparent.to_path_buf());
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        roots.push(cwd);
+    }
+    roots.push(workspace.to_path_buf());
+    roots
 }
 
 fn handle_legacy_cli_compatibility(args: &[String]) -> Result<bool> {

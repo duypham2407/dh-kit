@@ -16,13 +16,19 @@ function makeSnapshotId(): string {
 
 function buildSnapshotManifest(input: {
   preflight: OperatorWorktreePreflightResult;
+  executionId: string;
+  reportId: string;
 }): OperatorWorktreeSnapshotManifest {
   const id = makeSnapshotId();
   const workspaceRoot = input.preflight.context.workspace?.root;
   const targetRelativePath = input.preflight.context.workspace?.targetRelativePath;
+  const workspaceRelativePath = input.preflight.context.workspace?.workspaceRelativePath;
+  const repoRelativePath = input.preflight.context.workspace?.repoRelativePath;
 
   return {
     id,
+    executionId: input.executionId,
+    reportId: input.reportId,
     createdAt: new Date().toISOString(),
     operation: input.preflight.operation,
     mode: input.preflight.mode,
@@ -30,7 +36,9 @@ function buildSnapshotManifest(input: {
     targetPath: input.preflight.context.canonicalTargetPath,
     workspaceRoot,
     targetRelativePath,
-    files: targetRelativePath ? [targetRelativePath] : [],
+    workspaceRelativePath,
+    repoRelativePath,
+    files: repoRelativePath ? [repoRelativePath] : (targetRelativePath ? [targetRelativePath] : []),
     metadata: {
       warningCodes: input.preflight.warnings.map((warning) => warning.code),
       idempotentSkip: input.preflight.context.idempotentSkip,
@@ -41,6 +49,8 @@ function buildSnapshotManifest(input: {
 export async function captureOperatorSafeSnapshot(input: {
   repoRoot: string;
   preflight: OperatorWorktreePreflightResult;
+  executionId: string;
+  reportId: string;
 }): Promise<OperatorWorktreeSnapshotResult> {
   const requiresSnapshot = input.preflight.mode !== "check";
   if (!requiresSnapshot) {
@@ -51,7 +61,11 @@ export async function captureOperatorSafeSnapshot(input: {
     };
   }
 
-  const manifest = buildSnapshotManifest({ preflight: input.preflight });
+  const manifest = buildSnapshotManifest({
+    preflight: input.preflight,
+    executionId: input.executionId,
+    reportId: input.reportId,
+  });
   await ensureOperatorSafeArtifactDirs(input.repoRoot);
   const artifactPath = path.join(resolveOperatorSafeSnapshotsDir(input.repoRoot), `${manifest.id}.json`);
   await fs.writeFile(artifactPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");

@@ -85,6 +85,11 @@ if [ -x "$INSTALL_DIR/dh" ]; then
 else
   fail "binary not found or not executable"
 fi
+if [ -f "$INSTALL_DIR/ts-worker/worker.mjs" ] && [ -f "$INSTALL_DIR/ts-worker/manifest.json" ]; then
+  pass "direct install copied adjacent Rust-hosted worker bundle"
+else
+  fail "direct install did not copy adjacent Rust-hosted worker bundle"
+fi
 assert_contains "$INSTALL_OUTPUT" "surface: lifecycle install (install.sh direct-binary)" "install.sh prints lifecycle surface"
 assert_contains "$INSTALL_OUTPUT" "condition: completed" "install.sh reports completed condition"
 assert_contains "$INSTALL_OUTPUT" "release manifest/file-size verification is not performed in direct-binary install paths" "install.sh reports bounded verification limitation"
@@ -166,6 +171,11 @@ if INSTALL_FROM_RELEASE_OUTPUT=$(sh "$SCRIPT_DIR/install-from-release.sh" "$RELE
   else
     fail "install-from-release.sh did not produce executable"
   fi
+  if [ -f "$INSTALL_DIR7/ts-worker/worker.mjs" ] && [ -f "$INSTALL_DIR7/ts-worker/manifest.json" ]; then
+    pass "install-from-release.sh installed Rust-hosted worker bundle"
+  else
+    fail "install-from-release.sh did not install Rust-hosted worker bundle"
+  fi
 else
   fail "install-from-release.sh failed"
 fi
@@ -178,8 +188,9 @@ echo "=== Test: verify-release-artifacts structured output ==="
 VERIFY_JSON=$(sh "$SCRIPT_DIR/verify-release-artifacts.sh" --json "$RELEASE_DIR")
 VERIFY_TIER=$(node -e 'const d=JSON.parse(process.argv[1]); process.stdout.write(String(d.verificationTier));' "$VERIFY_JSON")
 VERIFY_MANIFEST=$(node -e 'const d=JSON.parse(process.argv[1]); process.stdout.write(String(d.checks?.manifest));' "$VERIFY_JSON")
+VERIFY_WORKER_MANIFEST=$(node -e 'const d=JSON.parse(process.argv[1]); process.stdout.write(String(d.checks?.workerManifest));' "$VERIFY_JSON")
 VERIFY_SIGNATURE=$(node -e 'const d=JSON.parse(process.argv[1]); process.stdout.write(String(d.signature?.status));' "$VERIFY_JSON")
-if [ "$VERIFY_TIER" = "release-directory-verified" ] && [ "$VERIFY_MANIFEST" = "true" ] && [ -n "$VERIFY_SIGNATURE" ]; then
+if [ "$VERIFY_TIER" = "release-directory-verified" ] && [ "$VERIFY_MANIFEST" = "true" ] && [ "$VERIFY_WORKER_MANIFEST" = "true" ] && [ -n "$VERIFY_SIGNATURE" ]; then
   pass "verify-release-artifacts --json exposes structured verification facts"
 else
   fail "verify-release-artifacts --json missing required verification fields"
@@ -223,9 +234,14 @@ echo "=== Test: GitHub install fixture seam ==="
 GITHUB_FIXTURE=$(mktemp_dir)
 mkdir -p "$GITHUB_FIXTURE/latest/download"
 cp "$BIN_PATH" "$GITHUB_FIXTURE/latest/download/$BIN_NAME"
+cp "$RELEASE_DIR/worker.mjs" "$GITHUB_FIXTURE/latest/download/worker.mjs"
+cp "$RELEASE_DIR/worker-manifest.json" "$GITHUB_FIXTURE/latest/download/worker-manifest.json"
 (
   cd "$GITHUB_FIXTURE/latest/download"
   shasum -a 256 "$BIN_NAME" > SHA256SUMS
+  worker_sha=$(shasum -a 256 worker.mjs | cut -d' ' -f1)
+  printf '%s  ts-worker/worker.mjs\n' "$worker_sha" >> SHA256SUMS
+  shasum -a 256 worker-manifest.json >> SHA256SUMS
 )
 GITHUB_INSTALL_DIR=$(mktemp_dir)
 GITHUB_INSTALL_OUTPUT=""
@@ -235,6 +251,11 @@ if GITHUB_INSTALL_OUTPUT=$(DH_RELEASE_BASE_URL="file://$GITHUB_FIXTURE" sh "$SCR
   else
     fail "install-github-release.sh did not produce executable"
   fi
+  if [ -f "$GITHUB_INSTALL_DIR/ts-worker/worker.mjs" ] && [ -f "$GITHUB_INSTALL_DIR/ts-worker/manifest.json" ]; then
+    pass "install-github-release.sh installed Rust-hosted worker bundle"
+  else
+    fail "install-github-release.sh did not install Rust-hosted worker bundle"
+  fi
 else
   fail "install-github-release.sh failed with fixture seam"
 fi
@@ -242,25 +263,38 @@ assert_contains "$GITHUB_INSTALL_OUTPUT" "surface: lifecycle install (install-gi
 assert_contains "$GITHUB_INSTALL_OUTPUT" "condition: completed" "install-github-release reports completed"
 assert_contains "$GITHUB_INSTALL_OUTPUT" "manifest/file-size verification is not performed in GitHub release install path" "install-github-release reports bounded verification limitation"
 assert_contains "$GITHUB_INSTALL_OUTPUT" "signature verification is not performed in GitHub release install path" "install-github-release reports signature limitation"
-assert_contains "$GITHUB_INSTALL_OUTPUT" "Windows runtime installer parity remains unsupported" "install-github-release reports unsupported Windows parity across supported hosts"
+assert_contains "$GITHUB_INSTALL_OUTPUT" "supported release install targets are Linux and macOS; Windows is not a current target platform" "install-github-release reports Linux/macOS target platform boundary"
 
 echo "=== Test: GitHub upgrade fixture seam ==="
 GITHUB_UPGRADE_OUTPUT=""
 if GITHUB_UPGRADE_OUTPUT=$(DH_RELEASE_BASE_URL="file://$GITHUB_FIXTURE" sh "$SCRIPT_DIR/upgrade-github-release.sh" latest "$GITHUB_INSTALL_DIR" 2>&1); then
   pass "upgrade-github-release.sh succeeded with fixture seam"
+  if [ -f "$GITHUB_INSTALL_DIR/ts-worker/worker.mjs" ] && [ -f "$GITHUB_INSTALL_DIR/ts-worker/manifest.json" ]; then
+    pass "upgrade-github-release.sh installed Rust-hosted worker bundle"
+  else
+    fail "upgrade-github-release.sh did not install Rust-hosted worker bundle"
+  fi
 else
   fail "upgrade-github-release.sh failed with fixture seam"
 fi
 assert_contains "$GITHUB_UPGRADE_OUTPUT" "surface: lifecycle upgrade (upgrade-github-release)" "upgrade-github-release emits lifecycle surface"
 assert_contains "$GITHUB_UPGRADE_OUTPUT" "condition: completed" "upgrade-github-release reports completed"
 assert_contains "$GITHUB_UPGRADE_OUTPUT" "manifest/file-size verification is not performed in GitHub release upgrade path" "upgrade-github-release reports bounded verification limitation"
-assert_contains "$GITHUB_UPGRADE_OUTPUT" "Windows runtime installer parity remains unsupported" "upgrade-github-release reports unsupported Windows parity across supported hosts"
+assert_contains "$GITHUB_UPGRADE_OUTPUT" "supported release upgrade targets are Linux and macOS; Windows is not a current target platform" "upgrade-github-release reports Linux/macOS target platform boundary"
 
 echo "=== Test: GitHub install rejects checksum drift ==="
 GITHUB_BAD_FIXTURE=$(mktemp_dir)
 mkdir -p "$GITHUB_BAD_FIXTURE/latest/download"
 cp "$BIN_PATH" "$GITHUB_BAD_FIXTURE/latest/download/$BIN_NAME"
+cp "$RELEASE_DIR/worker.mjs" "$GITHUB_BAD_FIXTURE/latest/download/worker.mjs"
+cp "$RELEASE_DIR/worker-manifest.json" "$GITHUB_BAD_FIXTURE/latest/download/worker-manifest.json"
 printf '0000000000000000000000000000000000000000000000000000000000000000  %s\n' "$BIN_NAME" > "$GITHUB_BAD_FIXTURE/latest/download/SHA256SUMS"
+(
+  cd "$GITHUB_BAD_FIXTURE/latest/download"
+  worker_sha=$(shasum -a 256 worker.mjs | cut -d' ' -f1)
+  printf '%s  ts-worker/worker.mjs\n' "$worker_sha" >> SHA256SUMS
+  shasum -a 256 worker-manifest.json >> SHA256SUMS
+)
 if DH_RELEASE_BASE_URL="file://$GITHUB_BAD_FIXTURE" sh "$SCRIPT_DIR/install-github-release.sh" latest "$(mktemp_dir)" >/dev/null 2>&1; then
   fail "install-github-release.sh accepted checksum drift"
 else

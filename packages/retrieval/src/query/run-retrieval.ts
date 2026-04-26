@@ -16,6 +16,17 @@ import { resolveIndexedFileAbsolutePath, toRepoRelativePath } from "../../../int
 import type { IndexedFile } from "../../../shared/src/types/indexing.js";
 import { recordTelemetry } from "../semantic/telemetry-collector.js";
 
+/**
+ * Retrieval package execution path.
+ *
+ * Non-authoritative contract note:
+ * - `evidencePackets` emitted here are retrieval-local artifacts for diagnostics
+ *   and compatibility.
+ * - Touched product knowledge-command flows must consume canonical Rust evidence
+ *   packet truth and must not promote this retrieval-local packet output to
+ *   authoritative product evidence.
+ */
+
 export async function runRetrieval(input: {
   repoRoot: string;
   query: string;

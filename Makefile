@@ -6,7 +6,7 @@ PACKAGE_SCRIPT=scripts/package-release.sh
 RUST_RELEASE_STAGE_DIR=$(DIST_DIR)/rust-engine/releases
 VERSION ?= dev
 
-.PHONY: check test rust-test rust-build-release build package-release release-all
+.PHONY: check test rust-test worker-bundle rust-build-release build package-release release-all
 
 check:
 	npm run check
@@ -16,6 +16,9 @@ test:
 
 rust-test:
 	cargo test --workspace --manifest-path $(RUST_ENGINE_DIR)/Cargo.toml
+
+worker-bundle:
+	sh scripts/build-worker-bundle.sh
 
 rust-build-release:
 	mkdir -p $(RUST_RELEASE_STAGE_DIR)
@@ -29,7 +32,7 @@ rust-build-release:
 	cp "$(RUST_ENGINE_DIR)/target/release/dh-engine" "$(RUST_RELEASE_STAGE_DIR)/$(APP_NAME)-$$platform-$$arch"; \
 	chmod +x "$(RUST_RELEASE_STAGE_DIR)/$(APP_NAME)-$$platform-$$arch"
 
-build: check test rust-test rust-build-release
+build: check test rust-test worker-bundle rust-build-release
 
 release-dirs:
 	mkdir -p $(DIST_DIR)/releases
@@ -37,5 +40,5 @@ release-dirs:
 package-release:
 	sh $(PACKAGE_SCRIPT) $(RUST_RELEASE_STAGE_DIR) $(RELEASE_DIR) $(VERSION)
 
-release-all: check test rust-test rust-build-release
+release-all: check test rust-test worker-bundle rust-build-release
 	$(MAKE) package-release VERSION=$(VERSION)

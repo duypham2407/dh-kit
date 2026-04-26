@@ -1,10 +1,19 @@
+use crate::host_lifecycle::{lifecycle_contract, LifecycleContract};
+use crate::worker_protocol::{
+    is_worker_to_host_query_method, worker_protocol_contract, WorkerProtocolContract,
+    BRIDGE_INITIALIZE_METHODS, BRIDGE_LIFECYCLE_CONTROL_METHODS, BUILD_EVIDENCE_DEFAULT_MAX_FILES,
+    BUILD_EVIDENCE_DEFAULT_MAX_SNIPPETS, BUILD_EVIDENCE_DEFAULT_MAX_SYMBOLS,
+    BUILD_EVIDENCE_HARD_MAX_FILES, BUILD_EVIDENCE_HARD_MAX_SNIPPETS,
+    BUILD_EVIDENCE_HARD_MAX_SYMBOLS, QUERY_BUILD_EVIDENCE_METHOD, QUERY_RELATIONSHIPS,
+    WORKER_PROTOCOL_VERSION,
+};
 use anyhow::{Context, Result};
 use dh_query::{
     capability_state_to_wire, capability_to_wire, classify_relationship_support,
     classify_search_support, infer_language_from_path, infer_query_languages_from_paths,
     language_capability_matrix, language_id_to_wire, summarize_language_capability,
-    FindDependenciesQuery, FindDependentsQuery, FindReferencesQuery, FindSymbolQuery,
-    GotoDefinitionQuery, QueryEngine,
+    BuildEvidenceQuery, FindDependenciesQuery, FindDependentsQuery, FindReferencesQuery,
+    FindSymbolQuery, GotoDefinitionQuery, QueryEngine,
 };
 use dh_storage::{Database, FileRepository, GraphRepository};
 use dh_types::{
@@ -19,11 +28,125 @@ use std::path::{Path, PathBuf};
 
 const DEFAULT_DB_NAME: &str = "dh-index.db";
 
-#[derive(Debug)]
-struct RpcRequest {
-    id: Value,
-    method: String,
-    params: Value,
+#[derive(Debug, Clone)]
+pub struct BridgeRpcError {
+    jsonrpc_code: i64,
+    symbolic_code: String,
+    message: String,
+}
+
+impl BridgeRpcError {
+    pub fn invalid_request(message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc_code: -32602,
+            symbolic_code: "INVALID_REQUEST".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn capability_unsupported(message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc_code: -32601,
+            symbolic_code: "CAPABILITY_UNSUPPORTED".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn access_denied(message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc_code: -32010,
+            symbolic_code: "ACCESS_DENIED".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc_code: -32011,
+            symbolic_code: "NOT_FOUND".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn timeout(message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc_code: -32012,
+            symbolic_code: "TIMEOUT".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn execution_failed(message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc_code: -32013,
+            symbolic_code: "EXECUTION_FAILED".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn runtime_unavailable(message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc_code: -32014,
+            symbolic_code: "RUNTIME_UNAVAILABLE".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn binary_file_unsupported(message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc_code: -32015,
+            symbolic_code: "BINARY_FILE_UNSUPPORTED".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn to_response(self, id: Value) -> Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": self.jsonrpc_code,
+                "message": self.message,
+                "data": {
+                    "code": self.symbolic_code,
+                },
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RpcRequest {
+    pub id: Value,
+    pub method: String,
+    pub params: Value,
+}
+
+pub struct BridgeRpcRouter<'a> {
+    workspace: &'a Path,
+    db: &'a Database,
+}
+
+impl<'a> BridgeRpcRouter<'a> {
+    pub fn new(workspace: &'a Path, db: &'a Database) -> Self {
+        Self { workspace, db }
+    }
+
+    pub fn route(&self, request: RpcRequest) -> Value {
+        handle_request(self.workspace, self.db, request)
+    }
+
+    pub fn route_worker_query(&self, request: RpcRequest) -> Value {
+        if !is_worker_to_host_query_method(&request.method) {
+            return BridgeRpcError::capability_unsupported(format!(
+                "worker-to-host RPC method '{}' is outside the first-wave host query contract",
+                request.method
+            ))
+            .to_response(request.id);
+        }
+
+        self.route(request)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -126,6 +249,41 @@ struct BridgeResult {
     language_capability_summary: Option<WireLanguageCapabilitySummary>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireLifecycleControl {
+    methods: Vec<&'static str>,
+    max_auto_restarts: u8,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeCapabilities {
+    protocol_version: &'static str,
+    methods: Vec<&'static str>,
+    query_relationship: BridgeQueryRelationshipCapabilities,
+    language_capability_matrix: Vec<WireLanguageCapabilityEntry>,
+    lifecycle_control: WireLifecycleControl,
+    rust_host_lifecycle_contract: LifecycleContract,
+    worker_protocol_contract: WorkerProtocolContract,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeQueryRelationshipCapabilities {
+    supported_relations: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeResult {
+    server_name: &'static str,
+    server_version: &'static str,
+    workspace_root: String,
+    protocol_version: &'static str,
+    capabilities: BridgeCapabilities,
+}
+
 pub fn run_bridge_server(workspace: PathBuf) -> Result<()> {
     let db_path = workspace.join(DEFAULT_DB_NAME);
     let db = Database::new(&db_path).with_context(|| format!("open db: {}", db_path.display()))?;
@@ -135,6 +293,8 @@ pub fn run_bridge_server(workspace: PathBuf) -> Result<()> {
     let stdout = io::stdout();
     let mut reader = BufReader::new(stdin.lock());
     let mut writer = io::BufWriter::new(stdout.lock());
+
+    let router = BridgeRpcRouter::new(&workspace, &db);
 
     loop {
         let request = match read_rpc_request(&mut reader) {
@@ -146,7 +306,7 @@ pub fn run_bridge_server(workspace: PathBuf) -> Result<()> {
         };
 
         let should_shutdown = request.method == "dh.shutdown";
-        let response = handle_request(&workspace, &db, request);
+        let response = router.route(request);
         write_rpc_response(&mut writer, &response)?;
         if should_shutdown {
             break;
@@ -200,46 +360,7 @@ fn read_rpc_request(reader: &mut BufReader<impl Read>) -> Result<RpcRequest> {
 
 fn handle_request(workspace: &Path, db: &Database, request: RpcRequest) -> Value {
     match request.method.as_str() {
-        "dh.initialize" => json!({
-            "jsonrpc": "2.0",
-            "id": request.id,
-            "result": {
-                "serverName": "dh-engine",
-                "serverVersion": env!("CARGO_PKG_VERSION"),
-                "workspaceRoot": workspace.to_string_lossy(),
-                "protocolVersion": "1",
-                "capabilities": {
-                    "protocolVersion": "1",
-                    "methods": [
-                        "dh.initialize",
-                        "query.search",
-                        "query.definition",
-                        "query.relationship"
-                    ],
-                    "queryRelationship": {
-                        "supportedRelations": [
-                            "usage",
-                            "dependencies",
-                            "dependents"
-                        ]
-                    },
-                    "languageCapabilityMatrix": language_capability_matrix()
-                        .into_iter()
-                        .map(to_wire_language_capability_entry)
-                        .collect::<Vec<_>>(),
-                    "lifecycleControl": {
-                        "methods": [
-                            "dh.initialized",
-                            "dh.ready",
-                            "session.runCommand",
-                            "runtime.ping",
-                            "dh.shutdown"
-                        ],
-                        "maxAutoRestarts": 1
-                    }
-                }
-            }
-        }),
+        "dh.initialize" => ok_result(request.id, initialize_result(workspace)),
         "dh.initialized" => ok_result(
             request.id,
             json!({
@@ -292,25 +413,18 @@ fn handle_request(workspace: &Path, db: &Database, request: RpcRequest) -> Value
                 );
             }
 
-            if query_method != "query.search"
-                && query_method != "query.definition"
-                && query_method != "query.relationship"
-            {
+            if !is_worker_to_host_query_method(&query_method) {
                 return method_not_supported(
                     request.id,
                     &format!("session.runCommand does not support method: {query_method}"),
                 );
             }
 
-            let delegated = handle_request(
-                workspace,
-                db,
-                RpcRequest {
-                    id: request.id.clone(),
-                    method: query_method.clone(),
-                    params: query_params,
-                },
-            );
+            let delegated = BridgeRpcRouter::new(workspace, db).route_worker_query(RpcRequest {
+                id: request.id.clone(),
+                method: query_method.clone(),
+                params: query_params,
+            });
 
             if delegated.get("error").is_some() {
                 return delegated;
@@ -718,14 +832,103 @@ fn handle_request(workspace: &Path, db: &Database, request: RpcRequest) -> Value
                 ),
             }
         }
-        _ => json!({
-            "jsonrpc": "2.0",
-            "id": request.id,
-            "error": {
-                "code": -32601,
-                "message": format!("method not found: {}", request.method)
+        QUERY_BUILD_EVIDENCE_METHOD => {
+            let query = str_param(&request.params, "query").unwrap_or_default();
+            if query.trim().is_empty() {
+                return invalid_params(
+                    request.id,
+                    "query.buildEvidence requires a non-empty 'query' parameter",
+                );
             }
+
+            let workspace_id = int_param(&request.params, "workspaceId", 1) as i64;
+            let raw_intent = str_param(&request.params, "intent").unwrap_or_default();
+            let intent = raw_intent.trim();
+            if !intent.is_empty() && !intent.eq_ignore_ascii_case("explain") {
+                return ok_result(
+                    request.id,
+                    unsupported_build_evidence_intent_result(query, intent),
+                );
+            }
+            let intent = "explain".to_string();
+            let targets = string_array_param(&request.params, "targets");
+            let budget = request
+                .params
+                .get("budget")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let max_files = int_param(&budget, "maxFiles", BUILD_EVIDENCE_DEFAULT_MAX_FILES)
+                .min(BUILD_EVIDENCE_HARD_MAX_FILES);
+            let max_symbols = int_param(&budget, "maxSymbols", BUILD_EVIDENCE_DEFAULT_MAX_SYMBOLS)
+                .min(BUILD_EVIDENCE_HARD_MAX_SYMBOLS);
+            let max_snippets =
+                int_param(&budget, "maxSnippets", BUILD_EVIDENCE_DEFAULT_MAX_SNIPPETS)
+                    .min(BUILD_EVIDENCE_HARD_MAX_SNIPPETS);
+            let freshness = str_param_opt(&request.params, "freshness");
+
+            match db.build_evidence(BuildEvidenceQuery {
+                workspace_id,
+                query,
+                intent,
+                targets,
+                max_files,
+                max_symbols,
+                max_snippets,
+                freshness,
+            }) {
+                Ok(result) => {
+                    let items = build_evidence_preview_items(&result.evidence);
+                    ok_result(
+                        request.id,
+                        BridgeResult {
+                            answer_state: answer_state_str(result.answer_state).into(),
+                            question_class: "build_evidence".into(),
+                            items,
+                            evidence: Some(to_wire_evidence_packet(result.evidence, None)),
+                            language_capability_summary: None,
+                        },
+                    )
+                }
+                Err(err) => {
+                    internal_error(request.id, format!("query.buildEvidence failed: {err}"))
+                }
+            }
+        }
+        _ => method_not_supported(
+            request.id,
+            &format!(
+                "RPC method '{}' is outside the bounded bridge query contract",
+                request.method
+            ),
+        ),
+    }
+}
+
+fn unsupported_build_evidence_intent_result(query: String, intent: &str) -> BridgeResult {
+    BridgeResult {
+        answer_state: "unsupported".into(),
+        question_class: "build_evidence".into(),
+        items: Vec::new(),
+        evidence: Some(WireEvidencePacket {
+            answer_state: "unsupported".into(),
+            question_class: "build_evidence".into(),
+            subject: query,
+            summary: "Build evidence (explain)".into(),
+            conclusion: format!(
+                "unsupported build-evidence intent: '{intent}' is outside the bounded explain-only contract"
+            ),
+            evidence: Vec::new(),
+            gaps: vec![format!(
+                "query.buildEvidence intent must be empty or 'explain'; received '{intent}'"
+            )],
+            bounds: WireEvidenceBounds {
+                hop_count: Some(0),
+                node_limit: Some(0),
+                traversal_scope: Some("build_evidence".into()),
+                stop_reason: Some("unsupported_intent".into()),
+            },
         }),
+        language_capability_summary: None,
     }
 }
 
@@ -734,6 +937,32 @@ fn write_rpc_response(writer: &mut io::BufWriter<impl Write>, payload: &Value) -
     write!(writer, "Content-Length: {}\r\n\r\n{}", body.len(), body)?;
     writer.flush()?;
     Ok(())
+}
+
+fn initialize_result(workspace: &Path) -> InitializeResult {
+    InitializeResult {
+        server_name: "dh-engine",
+        server_version: env!("CARGO_PKG_VERSION"),
+        workspace_root: workspace.to_string_lossy().to_string(),
+        protocol_version: WORKER_PROTOCOL_VERSION,
+        capabilities: BridgeCapabilities {
+            protocol_version: WORKER_PROTOCOL_VERSION,
+            methods: BRIDGE_INITIALIZE_METHODS.to_vec(),
+            query_relationship: BridgeQueryRelationshipCapabilities {
+                supported_relations: QUERY_RELATIONSHIPS.to_vec(),
+            },
+            language_capability_matrix: language_capability_matrix()
+                .into_iter()
+                .map(to_wire_language_capability_entry)
+                .collect::<Vec<_>>(),
+            lifecycle_control: WireLifecycleControl {
+                methods: BRIDGE_LIFECYCLE_CONTROL_METHODS.to_vec(),
+                max_auto_restarts: 1,
+            },
+            rust_host_lifecycle_contract: lifecycle_contract(),
+            worker_protocol_contract: worker_protocol_contract(),
+        },
+    }
 }
 
 fn ok_result(id: Value, result: impl Serialize) -> Value {
@@ -745,25 +974,11 @@ fn ok_result(id: Value, result: impl Serialize) -> Value {
 }
 
 fn invalid_params(id: Value, message: &str) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": {
-            "code": -32602,
-            "message": message
-        }
-    })
+    BridgeRpcError::invalid_request(message).to_response(id)
 }
 
 fn method_not_supported(id: Value, message: &str) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": {
-            "code": -32601,
-            "message": message
-        }
-    })
+    BridgeRpcError::capability_unsupported(message).to_response(id)
 }
 
 fn internal_error(id: Value, message: String) -> Value {
@@ -786,6 +1001,22 @@ fn str_param(params: &Value, key: &str) -> Option<String> {
 
 fn str_param_opt(params: &Value, key: &str) -> Option<String> {
     str_param(params, key).filter(|s| !s.trim().is_empty())
+}
+
+fn string_array_param(params: &Value, key: &str) -> Vec<String> {
+    params
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 fn int_param(params: &Value, key: &str, default: usize) -> usize {
@@ -816,6 +1047,7 @@ fn answer_state_str(state: AnswerState) -> &'static str {
 fn question_class_str(class: QuestionClass) -> &'static str {
     match class {
         QuestionClass::FindSymbol => "find_symbol",
+        QuestionClass::BuildEvidence => "build_evidence",
         QuestionClass::Definition => "definition",
         QuestionClass::References => "references",
         QuestionClass::Dependencies => "dependencies",
@@ -965,6 +1197,29 @@ fn build_definition_insufficient_evidence_packet(
             stop_reason: Some("no_definition_match".into()),
         },
     }
+}
+
+fn build_evidence_preview_items(packet: &EvidencePacket) -> Vec<SearchItem> {
+    packet
+        .evidence
+        .iter()
+        .take(10)
+        .map(|entry| SearchItem {
+            file_path: entry.file_path.clone(),
+            line_start: entry.line_start.unwrap_or(0),
+            line_end: entry.line_end.unwrap_or(0),
+            snippet: entry
+                .snippet
+                .clone()
+                .or_else(|| entry.symbol.clone())
+                .unwrap_or_else(|| entry.reason.clone()),
+            reason: entry.reason.clone(),
+            score: match entry.confidence {
+                EvidenceConfidence::Grounded => 0.95,
+                EvidenceConfidence::Partial => 0.70,
+            },
+        })
+        .collect()
 }
 
 fn to_wire_evidence_packet(
@@ -1211,7 +1466,7 @@ fn push_language(target: &mut Vec<LanguageId>, language: LanguageId) {
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_request, RpcRequest};
+    use super::{handle_request, BridgeRpcRouter, RpcRequest};
     use dh_storage::{
         CallEdgeRepository, Database, FileRepository, ImportRepository, ReferenceRepository,
         SymbolRepository,
@@ -1707,6 +1962,58 @@ mod tests {
         );
         assert!(dependents["result"]["items"].as_array().is_some());
 
+        let build_evidence = handle_request(
+            tmp.path(),
+            &db,
+            mk(
+                "query.buildEvidence",
+                json!({
+                    "query": "how does helper work?",
+                    "intent": "explain",
+                    "targets": ["helper"],
+                    "budget": {
+                        "maxFiles": 5,
+                        "maxSymbols": 8,
+                        "maxSnippets": 8
+                    },
+                    "workspaceId": 1
+                }),
+            ),
+        );
+        assert_eq!(build_evidence["result"]["answerState"], json!("grounded"));
+        assert_eq!(
+            build_evidence["result"]["questionClass"],
+            json!("build_evidence")
+        );
+        assert_eq!(
+            build_evidence["result"]["evidence"]["questionClass"],
+            json!("build_evidence")
+        );
+        assert!(build_evidence["result"]["evidence"]["evidence"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()));
+
+        let build_evidence_unsupported = handle_request(
+            tmp.path(),
+            &db,
+            mk(
+                "query.buildEvidence",
+                json!({
+                    "query": "trace flow through the entire subsystem",
+                    "intent": "explain",
+                    "workspaceId": 1
+                }),
+            ),
+        );
+        assert_eq!(
+            build_evidence_unsupported["result"]["answerState"],
+            json!("unsupported")
+        );
+        assert_eq!(
+            build_evidence_unsupported["result"]["evidence"]["bounds"]["stopReason"],
+            json!("runtime_trace")
+        );
+
         let unsupported_unknown_usage = handle_request(
             tmp.path(),
             &db,
@@ -1808,7 +2115,8 @@ mod tests {
                 "dh.initialize",
                 "query.search",
                 "query.definition",
-                "query.relationship"
+                "query.relationship",
+                "query.buildEvidence"
             ])
         );
         assert_eq!(
@@ -1829,6 +2137,377 @@ mod tests {
             response["result"]["capabilities"]["lifecycleControl"]["maxAutoRestarts"],
             json!(1)
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn initialize_advertises_bounded_rust_host_lifecycle_contract() -> anyhow::Result<()> {
+        let (tmp, db) = setup_db()?;
+        let response = handle_request(
+            tmp.path(),
+            &db,
+            RpcRequest {
+                id: json!(43),
+                method: "dh.initialize".into(),
+                params: json!({}),
+            },
+        );
+
+        let contract = &response["result"]["capabilities"]["rustHostLifecycleContract"];
+        assert_eq!(contract["topology"], json!("rust_host_ts_worker"));
+        assert_eq!(
+            contract["supportBoundary"],
+            json!("knowledge_commands_first_wave")
+        );
+        assert_eq!(
+            contract["supportedCommands"],
+            json!(["ask", "explain", "trace"])
+        );
+        assert_eq!(contract["authorityOwner"], json!("rust"));
+        assert_eq!(contract["workerRole"], json!("typescript_worker"));
+        assert_eq!(contract["boundaries"]["localOnly"], json!(true));
+        assert_eq!(contract["boundaries"]["networkTransport"], json!(false));
+        assert_eq!(contract["boundaries"]["daemonMode"], json!(false));
+        assert_eq!(contract["boundaries"]["windowsSupport"], json!(false));
+
+        let protocol = &response["result"]["capabilities"]["workerProtocolContract"];
+        assert_eq!(
+            protocol["framing"]["transport"],
+            json!("jsonrpc_stdio_content_length")
+        );
+        assert_eq!(protocol["framing"]["networkTransport"], json!(false));
+        assert_eq!(
+            protocol["framing"]["arbitraryMethodPassthrough"],
+            json!(false)
+        );
+        assert_eq!(
+            protocol["workerToHostQueryMethods"],
+            json!([
+                "query.search",
+                "query.definition",
+                "query.relationship",
+                "query.buildEvidence"
+            ])
+        );
+        assert_eq!(
+            protocol["buildEvidence"]["answerStates"],
+            json!(["grounded", "partial", "insufficient", "unsupported"])
+        );
+        assert_eq!(
+            protocol["buildEvidence"]["canonicalPacketOwner"],
+            json!("rust")
+        );
+        assert_eq!(
+            protocol["buildEvidence"]["lifecycleEvidenceSeparation"],
+            json!(true)
+        );
+        assert_eq!(
+            protocol["buildEvidence"]["typescriptPacketSynthesis"],
+            json!(false)
+        );
+        assert_eq!(
+            protocol["buildEvidence"]["genericPassthrough"],
+            json!(false)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_rpc_router_reuses_query_handlers_without_stdio_server() -> anyhow::Result<()> {
+        let (tmp, db) = setup_db()?;
+        seed(&db)?;
+        let router = BridgeRpcRouter::new(tmp.path(), &db);
+
+        let response = router.route_worker_query(RpcRequest {
+            id: json!(44),
+            method: "query.definition".into(),
+            params: json!({ "symbol": "helper", "workspaceId": 1 }),
+        });
+
+        assert_eq!(response["result"]["questionClass"], json!("definition"));
+        let items = response["result"]["items"].as_array();
+        assert!(items.is_some());
+        assert!(!items.unwrap().is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_rpc_router_routes_named_build_evidence_without_generic_passthrough(
+    ) -> anyhow::Result<()> {
+        let (tmp, db) = setup_db()?;
+        seed(&db)?;
+        let router = BridgeRpcRouter::new(tmp.path(), &db);
+
+        let response = router.route_worker_query(RpcRequest {
+            id: json!(46),
+            method: "query.buildEvidence".into(),
+            params: json!({
+                "query": "how does helper work?",
+                "intent": "explain",
+                "targets": ["helper"],
+                "budget": {
+                    "maxFiles": 5,
+                    "maxSymbols": 8,
+                    "maxSnippets": 8
+                },
+                "freshness": "indexed",
+                "workspaceId": 1
+            }),
+        });
+
+        assert_eq!(response["result"]["answerState"], json!("grounded"));
+        assert_eq!(response["result"]["questionClass"], json!("build_evidence"));
+        assert_eq!(
+            response["result"]["evidence"]["answerState"],
+            json!("grounded")
+        );
+        assert_eq!(
+            response["result"]["evidence"]["questionClass"],
+            json!("build_evidence")
+        );
+        assert!(response["result"]["evidence"]["evidence"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()));
+        assert!(response["result"]["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_build_evidence_rejects_non_explain_intents_without_grounding() -> anyhow::Result<()> {
+        let (tmp, db) = setup_db()?;
+        seed(&db)?;
+        let router = BridgeRpcRouter::new(tmp.path(), &db);
+
+        for intent in ["trace", "impact", "call_hierarchy", "arbitrary"] {
+            let response = router.route_worker_query(RpcRequest {
+                id: json!(50),
+                method: "query.buildEvidence".into(),
+                params: json!({
+                    "query": "how does helper work?",
+                    "intent": intent,
+                    "targets": ["helper"],
+                    "workspaceId": 1
+                }),
+            });
+
+            assert_eq!(response["result"]["answerState"], json!("unsupported"));
+            assert_eq!(response["result"]["questionClass"], json!("build_evidence"));
+            assert_eq!(response["result"]["items"], json!([]));
+            assert_eq!(
+                response["result"]["evidence"]["answerState"],
+                json!("unsupported")
+            );
+            assert_eq!(
+                response["result"]["evidence"]["bounds"]["stopReason"],
+                json!("unsupported_intent")
+            );
+            assert!(response["result"]["evidence"]["evidence"]
+                .as_array()
+                .is_some_and(|items| items.is_empty()));
+            assert!(response["result"]["evidence"]["gaps"]
+                .as_array()
+                .is_some_and(|gaps| gaps.iter().any(|gap| gap
+                    .as_str()
+                    .is_some_and(|value| value.contains("query.buildEvidence intent")))));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_build_evidence_preserves_unsupported_language_packet_state() -> anyhow::Result<()> {
+        let (tmp, db) = setup_db()?;
+        seed(&db)?;
+        let router = BridgeRpcRouter::new(tmp.path(), &db);
+
+        let response = router.route_worker_query(RpcRequest {
+            id: json!(47),
+            method: "query.buildEvidence".into(),
+            params: json!({
+                "query": "how does mystery_symbol work?",
+                "intent": "explain",
+                "targets": ["mystery_symbol"],
+                "workspaceId": 1
+            }),
+        });
+
+        assert_eq!(response["result"]["answerState"], json!("unsupported"));
+        assert_eq!(
+            response["result"]["evidence"]["answerState"],
+            json!("unsupported")
+        );
+        assert_eq!(
+            response["result"]["evidence"]["bounds"]["stopReason"],
+            json!("unsupported_language_capability")
+        );
+        assert!(response["result"]["evidence"]["evidence"]
+            .as_array()
+            .is_some_and(|items| items.is_empty()));
+        assert!(response["result"]["evidence"]["gaps"]
+            .as_array()
+            .is_some_and(|gaps| gaps.iter().any(|gap| gap
+                .as_str()
+                .is_some_and(|value| value.contains("unsupported language/capability")))));
+
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_build_evidence_preserves_partial_and_insufficient_packet_states() -> anyhow::Result<()>
+    {
+        let (tmp, db) = setup_db()?;
+        seed(&db)?;
+        let router = BridgeRpcRouter::new(tmp.path(), &db);
+
+        db.upsert_file(&File {
+            id: 1,
+            workspace_id: 1,
+            root_id: 1,
+            package_id: None,
+            rel_path: "src/main.ts".into(),
+            language: LanguageId::TypeScript,
+            size_bytes: 1,
+            mtime_unix_ms: 1,
+            content_hash: "a-stale".into(),
+            structure_hash: None,
+            public_api_hash: None,
+            parse_status: ParseStatus::ParsedWithErrors,
+            parse_error: Some("recoverable parser issue".into()),
+            symbol_count: 1,
+            chunk_count: 0,
+            is_barrel: false,
+            last_indexed_at_unix_ms: None,
+            deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::DegradedPartial,
+            freshness_reason: Some(FreshnessReason::RecoverableParseIssues),
+            last_freshness_run_id: Some("run-bridge-partial".into()),
+        })?;
+
+        let partial = router.route_worker_query(RpcRequest {
+            id: json!(48),
+            method: "query.buildEvidence".into(),
+            params: json!({
+                "query": "how does run work?",
+                "intent": "explain",
+                "targets": ["run"],
+                "budget": {
+                    "maxFiles": 1,
+                    "maxSymbols": 8,
+                    "maxSnippets": 1
+                },
+                "workspaceId": 1
+            }),
+        });
+
+        assert_eq!(partial["result"]["answerState"], json!("partial"));
+        assert_eq!(
+            partial["result"]["evidence"]["answerState"],
+            json!("partial")
+        );
+        assert_eq!(
+            partial["result"]["evidence"]["bounds"]["stopReason"],
+            json!("partial_index_or_capability")
+        );
+        assert!(partial["result"]["evidence"]["gaps"]
+            .as_array()
+            .is_some_and(|gaps| gaps.iter().any(|gap| gap
+                .as_str()
+                .is_some_and(|value| value.contains("partial index coverage")))));
+
+        let insufficient = router.route_worker_query(RpcRequest {
+            id: json!(49),
+            method: "query.buildEvidence".into(),
+            params: json!({
+                "query": "how does definitely_missing_subject work?",
+                "intent": "explain",
+                "targets": ["definitely_missing_subject"],
+                "workspaceId": 1
+            }),
+        });
+
+        assert_eq!(insufficient["result"]["answerState"], json!("insufficient"));
+        assert_eq!(
+            insufficient["result"]["evidence"]["answerState"],
+            json!("insufficient")
+        );
+        assert_eq!(
+            insufficient["result"]["evidence"]["bounds"]["stopReason"],
+            json!("insufficient_evidence")
+        );
+        assert!(insufficient["result"]["evidence"]["evidence"]
+            .as_array()
+            .is_some_and(|items| items.is_empty()));
+        assert!(insufficient["result"]["evidence"]["gaps"]
+            .as_array()
+            .is_some_and(|gaps| gaps.iter().any(|gap| gap
+                .as_str()
+                .is_some_and(|value| value.contains("no indexed evidence")))));
+
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_rpc_router_rejects_methods_outside_worker_query_contract() -> anyhow::Result<()> {
+        let (tmp, db) = setup_db()?;
+        let router = BridgeRpcRouter::new(tmp.path(), &db);
+
+        for method in [
+            "tool.execute",
+            "query.trace",
+            "query.impactAnalysis",
+            "query.callHierarchy",
+            "arbitrary.forward",
+        ] {
+            let response = router.route_worker_query(RpcRequest {
+                id: json!(45),
+                method: method.into(),
+                params: json!({}),
+            });
+
+            assert_eq!(response["error"]["code"], json!(-32601));
+            assert_eq!(
+                response["error"]["data"]["code"],
+                json!("CAPABILITY_UNSUPPORTED")
+            );
+            assert!(response["error"]["message"]
+                .as_str()
+                .is_some_and(|value| value.contains("outside the first-wave host query contract")));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn direct_bridge_rejects_out_of_scope_query_methods_with_capability_reason(
+    ) -> anyhow::Result<()> {
+        let (tmp, db) = setup_db()?;
+
+        for method in ["query.trace", "query.impactAnalysis", "query.callHierarchy"] {
+            let response = handle_request(
+                tmp.path(),
+                &db,
+                RpcRequest {
+                    id: json!(72),
+                    method: method.into(),
+                    params: json!({}),
+                },
+            );
+
+            assert_eq!(response["error"]["code"], json!(-32601));
+            assert_eq!(
+                response["error"]["data"]["code"],
+                json!("CAPABILITY_UNSUPPORTED")
+            );
+            assert!(response["error"]["message"]
+                .as_str()
+                .is_some_and(|value| value.contains("outside the bounded bridge query contract")));
+        }
 
         Ok(())
     }
@@ -1894,6 +2573,58 @@ mod tests {
         );
         assert_eq!(run_command["result"]["method"], json!("query.definition"));
         assert!(run_command["result"]["items"].as_array().is_some());
+
+        let run_build_evidence = handle_request(
+            tmp.path(),
+            &db,
+            RpcRequest {
+                id: json!(12),
+                method: "session.runCommand".into(),
+                params: json!({
+                    "query": {
+                        "method": "query.buildEvidence",
+                        "params": {
+                            "query": "how does helper work?",
+                            "intent": "explain",
+                            "targets": ["helper"],
+                            "workspaceId": 1
+                        }
+                    }
+                }),
+            },
+        );
+        assert_eq!(
+            run_build_evidence["result"]["method"],
+            json!("query.buildEvidence")
+        );
+        assert_eq!(
+            run_build_evidence["result"]["questionClass"],
+            json!("build_evidence")
+        );
+        assert_eq!(
+            run_build_evidence["result"]["evidence"]["questionClass"],
+            json!("build_evidence")
+        );
+
+        let run_arbitrary_method = handle_request(
+            tmp.path(),
+            &db,
+            RpcRequest {
+                id: json!(13),
+                method: "session.runCommand".into(),
+                params: json!({
+                    "query": {
+                        "method": "arbitrary.forward",
+                        "params": {}
+                    }
+                }),
+            },
+        );
+        assert_eq!(run_arbitrary_method["error"]["code"], json!(-32601));
+        assert_eq!(
+            run_arbitrary_method["error"]["data"]["code"],
+            json!("CAPABILITY_UNSUPPORTED")
+        );
 
         let shutdown = handle_request(
             tmp.path(),

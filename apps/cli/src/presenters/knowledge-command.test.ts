@@ -18,6 +18,90 @@ function makeReport(overrides?: Partial<KnowledgeCommandReport>): KnowledgeComma
   };
 }
 
+function makeBuildEvidenceReport(
+  overrides?: Partial<KnowledgeCommandReport>,
+  packetOverrides?: Partial<NonNullable<KnowledgeCommandReport["rustEvidence"]>>,
+): KnowledgeCommandReport {
+  const packet: NonNullable<KnowledgeCommandReport["rustEvidence"]> = {
+    answerState: "grounded",
+    questionClass: "build_evidence",
+    subject: "auth",
+    summary: "Auth build evidence summary from Rust.",
+    conclusion: "Auth is grounded by Rust packet evidence.",
+    evidence: [
+      {
+        kind: "symbol",
+        filePath: "src/auth.ts",
+        lineStart: 3,
+        lineEnd: 18,
+        reason: "Rust packet provenance",
+        source: "graph",
+        confidence: "grounded",
+        symbol: "auth",
+      },
+    ],
+    gaps: [],
+    bounds: {
+      traversalScope: "build_evidence",
+      hopCount: 1,
+      nodeLimit: 5,
+    },
+    ...packetOverrides,
+  };
+
+  return makeReport({
+    intent: "bridge_query_build_evidence",
+    tools: ["rust_bridge_jsonrpc"],
+    resultCount: 1,
+    evidenceCount: packet.evidence.length,
+    evidencePreview: packet.evidence.map((entry) => `evidence 1: ${entry.filePath} via=query.buildEvidence reason=${entry.reason}`),
+    answer: packet.answerState === "grounded" ? packet.conclusion : `${packet.answerState} answer: ${packet.conclusion}`,
+    answerType: packet.answerState === "grounded" ? "build_evidence" : packet.answerState === "unsupported" ? "unsupported" : "partial",
+    answerState: packet.answerState,
+    questionClass: packet.questionClass,
+    requestedQuestionClass: "graph_build_evidence",
+    rustEvidence: packet,
+    evidence: packet.evidence.map((entry) => ({
+      filePath: entry.filePath,
+      lineStart: entry.lineStart,
+      lineEnd: entry.lineEnd,
+      reason: entry.reason,
+      sourceMethod: "query.buildEvidence",
+      source: entry.source,
+      confidence: entry.confidence,
+      kind: entry.kind,
+      symbol: entry.symbol,
+    })),
+    limitations: packet.gaps,
+    bridgeEvidence: {
+      enabled: true,
+      startupSucceeded: true,
+      method: "query.buildEvidence",
+      seamMethod: "session.runCommand",
+      delegatedMethod: "query.buildEvidence",
+      requestId: 44,
+      rustBacked: true,
+      protocolVersion: "1",
+    },
+    hostLifecycle: {
+      topology: "rust_host_ts_worker",
+      supportBoundary: "knowledge_commands_first_wave",
+      authorityOwner: "rust",
+      workerRole: "typescript_worker",
+      platform: "linux",
+      workerState: "stopped",
+      healthState: "healthy",
+      failurePhase: "none",
+      timeoutClass: "none",
+      recoveryOutcome: "not_attempted",
+      cleanupOutcome: "graceful",
+      finalStatus: "clean_success",
+      finalExitCode: 0,
+    },
+    ...overrides,
+  });
+}
+
 describe("knowledge command presenters", () => {
   it("renders text output", () => {
     const text = renderKnowledgeCommandText(
@@ -39,6 +123,8 @@ describe("knowledge command presenters", () => {
           enabled: true,
           startupSucceeded: true,
           method: "query.search",
+          seamMethod: "session.runCommand",
+          delegatedMethod: "query.search",
           requestId: 12,
           rustBacked: true,
           protocolVersion: "1",
@@ -62,6 +148,29 @@ describe("knowledge command presenters", () => {
               },
             ],
           },
+        },
+        executionBoundary: {
+          path: "legacy_ts_host_bridge_compatibility",
+          rustHosted: false,
+          lifecycleAuthority: "not_claimed",
+          label: "legacy_ts_host_bridge_compatibility_only",
+          note: "legacy compatibility path",
+        },
+        hostLifecycle: {
+          topology: "rust_host_ts_worker",
+          supportBoundary: "knowledge_commands_first_wave",
+          authorityOwner: "rust",
+          workerRole: "typescript_worker",
+          platform: "linux",
+          workerState: "stopped",
+          healthState: "healthy",
+          failurePhase: "none",
+          timeoutClass: "none",
+          recoveryOutcome: "not_attempted",
+          cleanupOutcome: "graceful",
+          finalStatus: "clean_success",
+          finalExitCode: 0,
+          legacyPathLabel: "legacy_ts_host_bridge_compatibility_only",
         },
         answer: "Best file-discovery match: src/a.ts [1-10].",
         answerType: "search_match",
@@ -127,11 +236,19 @@ describe("knowledge command presenters", () => {
     expect(text).toContain("bridge startup succeeded: true");
     expect(text).toContain("bridge rust backed: true");
     expect(text).toContain("bridge method: query.search");
+    expect(text).toContain("bridge seam method: session.runCommand");
+    expect(text).toContain("bridge delegated method: query.search");
     expect(text).toContain("bridge request id: 12");
     expect(text).toContain("bridge protocol version: 1");
     expect(text).toContain("bridge capability protocol: 1");
     expect(text).toContain("bridge capability methods: dh.initialize, query.search, query.definition, query.relationship");
     expect(text).toContain("bridge capability relationship relations: usage, dependencies, dependents");
+    expect(text).toContain("execution boundary:");
+    expect(text).toContain("path: legacy_ts_host_bridge_compatibility");
+    expect(text).toContain("lifecycle authority: not_claimed");
+    expect(text).toContain("rust host lifecycle:");
+    expect(text).toContain("topology: rust_host_ts_worker");
+    expect(text).toContain("final status: clean_success");
     expect(text).toContain("answer:");
     expect(text).toContain("Best file-discovery match");
     expect(text).toContain("state:");
@@ -142,8 +259,101 @@ describe("knowledge command presenters", () => {
     expect(text).toContain("evidence:");
     expect(text).toContain("answer type: search_match");
     expect(text).toContain("confidence=grounded");
-    expect(text).toContain("rust envelope:");
+    expect(text).toContain("rust packet:");
     expect(text).toContain("subject: auth");
+  });
+
+  it("renders grounded build-evidence packet state, provenance, and lifecycle separately", () => {
+    const text = renderKnowledgeCommandText(makeBuildEvidenceReport());
+
+    expect(text).toContain("answer state: grounded");
+    expect(text).toContain("answer type: build_evidence");
+    expect(text).toContain("rust packet:");
+    expect(text).toContain("question class: build_evidence");
+    expect(text).toContain("authority: canonical Rust-authored query.buildEvidence packet for bounded Rust-hosted broad ask");
+    expect(text).toContain("legacy packet boundary: legacy retrieval/TypeScript-hosted packets are non-canonical for this flow");
+    expect(text).toContain("subject: auth");
+    expect(text).toContain("Rust packet provenance");
+    expect(text).toContain("source=graph");
+    expect(text).toContain("confidence=grounded");
+    expect(text).toContain("gaps:");
+    expect(text).toContain("bounds:");
+    expect(text).toContain("traversal scope: build_evidence");
+    expect(text).toContain("rust host lifecycle:");
+    expect(text).toContain("final status: clean_success");
+  });
+
+  it("renders partial build-evidence without hiding useful evidence or gaps", () => {
+    const text = renderKnowledgeCommandText(makeBuildEvidenceReport({}, {
+      answerState: "partial",
+      conclusion: "Auth is only partially grounded by Rust packet evidence.",
+      evidence: [
+        {
+          kind: "symbol",
+          filePath: "src/auth.ts",
+          lineStart: 4,
+          lineEnd: 12,
+          reason: "partial Rust packet evidence",
+          source: "graph",
+          confidence: "partial",
+          symbol: "auth",
+        },
+      ],
+      gaps: ["ambiguous auth wiring remains"],
+      bounds: {
+        traversalScope: "build_evidence",
+        hopCount: 1,
+        nodeLimit: 5,
+        stopReason: "ambiguous_target",
+      },
+    }));
+
+    expect(text).toContain("answer state: partial");
+    expect(text).toContain("partial Rust packet evidence");
+    expect(text).toContain("ambiguous auth wiring remains");
+    expect(text).toContain("stop reason: ambiguous_target");
+    expect(text).toContain("final status: clean_success");
+  });
+
+  it("renders insufficient build-evidence as non-grounded with gaps and no evidence", () => {
+    const text = renderKnowledgeCommandText(makeBuildEvidenceReport({}, {
+      answerState: "insufficient",
+      conclusion: "Missing indexed proof prevents a grounded auth answer.",
+      evidence: [],
+      gaps: ["no indexed evidence proved auth"],
+      bounds: {
+        traversalScope: "build_evidence",
+        stopReason: "insufficient_evidence",
+      },
+    }));
+
+    expect(text).toContain("answer state: insufficient");
+    expect(text).toContain("answer type: partial");
+    expect(text).toContain("  evidence:\n    - (none)");
+    expect(text).toContain("no indexed evidence proved auth");
+    expect(text).toContain("stop reason: insufficient_evidence");
+    expect(text).toContain("final status: clean_success");
+  });
+
+  it("renders unsupported build-evidence as unsupported packet truth despite lifecycle success", () => {
+    const text = renderKnowledgeCommandText(makeBuildEvidenceReport({}, {
+      answerState: "unsupported",
+      conclusion: "Auth evidence is unsupported across the bounded Rust packet contract.",
+      evidence: [],
+      gaps: ["unsupported language or capability boundary prevents canonical packet proof"],
+      bounds: {
+        traversalScope: "build_evidence",
+        stopReason: "unsupported_language_capability",
+      },
+    }));
+
+    expect(text).toContain("answer state: unsupported");
+    expect(text).toContain("answer type: unsupported");
+    expect(text).toContain("unsupported language or capability boundary prevents canonical packet proof");
+    expect(text).toContain("stop reason: unsupported_language_capability");
+    expect(text).toContain("rust host lifecycle:");
+    expect(text).toContain("final status: clean_success");
+    expect(text).not.toContain("runtime tracing is supported");
   });
 
   it("renders ask limitations when grounding is partial", () => {
@@ -235,7 +445,7 @@ describe("knowledge command presenters", () => {
     expect(text).toContain("capability: definition_lookup");
     expect(text).toContain("evidence:");
     expect(text).toContain("via=query.definition");
-    expect(text).toContain("rust envelope:");
+    expect(text).toContain("rust packet:");
   });
 
   it("renders failure text output", () => {

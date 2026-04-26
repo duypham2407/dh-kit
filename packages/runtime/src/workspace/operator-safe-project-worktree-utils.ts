@@ -3,6 +3,7 @@ import {
   canonicalizeAbsolutePath,
   normalizePathSlashes,
   isPathWithinWorkspace,
+  toRepoRelativePath,
   toWorkspaceRelativePath,
 } from "../../../intelligence/src/workspace/scan-paths.js";
 import { detectProjects } from "../../../intelligence/src/workspace/detect-projects.js";
@@ -22,6 +23,7 @@ import { prepareOperatorSafeTempWorkspace } from "./operator-safe-temp-workspace
 import { runOperatorSafeBoundedApply } from "./operator-safe-bounded-apply.js";
 import { attemptOperatorSafeRollbackLight } from "./operator-safe-project-worktree-rollback-light.js";
 import {
+  createOperatorSafeExecutionIdentity,
   buildOperatorSafeExecutionReport,
   writeOperatorSafeExecutionReport,
 } from "./operator-safe-execution-report.js";
@@ -84,22 +86,23 @@ function resolveOutcome(input: {
   if (!input.preflightAllowed) {
     return "blocked";
   }
-  if (input.applyFailed) {
-    return "failed";
-  }
-  if (input.rollbackDegraded) {
-    return "rollback_degraded";
-  }
   if (input.mode === "check") {
     return "advisory";
   }
   if (input.mode === "dry_run") {
     return "dry_run";
   }
+  if (input.applyFailed) {
+    return "failed";
+  }
+  if (input.rollbackDegraded) {
+    return "rollback_degraded";
+  }
   return input.applyDelegated ? "succeeded" : "failed";
 }
 
 function resolveFailureClass(input: {
+  mode: OperatorWorktreePreflightInput["mode"];
   preflightAllowed: boolean;
   applyFailed: boolean;
   rollbackDegraded: boolean;
@@ -108,11 +111,14 @@ function resolveFailureClass(input: {
   if (!input.preflightAllowed) {
     return "preflight_failure";
   }
-  if (input.applyFailed) {
-    return "apply_failure";
-  }
   if (input.rollbackDegraded) {
     return "rollback_degraded";
+  }
+  if (input.mode === "check" || input.mode === "dry_run") {
+    return "none";
+  }
+  if (input.applyFailed) {
+    return "apply_failure";
   }
   if (!input.applyDelegated) {
     return "apply_failure";
@@ -218,6 +224,7 @@ export async function evaluateOperatorSafeProjectWorktree(input: OperatorWorktre
   }
 
   const targetRelativePath = workspaceRoot ? toWorkspaceRelativePath(workspaceRoot, canonicalTargetPath) : null;
+  const repoRelativePath = toRepoRelativePath(canonicalRepoRoot, canonicalTargetPath);
   const targetWorkspaceFile = targetRelativePath ? (workspace?.files ?? []).find((file) => file.path === targetRelativePath) : undefined;
   const alreadyIndexed = targetWorkspaceFile
     ? new Set(input.alreadyIndexedFileIds ?? []).has(targetWorkspaceFile.id)
@@ -260,6 +267,8 @@ export async function evaluateOperatorSafeProjectWorktree(input: OperatorWorktre
           partialScan: workspace.scanMeta?.partial === true,
           scanStopReason: workspace.diagnostics?.stopReason ?? "none",
           targetRelativePath,
+          workspaceRelativePath: targetRelativePath,
+          repoRelativePath,
         }
         : undefined,
       idempotentSkip: alreadyIndexed,
@@ -273,6 +282,7 @@ export async function runOperatorSafeProjectWorktreeLifecycle(input: OperatorWor
   reportPath: string;
 }> {
   const preflight = await evaluateOperatorSafeProjectWorktree(input);
+  const identity = createOperatorSafeExecutionIdentity();
   const stages: OperatorWorktreeStageResult[] = [
     {
       stage: "preflight",
@@ -286,6 +296,8 @@ export async function runOperatorSafeProjectWorktreeLifecycle(input: OperatorWor
   const snapshot = await captureOperatorSafeSnapshot({
     repoRoot: preflight.context.canonicalRepoRoot,
     preflight,
+    executionId: identity.executionId,
+    reportId: identity.reportId,
   });
   stages.push({
     stage: "prepare",
@@ -301,6 +313,8 @@ export async function runOperatorSafeProjectWorktreeLifecycle(input: OperatorWor
     repoRoot: preflight.context.canonicalRepoRoot,
     operation: preflight.operation,
     mode: preflight.mode,
+    executionId: identity.executionId,
+    reportId: identity.reportId,
   });
 
   const apply = await runOperatorSafeBoundedApply({ preflight });
@@ -337,6 +351,7 @@ export async function runOperatorSafeProjectWorktreeLifecycle(input: OperatorWor
     rollbackDegraded: rollback.degraded,
   });
   const failureClass = resolveFailureClass({
+    mode: preflight.mode,
     preflightAllowed: preflight.allowed,
     applyFailed: preflight.allowed && !apply.delegated && !apply.applied && !apply.simulated,
     rollbackDegraded: rollback.degraded,
@@ -361,6 +376,22 @@ export async function runOperatorSafeProjectWorktreeLifecycle(input: OperatorWor
       repoRoot: preflight.context.canonicalRepoRoot,
       targetPath: preflight.context.canonicalTargetPath,
       workspaceRoot: preflight.context.workspace?.root,
+      workspaceRelativePath: preflight.context.workspace?.workspaceRelativePath,
+      repoRelativePath: preflight.context.workspace?.repoRelativePath,
+    },
+    relatedArtifacts: {
+      snapshot: snapshot.manifest
+        ? {
+          artifactId: snapshot.manifest.id,
+          path: snapshot.artifactPath,
+        }
+        : undefined,
+      tempWorkspace: tempWorkspace.id && tempWorkspace.path
+        ? {
+          artifactId: tempWorkspace.id,
+          path: tempWorkspace.path,
+        }
+        : undefined,
     },
     snapshot,
     tempWorkspace,
@@ -373,6 +404,8 @@ export async function runOperatorSafeProjectWorktreeLifecycle(input: OperatorWor
         ? ["Rollback-light is unavailable for this flow; this is distinct from rollback-degraded execution."]
         : []),
     ],
+    id: identity.reportId,
+    executionId: identity.executionId,
   });
 
   const reportPath = await writeOperatorSafeExecutionReport(preflight.context.canonicalRepoRoot, report);

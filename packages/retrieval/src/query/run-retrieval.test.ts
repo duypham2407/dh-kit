@@ -31,6 +31,22 @@ afterEach(() => {
 });
 
 describe("runRetrieval", () => {
+  it("keeps retrieval-local evidence packets as non-authoritative compatibility output", async () => {
+    const repo = makeTmpRepo();
+    fs.writeFileSync(path.join(repo, "src", "auth.ts"), "export function login() { return 'ok'; }\n", "utf8");
+
+    const result = await runRetrieval({
+      repoRoot: repo,
+      query: "find login definition",
+      mode: "ask",
+      semanticMode: "off",
+    });
+
+    expect(result.evidencePackets.length).toBeGreaterThan(0);
+    // Guardrail: retrieval packets are compatibility artifacts, not product authority.
+    expect(result.evidencePackets[0]?.sourceTools.length ?? 0).toBeGreaterThan(0);
+  });
+
   it("returns retrieval evidence with semantic mode off", async () => {
     const repo = makeTmpRepo();
     fs.writeFileSync(path.join(repo, "src", "auth.ts"), "export function login() { return 'ok'; }\n", "utf8");

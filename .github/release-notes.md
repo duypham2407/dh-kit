@@ -23,6 +23,9 @@ dh ask "how does this project work?"
 
 ## Included Artifacts
 
+Supported release targets are Linux and macOS. Windows is not a current target
+platform for release artifacts or installer support.
+
 - macOS Apple Silicon: `dh-darwin-arm64`
 - macOS Intel: `dh-darwin-amd64`
 - Linux x86_64: `dh-linux-amd64`

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { detectProjects } from "./detect-projects.js";
+import { resolveIndexedFileAbsolutePath } from "./scan-paths.js";
 
 function makeRepo(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dh-detect-projects-"));
@@ -113,5 +114,39 @@ describe("detectProjects", () => {
     expect(nestedWorkspace!.files.every((file) => file.workspaceRoot === nestedWorkspace!.root)).toBe(true);
     expect(nestedWorkspace!.files.map((file) => file.path)).toContain("src/leaf.ts");
     expect(nestedWorkspace!.files.map((file) => file.path)).not.toContain("src/parent.ts");
+  });
+
+  it("resolves indexed files from workspaceRoot, preserves single-root fallback, and rejects escapes", () => {
+    const repo = makeRepo();
+    const workspaceRoot = path.join(repo, "packages", "app");
+
+    expect(resolveIndexedFileAbsolutePath(repo, {
+      id: "child",
+      path: "src/a.ts",
+      extension: ".ts",
+      language: "typescript",
+      sizeBytes: 1,
+      status: "indexed",
+      workspaceRoot,
+    })).toBe(path.resolve(workspaceRoot, "src", "a.ts").replace(/\\/g, "/"));
+
+    expect(resolveIndexedFileAbsolutePath(repo, {
+      id: "legacy",
+      path: "src/a.ts",
+      extension: ".ts",
+      language: "typescript",
+      sizeBytes: 1,
+      status: "indexed",
+    })).toBe(path.resolve(repo, "src", "a.ts").replace(/\\/g, "/"));
+
+    expect(resolveIndexedFileAbsolutePath(repo, {
+      id: "escape",
+      path: "../outside.ts",
+      extension: ".ts",
+      language: "typescript",
+      sizeBytes: 1,
+      status: "indexed",
+      workspaceRoot,
+    })).toBeNull();
   });
 });

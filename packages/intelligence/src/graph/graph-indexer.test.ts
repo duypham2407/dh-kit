@@ -160,4 +160,28 @@ describe("GraphIndexer", () => {
 
     scanSpy.mockRestore();
   });
+
+  it("indexes bounded TS/JS alias edges and reports degraded invalid config diagnostics", async () => {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@/*": ["src/*"] } } }), "utf8");
+    fs.writeFileSync(path.join(repo, "src", "a.ts"), "import { b } from '@/b';\nexport function a(){ return b(); }\n", "utf8");
+    fs.writeFileSync(path.join(repo, "src", "b.ts"), "export function b(){ return 1; }\n", "utf8");
+
+    const indexer = new GraphIndexer(repo);
+    const stats = await indexer.indexProject();
+    expect(stats.importsResolved).toBeGreaterThanOrEqual(1);
+
+    const graph = new GraphRepo(repo);
+    const nodes = graph.listNodes();
+    const aNode = nodes.find((node) => node.path === "src/a.ts");
+    const bNode = nodes.find((node) => node.path === "src/b.ts");
+    expect(aNode).toBeDefined();
+    expect(bNode).toBeDefined();
+    expect(graph.findEdgesFromNode(aNode!.id).some((edge) => edge.toNodeId === bNode!.id)).toBe(true);
+
+    fs.writeFileSync(path.join(repo, "tsconfig.json"), "{ invalid", "utf8");
+    fs.writeFileSync(path.join(repo, "src", "a.ts"), "import { b } from '@/b';\nexport function a(){ return b(); }\nexport const changed = true;\n", "utf8");
+    const degraded = await indexer.indexProject();
+    expect(degraded.importsDegraded).toBeGreaterThanOrEqual(1);
+  });
 });

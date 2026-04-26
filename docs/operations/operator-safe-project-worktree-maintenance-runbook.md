@@ -18,12 +18,20 @@ Maintain hygiene for bounded operator-safe artifacts created under:
 
 ## Standard maintenance flow
 
-1. Collect current artifact inventory with runtime helper:
-   - `listOperatorSafeArtifacts(repoRoot)`
-2. Inspect recent execution reports to confirm outcome/failure trends.
-3. Prune stale artifacts with policy TTL:
-   - `pruneOperatorSafeArtifacts({ repoRoot, olderThanMs })`
-4. Re-run one bounded flow (`index_workspace`) and verify new report/snapshot generation.
+1. Collect inventory through the operator surface:
+   - `dh operator-safe-maintenance list --family all`
+2. Inspect concrete artifacts before delete actions:
+   - `dh operator-safe-maintenance inspect --family report --id <report-id>`
+   - `dh operator-safe-maintenance inspect --family snapshot --id <snapshot-id>`
+   - `dh operator-safe-maintenance inspect --family temp --id <temp-id>`
+3. Run policy prune in dry-run first, then apply when output is acceptable:
+   - `dh operator-safe-maintenance prune --mode dry-run`
+   - `dh operator-safe-maintenance prune --mode apply`
+4. Run targeted cleanup for degraded/orphan residue only:
+   - `dh operator-safe-maintenance cleanup --mode dry-run --report <report-id>`
+   - `dh operator-safe-maintenance cleanup --mode apply --report <report-id>`
+   - `dh operator-safe-maintenance cleanup --mode dry-run --family temp --id <temp-id>`
+5. Re-run one bounded flow (`index_workspace`) and verify new report/snapshot/temp artifacts are generated.
 
 ## Default policy recommendations
 
@@ -35,6 +43,13 @@ Maintain hygiene for bounded operator-safe artifacts created under:
 
 - If report outcome is `rollback_degraded`, treat as bounded recovery warning and ensure stale temp artifacts are removed.
 - If preflight is blocked repeatedly, use `recommendedAction` from the report and adjust operation target before retry.
+
+## Refusal and truth-boundary notes
+
+- `prune` removes only policy-eligible artifacts under operator-safe roots and reports retained/skipped reasoning.
+- `cleanup` is targeted only (`--report` or explicit `--family/--id`) and refuses unproven cleanup requests.
+- `dh doctor --debug-dump` is a secondary summary surface and pointer only; canonical maintenance truth remains `dh operator-safe-maintenance` over live artifacts.
+- Workflow-stage/approval state is out of scope for maintenance eligibility and must not be treated as artifact cleanup truth.
 
 ## Anti-drift guardrail
 

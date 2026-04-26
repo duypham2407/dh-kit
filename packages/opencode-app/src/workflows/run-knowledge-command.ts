@@ -1,9 +1,12 @@
 import { KnowledgeCommandSessionBridge } from "../../../runtime/src/session/knowledge-command-session-bridge.js";
 import {
   type BridgeAnswerState,
+  type BridgeAskRequest,
   type BridgeAskResult,
   type BridgeClient,
   type BridgeAskQueryClass,
+  type BridgeInitializeCapabilities,
+  type BridgeSessionDelegatedMethod,
   type BridgeLanguageCapabilitySummary,
   type BridgeLanguageCapabilityState,
   type BridgeInitializeSnapshot,
@@ -15,6 +18,7 @@ import {
 
 export type KnowledgeAskAnswerType =
   | "search_match"
+  | "build_evidence"
   | "definition"
   | "usage"
   | "dependencies"
@@ -78,12 +82,15 @@ export type KnowledgeCommandReport = {
     | "graph_relationship_usage"
     | "graph_relationship_dependencies"
     | "graph_relationship_dependents"
+    | "graph_build_evidence"
     | "unsupported";
   languageCapabilitySummary?: BridgeLanguageCapabilitySummary | null;
   bridgeEvidence?: {
     enabled: boolean;
     startupSucceeded: boolean;
     method?: string;
+    seamMethod?: "direct.query" | "session.runCommand";
+    delegatedMethod?: BridgeSessionDelegatedMethod;
     requestId?: number;
     rustBacked: boolean;
     protocolVersion?: string;
@@ -92,18 +99,10 @@ export type KnowledgeCommandReport = {
       version: string;
     };
     capabilities?: {
-      protocolVersion: string;
-      methods: readonly ["dh.initialize", "query.search", "query.definition", "query.relationship"];
-      queryRelationship: {
-        supportedRelations: readonly ["usage", "dependencies", "dependents"];
-      };
-      languageCapabilityMatrix: Array<{
-        language: string;
-        capability: string;
-        state: BridgeLanguageCapabilityState;
-        reason: string;
-        parserBacked: boolean;
-      }>;
+      protocolVersion: BridgeInitializeCapabilities["protocolVersion"];
+      methods: BridgeInitializeCapabilities["methods"];
+      queryRelationship: BridgeInitializeCapabilities["queryRelationship"];
+      languageCapabilityMatrix: BridgeInitializeCapabilities["languageCapabilityMatrix"];
     };
     failure?: {
       code: BridgeFailureCode;
@@ -112,6 +111,56 @@ export type KnowledgeCommandReport = {
       retryable: boolean;
     };
   };
+  executionBoundary?: KnowledgeCommandExecutionBoundary;
+  hostLifecycle?: RustHostLifecycleMetadata;
+};
+
+export type KnowledgeCommandExecutionBoundary = {
+  path: "rust_hosted_first_wave" | "legacy_ts_host_bridge_compatibility";
+  rustHosted: boolean;
+  lifecycleAuthority: "rust" | "not_claimed";
+  label: string;
+  note: string;
+};
+
+export type RustHostLifecycleMetadata = {
+  topology: "rust_host_ts_worker";
+  supportBoundary: "knowledge_commands_first_wave";
+  authorityOwner: "rust";
+  workerRole: "typescript_worker";
+  platform: string;
+  workerState: string;
+  healthState: string;
+  failurePhase: string;
+  timeoutClass: string;
+  recoveryOutcome: string;
+  cleanupOutcome: string;
+  finalStatus: string;
+  finalExitCode: number;
+  legacyPathLabel?: "legacy_ts_host_bridge_compatibility_only";
+  launchabilityIssue?: string;
+};
+
+type AskQuestionClassification = {
+  queryClass: BridgeAskQueryClass | "unsupported";
+  symbol?: string;
+  targetPath?: string;
+  targets?: string[];
+  unsupportedReason?: string;
+  unsupportedLimitations?: string[];
+};
+
+type BroadUnderstandingClassification =
+  | { status: "supported"; subject: string }
+  | { status: "unsupported"; reason: string }
+  | { status: "not_broad" };
+
+export const LEGACY_TS_HOST_KNOWLEDGE_BOUNDARY: KnowledgeCommandExecutionBoundary = {
+  path: "legacy_ts_host_bridge_compatibility",
+  rustHosted: false,
+  lifecycleAuthority: "not_claimed",
+  label: "legacy_ts_host_bridge_compatibility_only",
+  note: "This TypeScript CLI path may spawn the legacy Rust bridge for query evidence; it is not the Rust-host lifecycle-authoritative first-wave path.",
 };
 
 export async function runKnowledgeCommand(input: {
@@ -135,6 +184,7 @@ export async function runKnowledgeCommand(input: {
       evidencePreview: [],
       message: `Missing input for '${input.kind}' command.`,
       guidance: [`Example: dh ${input.kind} "how does authentication work?"`],
+      executionBoundary: legacyBoundaryForDirectTsHost(input.bridgeClientFactory),
     };
   }
 
@@ -158,6 +208,7 @@ export async function runKnowledgeCommand(input: {
       evidenceCount: 0,
       evidencePreview: [],
       message: resolved.reason,
+      executionBoundary: legacyBoundaryForDirectTsHost(input.bridgeClientFactory),
     };
   }
 
@@ -170,10 +221,7 @@ export async function runKnowledgeCommand(input: {
         : classifyExplainQuestion(input.input);
 
     if (requestedQuestionClass.queryClass === "unsupported") {
-      const unsupportedLimitations = [
-        "Phase 3 supports only: search-aware file discovery, graph-aware definition/location, and graph-aware one-hop usage/dependency/import relationships.",
-        "This question appears adjacent but outside the bounded Phase 3 guaranteed classes.",
-      ];
+      const unsupportedTruth = unsupportedAskTruth(requestedQuestionClass);
       return {
         exitCode: 0,
         command: input.kind,
@@ -190,14 +238,15 @@ export async function runKnowledgeCommand(input: {
         compaction: resolved.compaction,
         persistence: resolved.persistence,
         guidance,
-        answer: "Unsupported for Phase 3: this question falls outside the bounded ask classes.",
+        answer: unsupportedTruth.answer,
         answerType: "unsupported",
         answerState: "unsupported",
         evidence: [],
-        limitations: unsupportedLimitations,
+        limitations: unsupportedTruth.limitations,
         questionClass: "unsupported",
         requestedQuestionClass: "unsupported",
         languageCapabilitySummary: null,
+        executionBoundary: legacyBoundaryForDirectTsHost(input.bridgeClientFactory),
         bridgeEvidence: {
           enabled: true,
           startupSucceeded: false,
@@ -210,13 +259,21 @@ export async function runKnowledgeCommand(input: {
       ? input.bridgeClientFactory(input.repoRoot)
       : createDhJsonRpcStdioClient(input.repoRoot);
     try {
-      const bridgeResult = await bridgeClient.runAskQuery({
+      const bridgeRequest: BridgeAskRequest = {
         query: input.input,
         repoRoot: input.repoRoot,
         queryClass: requestedQuestionClass.queryClass,
         symbol: requestedQuestionClass.symbol,
         targetPath: requestedQuestionClass.targetPath,
+        intent: requestedQuestionClass.queryClass === "graph_build_evidence" ? "explain" : undefined,
+        targets: requestedQuestionClass.targets,
+        freshness: requestedQuestionClass.queryClass === "graph_build_evidence" ? "indexed" : undefined,
         limit: 5,
+      };
+
+      const bridgeResult = await runBridgeAskQuery({
+        bridgeClient,
+        request: bridgeRequest,
       });
 
       const assembled = assembleAskAnswer({
@@ -258,10 +315,13 @@ export async function runKnowledgeCommand(input: {
         questionClass: assembled.questionClass,
         requestedQuestionClass: requestedQuestionClass.queryClass,
         languageCapabilitySummary: assembled.languageCapabilitySummary,
+        executionBoundary: legacyBoundaryForDirectTsHost(input.bridgeClientFactory),
         bridgeEvidence: {
           enabled: true,
           startupSucceeded: true,
           method: bridgeResult.method,
+          seamMethod: bridgeResult.seamMethod,
+          delegatedMethod: bridgeResult.delegatedMethod,
           requestId: bridgeResult.requestId,
           rustBacked: true,
           protocolVersion: bridgeResult.protocolVersion,
@@ -302,6 +362,7 @@ export async function runKnowledgeCommand(input: {
           rustBacked: false,
           failure,
         },
+        executionBoundary: legacyBoundaryForDirectTsHost(input.bridgeClientFactory),
       };
     } finally {
       await bridgeClient.close();
@@ -380,6 +441,7 @@ export async function runKnowledgeCommand(input: {
         limitations: traceTruth.limitations,
         questionClass: "trace_flow",
         languageCapabilitySummary,
+        executionBoundary: legacyBoundaryForDirectTsHost(input.bridgeClientFactory),
         bridgeEvidence: {
           enabled: true,
           startupSucceeded: true,
@@ -423,6 +485,7 @@ export async function runKnowledgeCommand(input: {
           rustBacked: false,
           failure,
         },
+        executionBoundary: legacyBoundaryForDirectTsHost(input.bridgeClientFactory),
       };
     } finally {
       await bridgeClient.close();
@@ -432,29 +495,9 @@ export async function runKnowledgeCommand(input: {
   return assertNeverKnowledgeKind(input.kind);
 }
 
-function classifyAskQuestion(query: string): {
-  queryClass:
-    | "search_file_discovery"
-    | "graph_definition"
-    | "graph_relationship_usage"
-    | "graph_relationship_dependencies"
-    | "graph_relationship_dependents"
-    | "unsupported";
-  symbol?: string;
-  targetPath?: string;
-} {
+function classifyAskQuestion(query: string): AskQuestionClassification {
   const q = query.trim();
   const lowered = q.toLowerCase();
-
-  if (
-    lowered.includes("multi-hop")
-    || lowered.includes("call hierarchy")
-    || lowered.includes("impact analysis")
-    || lowered.includes("trace flow")
-    || lowered.includes("entire subsystem")
-  ) {
-    return { queryClass: "unsupported" };
-  }
 
   const definitionMatch = q.match(/(?:where\s+is|where\s+are|definition\s+of|defined\s+in|implemented\s+in)\s+[`"']?([A-Za-z0-9_.$/-]+)/i);
   if (definitionMatch) {
@@ -491,13 +534,174 @@ function classifyAskQuestion(query: string): {
     return { queryClass: "search_file_discovery" };
   }
 
+  const unsupportedBoundary = classifyUnsupportedAskBoundary(q, lowered);
+  if (unsupportedBoundary) {
+    return unsupportedBoundary;
+  }
+
+  const broadUnderstanding = classifyBroadUnderstandingAsk(q);
+  if (broadUnderstanding.status === "supported") {
+    return {
+      queryClass: "graph_build_evidence",
+      targets: [broadUnderstanding.subject],
+    };
+  }
+  if (broadUnderstanding.status === "unsupported") {
+    return unsupportedAskClassification(broadUnderstanding.reason);
+  }
+
   return { queryClass: "unsupported" };
+}
+
+function unsupportedAskTruth(classification: AskQuestionClassification): {
+  answer: string;
+  limitations: string[];
+} {
+  const reason = classification.unsupportedReason
+    ?? "this question falls outside the bounded Rust-hosted ask classes.";
+  return {
+    answer: `Unsupported: ${reason}`,
+    limitations: classification.unsupportedLimitations ?? [
+      "Rust-hosted first-wave ask supports search-aware file discovery, graph-aware definition/location, graph-aware one-hop usage/dependency/import relationships, and bounded broad understanding through Rust-authored query.buildEvidence packets.",
+      "No TypeScript-composed canonical evidence packet fallback was used for this unsupported request.",
+    ],
+  };
+}
+
+function classifyUnsupportedAskBoundary(
+  _query: string,
+  lowered: string,
+): AskQuestionClassification | null {
+  if (/\b(runtime\s+trac(?:e|ing)|trace\s+flow)\b/.test(lowered)) {
+    return unsupportedAskClassification(
+      "runtime tracing and trace-flow execution are outside bounded Rust-hosted build-evidence support.",
+    );
+  }
+  if (/\b(debug(?:ger|ging)?|profil(?:e|ing|er))\b/.test(lowered)) {
+    return unsupportedAskClassification(
+      "runtime debugging and profiling requests are outside the static repository-understanding ask contract.",
+    );
+  }
+  if (/\bimpact\s+analysis\b/.test(lowered)) {
+    return unsupportedAskClassification(
+      "impact-analysis requests are not part of the bounded broad-understanding ask contract.",
+    );
+  }
+  if (/\bimpact\s+of\b/.test(lowered) || /\b(?:could|would)\s+break\b/.test(lowered)) {
+    return unsupportedAskClassification(
+      "impact-analysis requests are not part of the bounded broad-understanding ask contract.",
+    );
+  }
+  if (/\bcall\s+hierarchy\b/.test(lowered)) {
+    return unsupportedAskClassification(
+      "call-hierarchy requests remain outside this bounded broad-understanding ask route.",
+    );
+  }
+  if (/\bmulti[-\s]?hop\b/.test(lowered)) {
+    return unsupportedAskClassification(
+      "multi-hop path exploration is outside first-wave Rust-hosted build-evidence support.",
+    );
+  }
+  if (/\b(?:entire|whole)\s+(?:subsystem|system|codebase|repo|repository|project)\b/.test(lowered)) {
+    return unsupportedAskClassification(
+      "unbounded subsystem or repository-wide requests need a finite subject before build evidence can be safe.",
+    );
+  }
+  if (/\b(?:everything|all\s+behaviou?r)\b/.test(lowered)) {
+    return unsupportedAskClassification(
+      "unbounded broad-understanding requests need a finite subject before build evidence can be safe.",
+    );
+  }
+
+  return null;
+}
+
+function unsupportedAskClassification(reason: string): AskQuestionClassification {
+  return {
+    queryClass: "unsupported",
+    unsupportedReason: reason,
+    unsupportedLimitations: [
+      reason,
+      "Bounded broad ask requires a finite static repository subject and Rust-authored query.buildEvidence packet truth.",
+      "No TypeScript-composed canonical evidence packet fallback was used.",
+    ],
+  };
+}
+
+function classifyBroadUnderstandingAsk(query: string): BroadUnderstandingClassification {
+  const normalized = query.trim().replace(/\s+/g, " ");
+  const broadPatterns = [
+    /^how\s+does\s+(.+?)\s+works?(?:\s+(?:in|inside|within|for)\b.*)?\??$/i,
+    /^how\s+is\s+(.+?)\s+(?:implemented|wired)(?:\s+(?:in|inside|within|for)\b.*)?\??$/i,
+    /^what\s+is\s+the\s+(.+?)\s+flow(?:\s+(?:in|inside|within|for)\b.*)?\??$/i,
+    /^explain\s+how\s+(.+?)\s+works?(?:\s+(?:in|inside|within|for)\b.*)?\??$/i,
+  ];
+
+  for (const pattern of broadPatterns) {
+    const match = normalized.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const subject = sanitizeBroadUnderstandingSubject(match[1]);
+    if (!subject) {
+      return {
+        status: "unsupported",
+        reason: "bounded broad-understanding asks need a finite static repository subject.",
+      };
+    }
+
+    if (isUnboundedBroadUnderstandingSubject(subject)) {
+      return {
+        status: "unsupported",
+        reason: "unbounded broad-understanding requests need a finite subject before build evidence can be safe.",
+      };
+    }
+
+    return { status: "supported", subject };
+  }
+
+  return { status: "not_broad" };
+}
+
+function sanitizeBroadUnderstandingSubject(raw: string): string | undefined {
+  const withoutQuotes = raw
+    .replace(/^[`"']+|[`"']+$/g, "")
+    .replace(/[.,;:!?]+$/g, "")
+    .trim()
+    .replace(/^(?:the|a|an)\s+/i, "")
+    .trim();
+  if (!withoutQuotes) {
+    return undefined;
+  }
+  return withoutQuotes;
+}
+
+function isUnboundedBroadUnderstandingSubject(subject: string): boolean {
+  const lowered = subject.toLowerCase();
+  if (
+    lowered === "it"
+    || lowered === "this"
+    || lowered === "that"
+    || lowered === "system"
+    || lowered === "subsystem"
+    || lowered === "codebase"
+    || lowered === "repo"
+    || lowered === "repository"
+    || lowered === "project"
+    || lowered === "everything"
+  ) {
+    return true;
+  }
+
+  return /^(?:all|entire|whole)\b/.test(lowered);
 }
 
 function classifyExplainQuestion(query: string): {
   queryClass: "graph_definition";
   symbol?: string;
   targetPath?: string;
+  targets?: string[];
 } {
   const q = query.trim();
   return {
@@ -509,12 +713,16 @@ function classifyExplainQuestion(query: string): {
 function mapBridgeMethodToIntent(method: BridgeAskResult["method"]):
   | "bridge_query_search"
   | "bridge_query_definition"
-  | "bridge_query_relationship" {
+  | "bridge_query_relationship"
+  | "bridge_query_build_evidence" {
   if (method === "query.definition") {
     return "bridge_query_definition";
   }
   if (method === "query.relationship") {
     return "bridge_query_relationship";
+  }
+  if (method === "query.buildEvidence") {
+    return "bridge_query_build_evidence";
   }
   return "bridge_query_search";
 }
@@ -620,6 +828,35 @@ function capabilityStateRank(state: BridgeLanguageCapabilityState): number {
   return 0;
 }
 
+function runBridgeAskQuery(input: {
+  bridgeClient: BridgeClient;
+  request: BridgeAskRequest;
+}): Promise<BridgeAskResult> {
+  if (
+    isFirstWaveDelegatedQuestionClass(input.request.queryClass)
+    && input.bridgeClient.runSessionCommand
+  ) {
+    return input.bridgeClient.runSessionCommand(input.request);
+  }
+
+  return input.bridgeClient.runAskQuery(input.request);
+}
+
+function legacyBoundaryForDirectTsHost(
+  bridgeClientFactory: ((repoRoot: string) => BridgeClient) | undefined,
+): KnowledgeCommandExecutionBoundary | undefined {
+  return bridgeClientFactory ? undefined : LEGACY_TS_HOST_KNOWLEDGE_BOUNDARY;
+}
+
+function isFirstWaveDelegatedQuestionClass(queryClass: string): queryClass is BridgeAskQueryClass {
+  return queryClass === "search_file_discovery"
+    || queryClass === "graph_definition"
+    || queryClass === "graph_relationship_usage"
+    || queryClass === "graph_relationship_dependencies"
+    || queryClass === "graph_relationship_dependents"
+    || queryClass === "graph_build_evidence";
+}
+
 function assembleAskAnswer(input: {
   query: string;
   requestedQuestionClass: BridgeAskQueryClass;
@@ -634,7 +871,9 @@ function assembleAskAnswer(input: {
   questionClass: string;
   languageCapabilitySummary: BridgeLanguageCapabilitySummary | null;
 } {
-  const envelopeEvidence = input.bridgeResult.evidence?.evidence ?? [];
+  const rustEvidence = input.bridgeResult.evidence;
+  const missingBuildEvidencePacket = input.requestedQuestionClass === "graph_build_evidence" && !rustEvidence;
+  const envelopeEvidence = rustEvidence?.evidence ?? [];
   const evidence: KnowledgeAskEvidenceEntry[] = envelopeEvidence.map((entry) => {
     return {
       filePath: entry.filePath,
@@ -654,17 +893,45 @@ function assembleAskAnswer(input: {
             ? "dependencies"
             : input.requestedQuestionClass === "graph_relationship_dependents"
               ? "dependents"
-              : undefined,
+      : undefined,
     };
   });
+  const groundedBuildEvidenceWithoutEntries = input.requestedQuestionClass === "graph_build_evidence"
+    && rustEvidence?.answerState === "grounded"
+    && evidence.length === 0;
 
-  const limitations = [...(input.bridgeResult.evidence?.gaps ?? [])];
-  if (!input.bridgeResult.evidence && input.bridgeResult.items.length > 0) {
+  const answerState = missingBuildEvidencePacket || groundedBuildEvidenceWithoutEntries
+    ? "insufficient"
+    : rustEvidence?.answerState ?? input.bridgeResult.answerState;
+  const questionClass = rustEvidence?.questionClass
+    ?? (input.requestedQuestionClass === "graph_build_evidence" ? "build_evidence" : input.bridgeResult.questionClass);
+  const limitations = [...(rustEvidence?.gaps ?? [])];
+  if (missingBuildEvidencePacket) {
+    limitations.push(
+      "Rust build-evidence packet was missing; preview rows are non-authoritative and cannot ground this answer.",
+    );
+  }
+  if (groundedBuildEvidenceWithoutEntries) {
+    limitations.push(
+      "Rust build-evidence packet was grounded but returned no inspectable evidence entries; final answer is insufficient.",
+    );
+  }
+  if (rustEvidence && rustEvidence.answerState !== input.bridgeResult.answerState) {
+    limitations.push(
+      `Rust packet answerState '${rustEvidence.answerState}' was preserved over bridge envelope answerState '${input.bridgeResult.answerState}'.`,
+    );
+  }
+  if (rustEvidence && rustEvidence.questionClass !== input.bridgeResult.questionClass) {
+    limitations.push(
+      `Rust packet questionClass '${rustEvidence.questionClass}' was preserved over bridge envelope questionClass '${input.bridgeResult.questionClass}'.`,
+    );
+  }
+  if (!rustEvidence && input.bridgeResult.items.length > 0) {
     limitations.push(
       "Rust bridge returned preview items without a canonical evidence packet; preview rows are non-authoritative and cannot be used as proof.",
     );
   }
-  if (input.bridgeResult.answerState === "grounded" && evidence.length === 0) {
+  if (answerState === "grounded" && evidence.length === 0) {
     limitations.push("Rust answer state is grounded but no inspectable evidence entries were returned.");
   }
   if (input.bridgeResult.languageCapabilitySummary?.retrievalOnly) {
@@ -681,14 +948,17 @@ function assembleAskAnswer(input: {
     : "no location";
 
   const answerType = mapQuestionClassToAnswerType(
-    input.bridgeResult.questionClass,
-    input.bridgeResult.answerState,
+    questionClass,
+    answerState,
   );
-  const answerState = input.bridgeResult.answerState;
 
   let answer = "";
-  if (input.bridgeResult.evidence?.conclusion) {
-    answer = input.bridgeResult.evidence.conclusion;
+  if (missingBuildEvidencePacket) {
+    answer = "Rust build-evidence packet was missing; preview rows are non-authoritative and cannot ground this answer.";
+  } else if (groundedBuildEvidenceWithoutEntries) {
+    answer = "Rust build-evidence packet was grounded but returned no inspectable evidence entries; final answer is insufficient.";
+  } else if (rustEvidence?.conclusion) {
+    answer = rustEvidence.conclusion;
   } else if (input.requestedQuestionClass === "search_file_discovery") {
     answer = top
       ? `Best file-discovery match: ${topLocation}.`
@@ -720,9 +990,9 @@ function assembleAskAnswer(input: {
     answerType,
     answerState,
     evidence,
-    rustEvidence: input.bridgeResult.evidence,
+    rustEvidence,
     limitations,
-    questionClass: input.bridgeResult.questionClass,
+    questionClass,
     languageCapabilitySummary: input.bridgeResult.languageCapabilitySummary,
   };
 }
@@ -749,6 +1019,9 @@ function mapQuestionClassToAnswerType(
   }
   if (questionClass === "dependents") {
     return "dependents";
+  }
+  if (questionClass === "build_evidence") {
+    return answerState === "grounded" ? "build_evidence" : "partial";
   }
   if (
     questionClass === "search_symbol"

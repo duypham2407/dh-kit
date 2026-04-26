@@ -127,6 +127,8 @@ else
   BINARY_PATH="$BINARY_INPUT"
 fi
 
+BINARY_DIR=$(CDPATH= cd -- "$(dirname -- "$BINARY_PATH")" && pwd)
+
 if [ ! -f "$BINARY_PATH" ]; then
   echo "binary not found: $BINARY_PATH" >&2
   exit 1
@@ -212,6 +214,14 @@ chmod +x "$TEMP_PATH"
 mv "$TEMP_PATH" "$TARGET_PATH"
 TARGET_MUTATED=1
 
+if [ -f "$BINARY_DIR/ts-worker/worker.mjs" ] && [ -f "$BINARY_DIR/ts-worker/manifest.json" ]; then
+  mkdir -p "$INSTALL_DIR/ts-worker"
+  cp "$BINARY_DIR/ts-worker/worker.mjs" "$INSTALL_DIR/ts-worker/worker.mjs"
+  cp "$BINARY_DIR/ts-worker/manifest.json" "$INSTALL_DIR/ts-worker/manifest.json"
+else
+  append_limited "Rust-hosted worker bundle was not installed by this direct-binary path; ask/explain/trace will report missing bundle unless --worker-entry is provided"
+fi
+
 print_info "installed dh to $TARGET_PATH"
 
 if [ "$WITH_RUST_TOOLS" = "1" ] || [ "$CHECK_DEV_PREREQS" = "1" ]; then
@@ -242,7 +252,7 @@ if [ "$WITH_RUST_TOOLS" = "1" ] || [ "$CHECK_DEV_PREREQS" = "1" ]; then
 fi
 
 append_limited "runtime/workspace readiness is not verified by install lifecycle; run 'dh doctor'"
-append_limited "Windows runtime installer parity remains unsupported"
+append_limited "supported direct-binary install targets are Linux and macOS; Windows is not a current target platform"
 
 if [ "$SUPPRESS_LIFECYCLE_SUMMARY" != "1" ]; then
   if [ "$EXISTING_TARGET" -eq 1 ]; then

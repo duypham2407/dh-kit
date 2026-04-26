@@ -22,6 +22,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - Improve startup vs request failure truthfulness in bridge-backed flows.
 - Clarify authoritative workflow state vs compatibility mirror responsibilities.
 - Align install/upgrade/uninstall and release-facing docs with actual shipped behavior.
+- Clarify that supported install and release targets are Linux and macOS; Windows is not a current target platform.
 - Harden release lifecycle trust reporting with explicit verification tiers: local release-directory path stays strongest (manifest + checksum + file-size), while GitHub/direct-binary paths now declare bounded verification and limitations without parity overclaim.
 
 ### Fixed

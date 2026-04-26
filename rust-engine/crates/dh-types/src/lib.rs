@@ -388,6 +388,7 @@ pub enum AnswerState {
 #[serde(rename_all = "snake_case")]
 pub enum QuestionClass {
     FindSymbol,
+    BuildEvidence,
     Definition,
     References,
     Dependencies,

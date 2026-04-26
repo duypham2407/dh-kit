@@ -125,15 +125,19 @@ DH_INSTALL_RUST_TOOLS="$WITH_RUST_TOOLS" \
     exit 1
   }
 
+mkdir -p "$INSTALL_DIR/ts-worker"
+cp "$RELEASE_DIR/ts-worker/worker.mjs" "$INSTALL_DIR/ts-worker/worker.mjs"
+cp "$RELEASE_DIR/ts-worker/manifest.json" "$INSTALL_DIR/ts-worker/manifest.json"
+
 INSTALL_LIMITED="runtime/workspace readiness is not verified by install lifecycle; run 'dh doctor'"
 if [ -n "$VERIFICATION_LIMITATIONS" ]; then
   INSTALL_LIMITED="$VERIFICATION_LIMITATIONS; $INSTALL_LIMITED"
 fi
-INSTALL_LIMITED="$INSTALL_LIMITED; Windows runtime installer parity remains unsupported"
+INSTALL_LIMITED="$INSTALL_LIMITED; supported release install targets are Linux and macOS; Windows is not a current target platform"
 
 echo "[dh] surface: lifecycle install (install-from-release)"
 echo "[dh] condition: completed"
 echo "[dh] why: release artifacts verified at tier=$VERIFICATION_TIER (signature=$SIGNATURE_STATUS: $SIGNATURE_REASON) and binary installed to $INSTALL_DIR/dh"
-echo "[dh] works: dh binary is installed and executable at $INSTALL_DIR/dh"
+echo "[dh] works: dh binary is installed and executable at $INSTALL_DIR/dh; Rust-hosted TypeScript worker bundle is installed at $INSTALL_DIR/ts-worker/worker.mjs"
 echo "[dh] limited: $INSTALL_LIMITED"
 echo "[dh] next: run '$INSTALL_DIR/dh doctor' (or 'dh doctor')"

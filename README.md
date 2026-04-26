@@ -15,12 +15,41 @@ Nó giúp bạn:
 - chạy workflow theo 3 lane: `quick`, `delivery`, `migration`
 - kiểm tra health/config bằng `doctor`
 
+## Rust Host Lifecycle Authority Boundary
+
+- First-wave knowledge commands (`dh ask`, `dh explain`, `dh trace`) use the
+  supported Rust-hosted lifecycle path: the Rust `dh` host starts and supervises
+  the TypeScript worker bundle, owns startup/readiness/health/timeout/recovery/
+  shutdown/final-exit truth, and labels the lifecycle topology as
+  `rust_host_ts_worker`.
+- On that Rust-hosted path, bounded broad-understanding `dh ask` requests with a
+  finite static subject (for example `how does auth work?`) can use
+  Rust-authored `query.buildEvidence` packet truth. TypeScript may shape and
+  present that packet, but legacy retrieval packets are non-canonical for this
+  flow.
+- Narrow `dh ask` and `dh explain` requests still use the named search,
+  definition, or relationship query methods when those are the truthful surface;
+  build evidence is not universal repository reasoning.
+- `dh trace` is part of that Rust-hosted process lifecycle boundary, but the
+  trace-flow result may still be `unsupported` under the current bounded command
+  contract. This is not runtime tracing support.
+- TypeScript remains the worker for workflow/output shaping on that path. Any
+  TypeScript-hosted workflow, maintainer, or bridge path that still starts Rust
+  is legacy/compatibility-only and is not equal lifecycle authority.
+- This boundary is local child-process execution only. It does not add daemon
+  mode, remote/local socket control plane behavior, Windows platform support,
+  worker-pool behavior, generic shell/worktree orchestration redesign, or full
+  workflow-lane parity.
+
 `dh` được tối ưu để chạy như một binary local trên:
 
 - macOS Apple Silicon
 - macOS Intel
 - Linux x86_64
 - Linux ARM64
+
+Supported target platforms are Linux and macOS. Windows is not a current target
+platform for `dh` install or release support.
 
 ### Requirements
 
@@ -251,6 +280,12 @@ dh index
 dh ask "how does authentication work?"
 dh explain "createServer"
 ```
+
+`dh ask "how does <subject> work?"` is a bounded broad-understanding path: it
+uses Rust-authored `query.buildEvidence` only when a finite static subject can be
+extracted. Unbounded repository-wide, runtime tracing, or unsupported-depth asks
+remain `unsupported` or `insufficient` instead of falling back to legacy
+TypeScript-authored packet authority.
 
 `dh trace` trong bounded contract hiện tại của QUERY-EVIDENCE-HARDENING trả về `unsupported` (truthful by design).
 

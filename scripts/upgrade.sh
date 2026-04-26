@@ -182,7 +182,7 @@ then
     print_summary "[dh] condition: failed"
     print_summary "[dh] why: install stage failed after binary replacement/mutation (failure_stage=$INSTALL_FAILURE_STAGE); post-install upgrade verification (--version) did not run; $ROLLBACK_CONTEXT"
     print_summary "[dh] works: upgrade mutation occurred at $TARGET_PATH, but upgrade cannot be reported as completed"
-    print_summary "[dh] limited: direct-binary upgrade path may have skipped checksum/signature metadata; release manifest/file-size verification is not performed in direct-binary upgrade paths; Windows runtime installer parity remains unsupported"
+    print_summary "[dh] limited: direct-binary upgrade path may have skipped checksum/signature metadata; release manifest/file-size verification is not performed in direct-binary upgrade paths; supported direct-binary upgrade targets are Linux and macOS; Windows is not a current target platform"
     if [ "$INSTALL_BACKUP_CREATED" = "1" ] && [ -n "$INSTALL_BACKUP_PATH" ]; then
       print_summary "[dh] next: restore '$INSTALL_BACKUP_PATH' manually if needed, then run '$TARGET_PATH --version' and '$TARGET_PATH doctor'"
     else
@@ -241,7 +241,7 @@ if [ -x "$TARGET_PATH" ]; then
     print_summary "[dh] condition: completed"
     print_summary "[dh] why: binary replaced at $TARGET_PATH, post-install verification (--version) passed, $BACKUP_NOTE"
     print_summary "[dh] works: upgraded dh binary is active at $TARGET_PATH"
-    print_summary "[dh] limited: release manifest/file-size verification is not performed in direct-binary upgrade paths; runtime/workspace readiness still requires 'dh doctor'; Windows runtime installer parity remains unsupported"
+    print_summary "[dh] limited: release manifest/file-size verification is not performed in direct-binary upgrade paths; runtime/workspace readiness still requires 'dh doctor'; supported direct-binary upgrade targets are Linux and macOS; Windows is not a current target platform"
     print_summary "[dh] next: run '$TARGET_PATH --version' then '$TARGET_PATH doctor' (or 'dh doctor')"
     write_result "completed" "not_needed" "post-install verification passed; rollback not required" "$LATEST_BACKUP" "1" "none"
   else
@@ -264,15 +264,15 @@ if [ -x "$TARGET_PATH" ]; then
 
     if [ "$ROLLBACK_RESULT" = "succeeded" ]; then
       print_summary "[dh] works: previous dh binary was restored at $TARGET_PATH"
-      print_summary "[dh] limited: upgrade failed and was rolled back; direct-binary path remains manifest-unverified; Windows runtime installer parity remains unsupported"
+      print_summary "[dh] limited: upgrade failed and was rolled back; direct-binary path remains manifest-unverified; supported direct-binary upgrade targets are Linux and macOS; Windows is not a current target platform"
       print_summary "[dh] next: inspect release artifact trust path and retry via install-from-release/upgrade-from-release when available"
     elif [ "$ROLLBACK_RESULT" = "failed" ]; then
       print_summary "[dh] works: rollback did not complete; target binary state requires manual inspection"
-      print_summary "[dh] limited: upgrade failed and rollback failed; direct-binary path remains manifest-unverified; Windows runtime installer parity remains unsupported"
+      print_summary "[dh] limited: upgrade failed and rollback failed; direct-binary path remains manifest-unverified; supported direct-binary upgrade targets are Linux and macOS; Windows is not a current target platform"
       print_summary "[dh] next: restore a known-good binary manually, then run '$TARGET_PATH --version' and '$TARGET_PATH doctor'"
     else
       print_summary "[dh] works: no rollback could run because no backup existed for this target"
-      print_summary "[dh] limited: upgrade failed without rollback protection (fresh target or missing backup); direct-binary path remains manifest-unverified; Windows runtime installer parity remains unsupported"
+      print_summary "[dh] limited: upgrade failed without rollback protection (fresh target or missing backup); direct-binary path remains manifest-unverified; supported direct-binary upgrade targets are Linux and macOS; Windows is not a current target platform"
       print_summary "[dh] next: install a known-good binary and run '$TARGET_PATH --version' plus '$TARGET_PATH doctor'"
     fi
 
@@ -285,7 +285,7 @@ else
   print_summary "[dh] condition: failed"
   print_summary "[dh] why: install stage completed but target binary is not executable at $TARGET_PATH"
   print_summary "[dh] works: upgrade result is not trustworthy without executable target verification"
-  print_summary "[dh] limited: direct-binary path does not provide release manifest/file-size verification; Windows runtime installer parity remains unsupported"
+  print_summary "[dh] limited: direct-binary path does not provide release manifest/file-size verification; supported direct-binary upgrade targets are Linux and macOS; Windows is not a current target platform"
   print_summary "[dh] next: reinstall a known-good binary and verify with '$TARGET_PATH --version'"
   write_result "failed" "unavailable" "target binary not executable after install stage" "$LATEST_BACKUP" "1" "post_install_verification"
   exit 1

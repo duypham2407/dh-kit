@@ -216,9 +216,8 @@ describe("createDebugDump", () => {
 
     const dump = await createDebugDump(repoRoot);
     expect(dump.auditInspection).toBeDefined();
-    expect(dump.operatorSafeWorktree).toBeDefined();
-    expect(dump.operatorSafeWorktree.mode).toBe("dry_run");
-    expect(dump.operatorSafeWorktree.allowed).toBe(true);
+    expect(dump).not.toHaveProperty("operatorSafeWorktree");
+    expect(dump).not.toHaveProperty("operatorSafeArtifacts");
     expect(dump.auditInspection.latestSession.query.sessionId).toBe("sess-debug");
     expect(dump.auditInspection.latestSession.query.limit).toBe(25);
     expect(dump.auditInspection.latestSession.summary.toolCount).toBe(1);
@@ -228,5 +227,8 @@ describe("createDebugDump", () => {
     expect(dump.extensionStateDrift.summary.updatedCount).toBeGreaterThanOrEqual(0);
     expect(Array.isArray(dump.extensionStateDrift.extensions)).toBe(true);
     expect(Array.isArray(dump.extensionStateDrift.warnings)).toBe(true);
+    expect(dump).not.toHaveProperty("bridgeRuntime");
+    expect(dump).not.toHaveProperty("bridgeLifecycleSeam");
+    expect(dump).not.toHaveProperty("bridgeUtilityProbes");
   });
 });

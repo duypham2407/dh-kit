@@ -48,6 +48,7 @@ export type IndexJobResult = {
     }>;
     partialScan: boolean;
     scanStopReasons: string[];
+    partialWorkspaceCount: number;
     operatorSafety: {
       mode: "check" | "dry_run" | "execute";
       allowed: boolean;
@@ -93,7 +94,7 @@ export async function runIndexWorkflow(
     mode: "check",
     operation: "index_workspace",
     repoRoot,
-    targetPath: repoRoot,
+    targetPath: resolveOperatorSafetyTargetPath(repoRoot, workspaces),
     requireVcs: false,
     knownWorkspaces: workspaces,
   });
@@ -112,6 +113,7 @@ export async function runIndexWorkflow(
       workspaceCoverage: buildWorkspaceCoverage(workspaces),
       partialScan,
       scanStopReasons,
+      partialWorkspaceCount: countPartialWorkspaces(workspaces),
         operatorSafety: {
           mode: operatorSafety.preflight.mode,
           allowed: operatorSafety.preflight.allowed,
@@ -176,6 +178,7 @@ export async function runIndexWorkflow(
       workspaceCoverage: buildWorkspaceCoverage(workspaces),
       partialScan,
       scanStopReasons,
+      partialWorkspaceCount: countPartialWorkspaces(workspaces),
       operatorSafety: {
         mode: operatorSafety.preflight.mode,
         allowed: operatorSafety.preflight.allowed,
@@ -261,7 +264,7 @@ function makeResult(
     ? ` embeddings=${embedding.embeddingsStored} skipped=${embedding.skippedDuplicates} tokens=${embedding.totalTokens}`
     : " embeddings=skipped";
   const scanSummary = diagnostics.partialScan
-    ? ` scan=partial(${diagnostics.scanStopReasons.join(",") || "unknown"})`
+    ? ` scan=partial(${diagnostics.partialWorkspaceCount}/${diagnostics.workspaceCount} workspaces:${diagnostics.scanStopReasons.join(",") || "unknown"})`
     : " scan=complete";
   const safetySummary = ` operator-safety=${diagnostics.operatorSafety.allowed ? "allow" : "block"}(${diagnostics.operatorSafety.recommendedAction}/${diagnostics.operatorSafety.outcome})`;
   const workspaceSummary = ` workspaces=${diagnostics.workspaceCount}`;
@@ -280,6 +283,10 @@ function makeResult(
   };
 }
 
+function countPartialWorkspaces(workspaces: IndexedWorkspace[]): number {
+  return workspaces.filter((workspace) => workspace.scanMeta?.partial === true).length;
+}
+
 function uniqueStopReasons(workspaces: IndexedWorkspace[]): string[] {
   return [...new Set(workspaces
     .map((workspace) => workspace.diagnostics?.stopReason ?? "none")
@@ -296,4 +303,9 @@ function buildWorkspaceCoverage(workspaces: IndexedWorkspace[]): Array<{
     partial: workspace.scanMeta?.partial === true,
     stopReason: workspace.diagnostics?.stopReason ?? "none",
   }));
+}
+
+function resolveOperatorSafetyTargetPath(repoRoot: string, workspaces: IndexedWorkspace[]): string {
+  const repoWorkspace = workspaces.find((workspace) => workspace.root === repoRoot);
+  return repoWorkspace?.root ?? workspaces[0]?.root ?? repoRoot;
 }

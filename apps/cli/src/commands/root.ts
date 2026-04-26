@@ -6,6 +6,7 @@ import { runDoctorCommand } from "./doctor.js";
 import { runExplainCommand } from "./explain.js";
 import { runIndexCommand } from "./index.js";
 import { runMigrateCommand } from "./migrate.js";
+import { runOperatorSafeMaintenanceCommand } from "./operator-safe-maintenance.js";
 import { runQuickCommand } from "./quick.js";
 import { runSemanticCleanupCommand } from "./semantic-cleanup.js";
 import { runTraceCommand } from "./trace.js";
@@ -13,7 +14,7 @@ import { DH_VERSION } from "../version.js";
 import { ChunksRepo } from "../../../../packages/storage/src/sqlite/repositories/chunks-repo.js";
 import { ConfigRepo } from "../../../../packages/storage/src/sqlite/repositories/config-repo.js";
 
-const HELP = `dh <command> [args]\n\nCommands:\n  quick <task> [--json]\n  delivery <goal> [--json]\n  migrate <goal> [--json]\n  ask <question> [--json]\n  explain <symbol> [--json]\n  trace <target> [--json]   (currently returns unsupported in bounded mode)\n  semantic-cleanup --mode <dry-run|apply> [--since <iso>] [--until <iso>] [--batch-size <n>] [--examples <n>] [--json]\n  index\n  doctor [--json] [--debug-dump [path]]\n  clean --yes\n  config --agent\n  config --verify-agent [quick|delivery|migration]\n  config --semantic [always|auto|off]\n  config --embedding\n  config --show\n  --version\n\nFirst-time setup:\n  1. dh doctor\n  2. dh index\n  3. dh ask "how does auth work?"\n\nExamples:\n  dh ask "where is session state persisted?"\n  dh explain "runIndexWorkflow"   # definition-oriented query path\n  dh trace "authentication flow"   # expected to return unsupported in bounded mode\n  dh semantic-cleanup --mode dry-run --json\n  dh quick "fix semantic search ordering bug"\n  dh clean --yes`;
+const HELP = `dh <command> [args]\n\nCommands:\n  quick <task> [--json]       (TypeScript-hosted workflow compatibility path)\n  delivery <goal> [--json]    (TypeScript-hosted workflow compatibility path)\n  migrate <goal> [--json]     (TypeScript-hosted workflow compatibility path)\n  ask <question> [--json]     (Rust-hosted first-wave knowledge path)\n  explain <symbol> [--json]   (Rust-hosted first-wave knowledge path)\n  trace <target> [--json]     (Rust-hosted first-wave lifecycle path; trace result may be unsupported)\n  semantic-cleanup --mode <dry-run|apply> [--since <iso>] [--until <iso>] [--batch-size <n>] [--examples <n>] [--json]\n  operator-safe-maintenance <list|inspect|prune|cleanup> [options]\n  index\n  doctor [--json] [--debug-dump [path]]\n  clean --yes\n  config --agent\n  config --verify-agent [quick|delivery|migration]\n  config --semantic [always|auto|off]\n  config --embedding\n  config --show\n  --version\n\nLifecycle boundary:\n  Rust-host lifecycle authority currently covers first-wave knowledge commands only: ask, explain, trace.\n  Bounded broad ask can use Rust-authored query.buildEvidence only for finite static repository subjects.\n  Narrow ask/explain keep search, definition, or relationship methods when those are the truthful surface.\n  Legacy retrieval packets and TypeScript-hosted bridge paths are compatibility surfaces, not canonical authority for touched Rust-hosted build-evidence flows.\n  Supported target platforms are Linux and macOS only.\n  No universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, or full workflow-lane parity is claimed.\n\nFirst-time setup:\n  1. dh doctor\n  2. dh index\n  3. dh ask "how does auth work?"\n\nExamples:\n  dh ask "where is session state persisted?"\n  dh ask "how does auth work?"  # bounded Rust query.buildEvidence when a finite static subject is available\n  dh explain "runIndexWorkflow"   # definition-oriented query path\n  dh trace "authentication flow"   # Rust-hosted lifecycle envelope; result may be unsupported\n  dh semantic-cleanup --mode dry-run --json\n  dh operator-safe-maintenance list --family all\n  dh operator-safe-maintenance prune --mode dry-run\n  dh quick "fix semantic search ordering bug"\n  dh clean --yes`;
 
 export async function runCli(args: string[], repoRoot: string): Promise<number> {
   const [command, ...rest] = args;
@@ -33,6 +34,8 @@ export async function runCli(args: string[], repoRoot: string): Promise<number> 
       return runTraceCommand(rest, repoRoot);
     case "semantic-cleanup":
       return runSemanticCleanupCommand(rest, repoRoot);
+    case "operator-safe-maintenance":
+      return runOperatorSafeMaintenanceCommand(rest, repoRoot);
     case "index":
       return runIndexCommand(repoRoot);
     case "doctor":
@@ -81,7 +84,7 @@ function buildHomeScreen(repoRoot: string): string {
       "condition: degraded",
       "why: repository index has not been created yet",
       "works: doctor and indexing commands are available",
-      "limited: ask/explain are limited before indexing; trace currently remains unsupported in bounded mode",
+      "limited: ask/explain are limited before indexing; bounded broad ask needs Rust query.buildEvidence packet truth; trace currently remains unsupported in bounded mode",
       "next: run dh doctor, then dh index",
       "",
       "first-run onboarding:",
@@ -97,8 +100,8 @@ function buildHomeScreen(repoRoot: string): string {
       "surface: CLI home/onboarding",
       "condition: ready",
       "why: repository index already exists",
-      "works: ask/explain commands can use indexed data",
-      "limited: trace currently remains unsupported in bounded mode; provider-backed quality still depends on doctor/config state",
+      "works: ask/explain commands can use indexed data, including bounded Rust query.buildEvidence for finite broad-understanding asks",
+      "limited: no universal reasoning or runtime tracing is claimed; trace currently remains unsupported in bounded mode; provider-backed quality still depends on doctor/config state",
       "next: run a knowledge command such as dh ask",
       "",
       "ready to use:",

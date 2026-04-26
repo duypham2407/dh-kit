@@ -38,4 +38,32 @@ describe("extractCallSites", () => {
     const callSites = await extractCallSites(repo, [file], [symbol]);
     expect(callSites.some((site) => site.symbolName === "helper")).toBe(true);
   });
+
+  it("reads segmented call-site files from workspaceRoot", async () => {
+    const repo = makeRepo();
+    const workspaceRoot = path.join(repo, "packages", "app");
+    fs.mkdirSync(path.join(workspaceRoot, "src"), { recursive: true });
+    fs.writeFileSync(path.join(workspaceRoot, "src", "main.ts"), "function helper() { return 1; }\nconst x = helper();\n", "utf8");
+
+    const file: IndexedFile = {
+      id: createId("file"),
+      path: "src/main.ts",
+      extension: ".ts",
+      language: "typescript",
+      sizeBytes: 64,
+      status: "indexed",
+      workspaceRoot,
+    };
+    const symbol: IndexedSymbol = {
+      id: createId("symbol"),
+      fileId: file.id,
+      name: "helper",
+      kind: "function",
+      lineStart: 1,
+      lineEnd: 1,
+    };
+
+    const callSites = await extractCallSites(repo, [file], [symbol]);
+    expect(callSites.some((site) => site.symbolName === "helper")).toBe(true);
+  });
 });

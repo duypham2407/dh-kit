@@ -267,4 +267,17 @@ describe("extractSymbolsFromFilesAST", () => {
     expect(symbols.find((s) => s.name === "alpha")!.fileId).toBe("f1");
     expect(symbols.find((s) => s.name === "beta")!.fileId).toBe("f2");
   });
+
+  it("extracts symbols from segmented files using workspaceRoot", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "dh-parser-segmented-"));
+    const workspaceRoot = path.join(tmpDir, "packages", "app");
+    await fs.mkdir(path.join(workspaceRoot, "src"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "src", "a.ts"), "export function alpha() { return 1; }\n", "utf8");
+
+    const symbols = await extractSymbolsFromFilesAST(tmpDir, [
+      makeFile({ id: "f1", path: "src/a.ts", workspaceRoot }),
+    ]);
+
+    expect(symbols.find((s) => s.name === "alpha")?.fileId).toBe("f1");
+  });
 });

@@ -42,10 +42,28 @@ describe("runDoctorCommand", () => {
     });
     expect(payload.diagnostics.providerCoverage.totalProviders).toBeGreaterThan(0);
     expect(payload.diagnostics.providerCoverage.totalModels).toBeGreaterThan(0);
+    expect(payload.diagnostics.rustHostedKnowledgePath).toMatchObject({
+      source: "rust_host_lifecycle_authority",
+      topology: "rust_host_ts_worker",
+      supportBoundary: "knowledge_commands_first_wave",
+      workerRole: "typescript_worker",
+      legacyPathLabel: "legacy_ts_host_bridge_compatibility_only",
+      buildEvidenceSupport: "bounded_rust_hosted_broad_ask_only",
+      targetPlatforms: ["linux", "macos"],
+    });
+    expect(payload.diagnostics.rustHostedKnowledgePath.supportedCommands).toEqual(["ask", "explain", "trace"]);
     expect(payload.diagnostics.capabilitySummary).toBeDefined();
     expect(payload.diagnostics.parserFreshnessSummary).toBeDefined();
+    expect(payload.diagnostics.runtimePingLifecycleSeam).toBeDefined();
+    expect(payload.diagnostics.runtimePingLifecycleSeam.source).toBe("runtime.ping");
+    expect(payload.snapshot.rustHostedKnowledgePath).toBeDefined();
+    expect(payload.snapshot.rustHostedKnowledgePath.legacyPathLabel).toBe("legacy_ts_host_bridge_compatibility_only");
+    expect(typeof payload.snapshot.rustHostedKnowledgePath.workerBundleReady).toBe("boolean");
+    expect(typeof payload.snapshot.rustHostedKnowledgePath.workerManifestReady).toBe("boolean");
     expect(payload.snapshot.capabilitySummary).toBeDefined();
     expect(payload.snapshot.parserFreshnessSummary).toBeDefined();
+    expect(payload.snapshot.runtimePingLifecycleSeam).toBeDefined();
+    expect(payload.snapshot.runtimePingLifecycleSeamState).toBeDefined();
     expect(payload.snapshot.capabilityStateSummary).toBeDefined();
     expect(payload.debugDumpPath).toBeUndefined();
   });

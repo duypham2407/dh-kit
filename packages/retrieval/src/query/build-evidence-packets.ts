@@ -4,6 +4,18 @@ import type { EvidencePacket, NormalizedRetrievalResult } from "../../../shared/
 import { normalizeToRepoRelativePath } from "../../../intelligence/src/workspace/scan-paths.js";
 import { recordTelemetry } from "../semantic/telemetry-collector.js";
 
+/**
+ * Legacy retrieval packet builder.
+ *
+ * Non-authoritative contract note:
+ * - This builder is retained for retrieval package diagnostics and compatibility.
+ * - Touched Rust-hosted first-wave knowledge-command flows must use canonical
+ *   Rust packet truth, including bounded broad `dh ask` answers backed by
+ *   `query.buildEvidence`, instead of this helper.
+ * - This helper does not grant universal repository understanding, trace-flow
+ *   execution, runtime tracing, remote/daemon behavior, or Windows support.
+ */
+
 export async function buildEvidencePackets(repoRoot: string, results: NormalizedRetrievalResult[]): Promise<EvidencePacket[]> {
   const packets = await Promise.all(results.map(async (result) => {
     // Safety net only: retrieval should already provide canonical repo-relative

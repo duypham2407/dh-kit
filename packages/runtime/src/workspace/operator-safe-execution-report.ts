@@ -10,8 +10,18 @@ import type {
 
 const OPERATOR_SAFE_RUNTIME_ROOT = [".dh", "runtime", "operator-safe-worktree"];
 
-function makeArtifactId(): string {
-  return `opw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+function makeArtifactId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function createOperatorSafeExecutionIdentity(): {
+  reportId: string;
+  executionId: string;
+} {
+  return {
+    reportId: makeArtifactId("opw"),
+    executionId: makeArtifactId("opw-exec"),
+  };
 }
 
 export function resolveOperatorSafeArtifactsRoot(repoRoot: string): string {
@@ -54,12 +64,16 @@ export function buildOperatorSafeExecutionReport(input: {
   tempWorkspace?: OperatorWorktreeExecutionReport["tempWorkspace"];
   apply?: OperatorWorktreeExecutionReport["apply"];
   rollback?: OperatorWorktreeExecutionReport["rollback"];
+  relatedArtifacts?: OperatorWorktreeExecutionReport["relatedArtifacts"];
   notes?: string[];
   id?: string;
+  executionId?: string;
   createdAt?: string;
 }): OperatorWorktreeExecutionReport {
+  const reportId = input.id ?? makeArtifactId("opw");
   return {
-    id: input.id ?? makeArtifactId(),
+    id: reportId,
+    executionId: input.executionId ?? makeArtifactId("opw-exec"),
     createdAt: input.createdAt ?? new Date().toISOString(),
     operation: input.operation,
     mode: input.mode,
@@ -72,6 +86,7 @@ export function buildOperatorSafeExecutionReport(input: {
     blockingCodes: input.blockingCodes,
     stages: input.stages,
     context: input.context,
+    relatedArtifacts: input.relatedArtifacts ?? {},
     snapshot: input.snapshot,
     tempWorkspace: input.tempWorkspace,
     apply: input.apply,

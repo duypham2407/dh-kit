@@ -4,6 +4,7 @@ set -eu
 SOURCE_DIR="${1:-dist/rust-engine/releases}"
 OUTPUT_DIR="${2:-dist/releases}"
 VERSION="${3:-dev}"
+WORKER_BUNDLE_DIR="${DH_WORKER_BUNDLE_DIR:-dist/ts-worker}"
 
 if [ ! -d "$SOURCE_DIR" ]; then
   echo "source release directory not found: $SOURCE_DIR" >&2
@@ -25,11 +26,29 @@ if [ "$found" -ne 1 ]; then
   exit 1
 fi
 
+if [ ! -f "$WORKER_BUNDLE_DIR/worker.mjs" ]; then
+  echo "worker bundle not found: $WORKER_BUNDLE_DIR/worker.mjs" >&2
+  echo "run scripts/build-worker-bundle.sh before packaging the Rust-hosted knowledge-command release" >&2
+  exit 1
+fi
+
+if [ ! -f "$WORKER_BUNDLE_DIR/manifest.json" ]; then
+  echo "worker bundle manifest not found: $WORKER_BUNDLE_DIR/manifest.json" >&2
+  echo "run scripts/build-worker-bundle.sh before packaging the Rust-hosted knowledge-command release" >&2
+  exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR/ts-worker"
+cp "$WORKER_BUNDLE_DIR/worker.mjs" "$OUTPUT_DIR/ts-worker/worker.mjs"
+cp "$WORKER_BUNDLE_DIR/manifest.json" "$OUTPUT_DIR/ts-worker/manifest.json"
+cp "$WORKER_BUNDLE_DIR/worker.mjs" "$OUTPUT_DIR/worker.mjs"
+cp "$WORKER_BUNDLE_DIR/manifest.json" "$OUTPUT_DIR/worker-manifest.json"
+
 (
   cd "$OUTPUT_DIR"
 
   rm -f SHA256SUMS
-  for file in dh-*; do
+  for file in dh-* ts-worker/worker.mjs ts-worker/manifest.json worker.mjs worker-manifest.json; do
     if [ -f "$file" ]; then
       shasum -a 256 "$file" >> SHA256SUMS
     fi
@@ -40,7 +59,7 @@ fi
   printf '{\n  "version": "%s",\n  "generatedAt": "%s",\n  "files": [\n' "$VERSION" "$generated_at" > "$manifest_tmp"
 
   first=1
-  for file in dh-*; do
+  for file in dh-* ts-worker/worker.mjs ts-worker/manifest.json worker.mjs worker-manifest.json; do
     if [ ! -f "$file" ]; then
       continue
     fi

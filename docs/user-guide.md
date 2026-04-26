@@ -1,6 +1,8 @@
 # User Guide
 
 Hướng dẫn này dành cho người dùng cuối muốn cài và dùng `dh` trên macOS hoặc Linux.
+Linux và macOS là các target platform hiện được hỗ trợ; hướng dẫn này không bao
+gồm Windows install support.
 
 ## `dh` là gì?
 
@@ -12,6 +14,33 @@ Bạn dùng nó để:
 - giải thích file, symbol, module
 - trace flow qua nhiều file khi trace-flow được hỗ trợ trong contract/lane tương lai (bounded contract hiện tại trả `unsupported`)
 - chạy workflow có cấu trúc cho task kỹ thuật
+
+## Rust-host lifecycle boundary for knowledge commands
+
+Supported first-wave knowledge commands (`dh ask`, `dh explain`, `dh trace`) are
+Rust-hosted on the lifecycle path: Rust starts and supervises the TypeScript
+worker bundle and owns startup, readiness, health, timeout, recovery, shutdown,
+cleanup, and final exit classification for that local process tree.
+
+Important boundaries:
+
+- TypeScript is the worker for workflow/output behavior on this path, not the
+  lifecycle host.
+- Bounded broad-understanding `dh ask` requests with a finite static subject can
+  use Rust-authored `query.buildEvidence` packet truth. Legacy retrieval packets
+  and TypeScript-hosted bridge diagnostics are not canonical for that touched
+  Rust-hosted flow.
+- Build evidence is not universal repository reasoning. Narrow ask/explain
+  requests continue to use search, definition, or relationship methods when
+  those are the truthful surface.
+- Remaining TypeScript-hosted workflow, maintainer, or bridge paths are
+  legacy/compatibility-only until separately migrated.
+- `dh trace` can still return an `unsupported` command result even though its
+  process lifecycle is Rust-hosted; this is not runtime tracing support.
+- Linux and macOS are the supported target platforms. This does not add Windows
+  platform support, daemon mode, remote/local socket control plane behavior,
+  worker-pool behavior, shell or worktree orchestration redesign, or full
+  workflow-lane parity.
 
 ## Bạn có cần clone source code không?
 
@@ -111,6 +140,15 @@ In ra version hiện tại của binary `dh`.
 
 Kiểm tra local runtime, DB, config, semantic readiness.
 
+`dh doctor` also reports whether the Rust-hosted first-wave knowledge-command
+path has the worker bundle/manifest readiness needed for `ask`, `explain`, and
+`trace`, and labels the older TypeScript-hosted Rust bridge diagnostics as a
+compatibility seam rather than equal lifecycle authority.
+
+`dh doctor --debug-dump` chỉ là secondary summary cho local diagnostics; use
+the feature-specific runbook for maintenance procedures outside this bounded
+Rust-hosted knowledge-command path.
+
 ### `dh index`
 
 Build index để `dh` hiểu codebase tốt hơn.
@@ -118,6 +156,15 @@ Build index để `dh` hiểu codebase tốt hơn.
 ### `dh ask`
 
 Hỏi một câu tự nhiên về codebase.
+
+On the supported product path, `dh ask` is a Rust-hosted first-wave knowledge
+command. Rust owns lifecycle authority; TypeScript returns workflow/output
+evidence as the worker.
+
+Bounded broad-understanding requests such as `how does auth work?` can use the
+Rust `query.buildEvidence` method when the request has a finite static subject.
+The returned Rust packet is the canonical evidence truth for that flow; legacy
+retrieval-local packet helpers remain diagnostics/compatibility only.
 
 Nếu chưa có index hoặc chưa có enough data, command sẽ gợi ý bước tiếp theo như `dh index` hoặc `dh doctor`.
 
@@ -128,6 +175,8 @@ Catalog query classes currently routed by `dh ask` (bounded, first-class):
 - graph-aware one-hop reference/usage lookup
 - graph-aware one-hop dependency lookup
 - graph-aware one-hop dependent/importer lookup
+- bounded broad-understanding via Rust-authored `query.buildEvidence` for finite
+  static subjects
 
 Requests outside those bounded ask classes return `unsupported` instead of falling back to a hidden class.
 
@@ -148,7 +197,9 @@ Lifecycle/process diagnostics are currently surfaced via `dh doctor` and interna
 
 Giải thích một symbol hoặc file cụ thể.
 
-`dh explain` is mapped to the definition-oriented query class through the same Rust bridge envelope (`answerState`, `evidence`, `languageCapabilitySummary`) used by hardened query paths.
+`dh explain` is mapped to the definition-oriented query class. On the supported
+product path it runs inside the same Rust-host lifecycle authority boundary as
+`dh ask`: Rust is host/supervisor and TypeScript is worker/output shaper.
 
 ### `dh trace`
 
@@ -157,6 +208,9 @@ Trace luồng xử lý hoặc dependency flow.
 Trong bounded contract hiện tại của QUERY-EVIDENCE-HARDENING, `dh trace` được giữ ở trạng thái `unsupported`.
 
 Nghĩa là output phải nói rõ unsupported (không overclaim parser-backed trace proof, không fallback ngầm thành grounded).
+
+The lifecycle for this command is still Rust-hosted on the supported first-wave
+path; only the trace-flow command result remains bounded/unsupported.
 
 ### `dh quick`
 

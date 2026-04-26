@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
+  extractSymbolsFromFiles,
   getLanguageSupportStatus,
   listLanguageSupportBoundaries,
 } from "./extract-symbols.js";
@@ -28,5 +32,24 @@ describe("language support boundaries", () => {
     expect(statuses.has("supported")).toBe(true);
     expect(statuses.has("limited")).toBe(true);
     expect(statuses.has("fallback-only")).toBe(true);
+  });
+
+  it("extracts segmented symbols from workspaceRoot-owned content", async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "dh-symbols-segmented-"));
+    const workspaceRoot = path.join(repo, "packages", "app");
+    await fs.mkdir(path.join(workspaceRoot, "src"), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, "src", "a.ts"), "export function alpha() { return 1; }\n", "utf8");
+
+    const symbols = await extractSymbolsFromFiles(repo, [{
+      id: "file-1",
+      path: "src/a.ts",
+      extension: ".ts",
+      language: "typescript",
+      sizeBytes: 1,
+      status: "indexed",
+      workspaceRoot,
+    }]);
+
+    expect(symbols.find((symbol) => symbol.name === "alpha")?.fileId).toBe("file-1");
   });
 });

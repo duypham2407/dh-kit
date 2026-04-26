@@ -108,16 +108,51 @@ describe("runIndexWorkflow", () => {
     fs.writeFileSync(path.join(repo, "src", "a.ts"), "export const a = 1;\n", "utf8");
     fs.writeFileSync(path.join(repo, "src", "b.ts"), "export const b = 1;\n", "utf8");
 
-    const result = await runIndexWorkflow(repo, { scanOptions: { maxFiles: 1 }, skipEmbedding: true });
+    const result = await runIndexWorkflow(repo, {
+      scanOptions: { maxFiles: 1, includeExtensions: [".ts"] },
+      skipEmbedding: true,
+    });
 
     expect(result.diagnostics.partialScan).toBe(true);
+    expect(result.diagnostics.partialWorkspaceCount).toBe(1);
     expect(result.diagnostics.scanStopReasons).toContain("max_files_reached");
-    expect(result.summary).toContain("scan=partial");
+    expect(result.summary).toContain("scan=partial(1/1 workspaces:max_files_reached)");
     expect(result.summary).toContain("operator-safety=allow");
     expect(result.summary).toContain("workspaces=1");
     expect(result.diagnostics.workspaceCount).toBe(1);
     expect(result.diagnostics.workspaceCoverage[0]?.partial).toBe(true);
     expect(result.diagnostics.workspaceCoverage[0]?.stopReason).toBe("max_files_reached");
+  });
+
+  it("allows segmented workspace diagnostics when one workspace is partial and another is complete", async () => {
+    const repo = makeTmpRepo();
+    const partialWorkspace = path.join(repo, "packages", "partial");
+    const completeWorkspace = path.join(repo, "packages", "complete");
+    fs.mkdirSync(path.join(partialWorkspace, "src"), { recursive: true });
+    fs.mkdirSync(path.join(completeWorkspace, "src"), { recursive: true });
+    fs.writeFileSync(path.join(partialWorkspace, "package.json"), "{\"name\":\"partial\"}\n", "utf8");
+    fs.writeFileSync(path.join(completeWorkspace, "package.json"), "{\"name\":\"complete\"}\n", "utf8");
+    fs.writeFileSync(path.join(partialWorkspace, "src", "a.ts"), "export const a = 1;\n", "utf8");
+    fs.writeFileSync(path.join(partialWorkspace, "src", "b.ts"), "export const b = 1;\n", "utf8");
+    fs.writeFileSync(path.join(completeWorkspace, "src", "notes.txt"), "not indexable in this run\n", "utf8");
+
+    const result = await runIndexWorkflow(repo, {
+      scanOptions: { maxFiles: 1, includeExtensions: [".ts"] },
+      skipEmbedding: true,
+    });
+
+    expect(result.diagnostics.workspaceCount).toBe(2);
+    expect(result.diagnostics.partialScan).toBe(true);
+    expect(result.diagnostics.partialWorkspaceCount).toBe(1);
+    expect(result.diagnostics.workspaceCoverage).toEqual(expect.arrayContaining([
+      expect.objectContaining({ root: partialWorkspace, partial: true, stopReason: "max_files_reached" }),
+      expect.objectContaining({ root: completeWorkspace, partial: false, stopReason: "none" }),
+    ]));
+    expect(result.diagnostics.operatorSafety.allowed).toBe(true);
+    expect(result.diagnostics.operatorSafety.blockingCount).toBe(0);
+    expect(result.summary).toContain("scan=partial(1/2 workspaces:max_files_reached)");
+    expect(result.summary).toContain("operator-safety=allow");
+    expect(result.summary).toContain("workspaces=2");
   });
 
   it("keeps check-mode safety advisory and does not abort indexing", async () => {

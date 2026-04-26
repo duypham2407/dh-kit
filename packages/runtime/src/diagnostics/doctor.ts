@@ -17,8 +17,13 @@ import path from "node:path";
 import {
   probeRustCapabilitySummary,
   probeRustEngineStatus,
+  summarizeRuntimePing,
+  type RustRuntimePingState,
+  type RustRuntimePingSummary,
   type RustParserFreshnessSummary,
 } from "./rust-engine-status.js";
+import { createDhJsonRpcStdioClient, DhBridgeError } from "../../../opencode-app/src/bridge/dh-jsonrpc-stdio-client.js";
+import type { RuntimeProbePingResult } from "./bridge-runtime-probe.js";
 
 export type DoctorReport = {
   ok: boolean;
@@ -31,6 +36,8 @@ export type DoctorReport = {
   };
   diagnostics: {
     lifecycleClassification: DoctorLifecycleClassification;
+    rustHostedKnowledgePath: RustHostedKnowledgePathView;
+    runtimePingLifecycleSeam: RuntimePingLifecycleSeamView;
     capabilitySummary: RustCapabilitySummary;
     parserFreshnessSummary: RustParserFreshnessView;
     providerCoverage: {
@@ -100,9 +107,12 @@ export type DoctorSnapshot = {
   qualityGateNotConfiguredCount: number;
   ruleScanAvailability: "available" | "unavailable" | "not_configured";
   securityScanAvailability: "available" | "unavailable" | "not_configured";
+  rustHostedKnowledgePath: RustHostedKnowledgePathView;
   actionCount: number;
   capabilitySummary: RustCapabilitySummary;
   parserFreshnessSummary: RustParserFreshnessView;
+  runtimePingLifecycleSeam: RuntimePingLifecycleSeamView;
+  runtimePingLifecycleSeamState: RustRuntimePingState;
   capabilityStateSummary: {
     supported: number;
     partial: number;
@@ -142,6 +152,33 @@ type RustParserFreshnessView =
     available: false;
     reason: string;
   };
+
+type RuntimePingLifecycleSeamView = {
+  source: "runtime.ping";
+  available: boolean;
+  state: RustRuntimePingState;
+  reason: string;
+  summary?: RustRuntimePingSummary;
+};
+
+type RustHostedKnowledgePathView = {
+  source: "rust_host_lifecycle_authority";
+  available: boolean;
+  status: LifecycleStatus;
+  topology: "rust_host_ts_worker";
+  supportBoundary: "knowledge_commands_first_wave";
+  supportedCommands: Array<"ask" | "explain" | "trace">;
+  buildEvidenceSupport: "bounded_rust_hosted_broad_ask_only";
+  workerRole: "typescript_worker";
+  legacyPathLabel: "legacy_ts_host_bridge_compatibility_only";
+  targetPlatforms: Array<"linux" | "macos">;
+  workerBundleReady: boolean;
+  workerManifestReady: boolean;
+  flatReleaseAssetsReady: boolean;
+  workerBundlePath: string;
+  workerManifestPath: string;
+  reasons: string[];
+};
 
 export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   const paths = resolveDhPaths(repoRoot);
@@ -208,6 +245,10 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   const releaseDir = path.join(repoRoot, "dist", "releases");
   const releaseManifestPath = path.join(releaseDir, "manifest.json");
   const releaseChecksumsPath = path.join(releaseDir, "SHA256SUMS");
+  const releaseWorkerBundlePath = path.join(releaseDir, "ts-worker", "worker.mjs");
+  const releaseWorkerManifestPath = path.join(releaseDir, "ts-worker", "manifest.json");
+  const flatReleaseWorkerBundlePath = path.join(releaseDir, "worker.mjs");
+  const flatReleaseWorkerManifestPath = path.join(releaseDir, "worker-manifest.json");
   const runtimeBinaryCandidates = [
     path.join(releaseDir, "dh-darwin-arm64"),
     path.join(releaseDir, "dh-darwin-amd64"),
@@ -215,6 +256,12 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     path.join(releaseDir, "dh-linux-arm64"),
   ];
   const runtimeBinaryReady = runtimeBinaryCandidates.some((candidate) => fsSync.existsSync(candidate));
+  const rustHostedKnowledgePath = summarizeRustHostedKnowledgePath({
+    workerBundlePath: releaseWorkerBundlePath,
+    workerManifestPath: releaseWorkerManifestPath,
+    flatWorkerBundlePath: flatReleaseWorkerBundlePath,
+    flatWorkerManifestPath: flatReleaseWorkerManifestPath,
+  });
 
   let hookLogsPresent = false;
   try {
@@ -227,6 +274,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   const sqliteBridgeReady = availableTables.has("hook_invocation_logs") && runtimeBinaryReady;
   const qualityGateAvailability = getQualityGateAvailabilitySnapshot(repoRoot);
   const rustCapabilitySummary = await summarizeRustCapabilityState(repoRoot);
+  const runtimePingLifecycleSeam = await summarizeRuntimePingLifecycleSeam(repoRoot);
   const rustFreshnessProbe = await probeRustEngineStatus(repoRoot);
   const parserFreshnessSummary: RustParserFreshnessView = rustFreshnessProbe.ok && rustFreshnessProbe.freshness
     ? {
@@ -262,6 +310,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   if (!fsSync.existsSync(releaseChecksumsPath)) {
     installDistributionReasons.push("Release checksums are not present at dist/releases/SHA256SUMS.");
   }
+  installDistributionReasons.push(...rustHostedKnowledgePath.reasons);
 
   if (!integrityResult.ok) {
     runtimeWorkspaceReasons.push(`SQLite integrity failed: ${integrityResult.details.join("; ")}`);
@@ -330,6 +379,10 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
 
   if (!runtimeBinaryReady) {
     actions.push("Install/distribution readiness is degraded: runtime release binary is missing under dist/releases. Build release artifacts or reinstall the runtime bundle.");
+  }
+
+  if (rustHostedKnowledgePath.status !== "healthy") {
+    actions.push("Rust-hosted first-wave knowledge-command readiness is degraded: build/package ts-worker/worker.mjs and ts-worker/manifest.json before claiming ask/explain/trace release readiness.");
   }
 
   if (!embeddingKeyAvailable && semanticMode !== "off") {
@@ -413,10 +466,43 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     `  rule_scan: ${qualityGateAvailability.gates.rule_scan.availability}`,
     `  security_scan: ${qualityGateAvailability.gates.security_scan.availability}`,
     "",
-    "Capability state (Rust truth):",
+    "Rust-hosted knowledge-command lifecycle authority:",
+    "  support boundary: ask/explain/trace first-wave knowledge commands only",
+    `  topology: ${rustHostedKnowledgePath.topology}`,
+    "  lifecycle authority: Rust host owns startup, spawn, readiness, health, timeout, recovery, shutdown, cleanup, and final exit on this supported path",
+    "  build-evidence support: bounded Rust-hosted broad ask only; finite static subjects use Rust-authored query.buildEvidence packet truth",
+    "  TypeScript role: worker for workflow/output; not host lifecycle authority on this supported path",
+    `  legacy path label: ${rustHostedKnowledgePath.legacyPathLabel}`,
+    "  legacy boundary: TypeScript-hosted Rust bridge and retrieval packet paths are compatibility-only and not canonical authority for touched Rust-hosted build-evidence flows",
+    `  platforms: ${rustHostedKnowledgePath.targetPlatforms.join("/")} only`,
+    `  worker bundle: ${rustHostedKnowledgePath.workerBundleReady ? "ready" : "missing"} (${rustHostedKnowledgePath.workerBundlePath})`,
+    `  worker manifest: ${rustHostedKnowledgePath.workerManifestReady ? "ready" : "missing"} (${rustHostedKnowledgePath.workerManifestPath})`,
+    `  flat release worker assets: ${rustHostedKnowledgePath.flatReleaseAssetsReady ? "ready" : "missing"}`,
+    `  readiness: ${rustHostedKnowledgePath.status}`,
+    "  boundary: no universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, shell/worktree orchestration redesign, or full workflow-lane parity is claimed",
+    "",
+    "runtime.ping compatibility seam:",
+    "  source: legacy TypeScript-hosted Rust bridge runtime.ping compatibility probe",
+    `  state: ${runtimePingLifecycleSeam.state}`,
+    `  reason: ${runtimePingLifecycleSeam.reason}`,
+    runtimePingLifecycleSeam.summary
+      ? `  ok: ${runtimePingLifecycleSeam.summary.ok}`
+      : "  ok: unknown (runtime.ping result unavailable)",
+    runtimePingLifecycleSeam.summary
+      ? `  workerState: ${runtimePingLifecycleSeam.summary.workerState}`
+      : "  workerState: unavailable",
+    runtimePingLifecycleSeam.summary
+      ? `  healthState: ${runtimePingLifecycleSeam.summary.healthState}`
+      : "  healthState: unavailable",
+    runtimePingLifecycleSeam.summary
+      ? `  phase: ${runtimePingLifecycleSeam.summary.phase}`
+      : "  phase: unavailable",
+    "  boundary: this seam checks compatibility runtime.ping only; it is not the Rust-hosted ask/explain/trace lifecycle envelope",
+    "",
+    "Capability state (compatibility Rust bridge query truth):",
     rustCapabilitySummary.available
-      ? `  source: rust bridge capability matrix`
-      : "  source: rust bridge capability matrix unavailable",
+      ? `  source: compatibility Rust bridge capability matrix`
+      : "  source: compatibility Rust bridge capability matrix unavailable",
     rustCapabilitySummary.available
       ? `  supported: ${capabilityStateSummary.supported}`
       : `  reason: ${rustCapabilitySummary.reason}`,
@@ -425,12 +511,12 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
       : "  action: run a Rust-backed knowledge query (dh ask/dh explain) to surface capability details",
     rustCapabilitySummary.available
       ? `  best-effort: ${capabilityStateSummary.bestEffort}`
-      : "  note: this surface is bounded and will not infer capability from TS extraction heuristics",
+      : "  note: this compatibility surface is bounded and will not infer capability from TS extraction heuristics",
     rustCapabilitySummary.available
       ? `  unsupported: ${capabilityStateSummary.unsupported}`
       : "  unsupported: capability summary not reported on this surface",
     "",
-    "Parser freshness (Rust truth):",
+    "Parser freshness (Rust engine status truth):",
     parserFreshnessSummary.available
       ? "  source: rust-engine status"
       : "  source: rust-engine status unavailable",
@@ -494,6 +580,8 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
           reasons: capabilityToolingReasons,
         },
       },
+      rustHostedKnowledgePath,
+      runtimePingLifecycleSeam,
       capabilitySummary: rustCapabilitySummary,
       parserFreshnessSummary,
       providerCoverage: {
@@ -547,9 +635,12 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
       qualityGateNotConfiguredCount: qualityGateAvailability.summary.notConfiguredCount,
       ruleScanAvailability: qualityGateAvailability.gates.rule_scan.availability,
       securityScanAvailability: qualityGateAvailability.gates.security_scan.availability,
+      rustHostedKnowledgePath,
       actionCount: actions.length,
       capabilitySummary: rustCapabilitySummary,
       parserFreshnessSummary,
+      runtimePingLifecycleSeam,
+      runtimePingLifecycleSeamState: runtimePingLifecycleSeam.state,
       capabilityStateSummary,
     },
   };
@@ -575,5 +666,119 @@ async function summarizeRustCapabilityState(repoRoot: string): Promise<RustCapab
       unsupported: probe.summary.unsupported,
     },
     capabilityCount: probe.summary.capabilityCount,
+  };
+}
+
+function summarizeRustHostedKnowledgePath(input: {
+  workerBundlePath: string;
+  workerManifestPath: string;
+  flatWorkerBundlePath: string;
+  flatWorkerManifestPath: string;
+}): RustHostedKnowledgePathView {
+  const workerBundleReady = fsSync.existsSync(input.workerBundlePath);
+  const workerManifestReady = fsSync.existsSync(input.workerManifestPath);
+  const flatWorkerBundleReady = fsSync.existsSync(input.flatWorkerBundlePath);
+  const flatWorkerManifestReady = fsSync.existsSync(input.flatWorkerManifestPath);
+  const flatReleaseAssetsReady = flatWorkerBundleReady && flatWorkerManifestReady;
+  const reasons: string[] = [];
+
+  if (!workerBundleReady) {
+    reasons.push("Rust-hosted worker bundle is not present at dist/releases/ts-worker/worker.mjs.");
+  }
+  if (!workerManifestReady) {
+    reasons.push("Rust-hosted worker manifest is not present at dist/releases/ts-worker/manifest.json.");
+  }
+  if (!flatReleaseAssetsReady) {
+    reasons.push("Flat GitHub Release worker assets are not both present (dist/releases/worker.mjs and dist/releases/worker-manifest.json).");
+  }
+
+  return {
+    source: "rust_host_lifecycle_authority",
+    available: workerBundleReady && workerManifestReady,
+    status: reasons.length === 0 ? "healthy" : "degraded",
+    topology: "rust_host_ts_worker",
+    supportBoundary: "knowledge_commands_first_wave",
+    supportedCommands: ["ask", "explain", "trace"],
+    buildEvidenceSupport: "bounded_rust_hosted_broad_ask_only",
+    workerRole: "typescript_worker",
+    legacyPathLabel: "legacy_ts_host_bridge_compatibility_only",
+    targetPlatforms: ["linux", "macos"],
+    workerBundleReady,
+    workerManifestReady,
+    flatReleaseAssetsReady,
+    workerBundlePath: input.workerBundlePath,
+    workerManifestPath: input.workerManifestPath,
+    reasons,
+  };
+}
+
+async function summarizeRuntimePingLifecycleSeam(repoRoot: string): Promise<RuntimePingLifecycleSeamView> {
+  const bridgeClient = createDhJsonRpcStdioClient(repoRoot) as ReturnType<typeof createDhJsonRpcStdioClient> & {
+    getRuntimePing?: () => Promise<RuntimeProbePingResult>;
+  };
+  try {
+    if (!bridgeClient.getRuntimePing) {
+      return {
+        source: "runtime.ping",
+        available: false,
+        state: "unsupported",
+        reason: "runtime.ping wrapper unavailable in bridge client",
+      };
+    }
+
+    const runtimePing = await bridgeClient.getRuntimePing();
+    const summary = summarizeRuntimePing(runtimePing);
+    return {
+      source: "runtime.ping",
+      available: true,
+      state: summary.state,
+      reason: summary.reason,
+      summary,
+    };
+  } catch (error) {
+    const failure = classifyRuntimePingFailure(error);
+    return {
+      source: "runtime.ping",
+      available: false,
+      state: failure.state,
+      reason: failure.reason,
+    };
+  } finally {
+    await bridgeClient.close();
+  }
+}
+
+function classifyRuntimePingFailure(error: unknown): { state: RustRuntimePingState; reason: string } {
+  if (error instanceof DhBridgeError) {
+    if (error.code === "BRIDGE_TIMEOUT" || error.code === "TIMEOUT") {
+      return {
+        state: "timed-out",
+        reason: `${error.code} (${error.phase}) — ${error.message}`,
+      };
+    }
+
+    if (error.code === "CAPABILITY_UNSUPPORTED" || error.code === "METHOD_NOT_SUPPORTED") {
+      return {
+        state: "unsupported",
+        reason: `${error.code} (${error.phase}) — ${error.message}`,
+      };
+    }
+
+    return {
+      state: "unavailable/failed",
+      reason: `${error.code} (${error.phase}) — ${error.message}`,
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      state: "unavailable/failed",
+      reason: `REQUEST_FAILED (request) — ${error.message}`,
+    };
+  }
+
+  return {
+    state: "unavailable/failed",
+    reason: "REQUEST_FAILED (request) — unknown runtime.ping lifecycle seam failure",
   };
 }

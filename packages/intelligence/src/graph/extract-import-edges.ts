@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import type { IndexedEdge, IndexedFile } from "../../../shared/src/types/indexing.js";
 import { createId } from "../../../shared/src/utils/ids.js";
 import { parseSource, type TreeSitterNode } from "../parser/tree-sitter-init.js";
-import { resolveModuleSpecifier } from "./module-resolver.js";
+import { resolveModuleSpecifierDetailed, type ModuleResolutionResult } from "./module-resolver.js";
 import { normalizePathSlashes, resolveIndexedFileAbsolutePath, toRepoRelativePath } from "../workspace/scan-paths.js";
 
 const IMPORT_REGEX = /^\s*import\s+.*?from\s+["'](.+?)["'];?/gm;
@@ -28,6 +28,12 @@ export async function extractImportEdgesRegex(repoRoot: string, files: IndexedFi
 }
 
 export async function extractImportEdges(repoRoot: string, files: IndexedFile[]): Promise<IndexedEdge[]> {
+  return (await extractImportEdgesWithDiagnostics(repoRoot, files)).edges;
+}
+
+export type ImportResolutionDiagnostic = ModuleResolutionResult & { fromId: string; importType: ImportSpecifier["type"] };
+
+export async function extractImportEdgesWithDiagnostics(repoRoot: string, files: IndexedFile[]): Promise<{ edges: IndexedEdge[]; diagnostics: ImportResolutionDiagnostic[] }> {
   const sourceFiles = files.filter((entry) => ["typescript", "tsx", "javascript", "jsx"].includes(entry.language));
   const fileByRelativePath = new Map<string, IndexedFile>();
   for (const file of sourceFiles) {
@@ -42,6 +48,7 @@ export async function extractImportEdges(repoRoot: string, files: IndexedFile[])
     fileByRelativePath.set(normalizeRelPath(repoRelativePath), file);
   }
   const edges: IndexedEdge[] = [];
+  const diagnostics: ImportResolutionDiagnostic[] = [];
 
   for (const file of sourceFiles) {
     const absolutePath = resolveIndexedFileAbsolutePath(repoRoot, file);
@@ -61,11 +68,13 @@ export async function extractImportEdges(repoRoot: string, files: IndexedFile[])
       tree.delete();
 
       for (const specifier of specifiers) {
-        const resolvedAbs = resolveModuleSpecifier(specifier.value, absolutePath, repoRoot);
-        if (!resolvedAbs) {
+        const workspaceRoot = file.workspaceRoot ?? repoRoot;
+        const result = resolveModuleSpecifierDetailed(specifier.value, absolutePath, workspaceRoot);
+        if (result.status !== "resolved" || !result.resolvedAbsPath) {
+          diagnostics.push({ ...result, fromId: file.id, importType: specifier.type });
           continue;
         }
-        const rel = toRepoRelativePath(repoRoot, resolvedAbs);
+        const rel = toRepoRelativePath(repoRoot, result.resolvedAbsPath);
         if (!rel) {
           continue;
         }
@@ -86,7 +95,7 @@ export async function extractImportEdges(repoRoot: string, files: IndexedFile[])
     }
   }
 
-  return dedupeEdges(edges);
+  return { edges: dedupeEdges(edges), diagnostics };
 }
 
 type ImportSpecifier = {

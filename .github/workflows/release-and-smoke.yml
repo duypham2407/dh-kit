@@ -266,8 +266,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          # Build asset list: always include binaries + checksums + manifest
-          ASSETS="dist/releases/dh-darwin-amd64 dist/releases/dh-darwin-arm64 dist/releases/dh-linux-amd64 dist/releases/dh-linux-arm64 dist/releases/SHA256SUMS dist/releases/manifest.json"
+          # Build asset list: always include binaries, worker bundle, checksums, and manifest
+          ASSETS="dist/releases/dh-darwin-amd64 dist/releases/dh-darwin-arm64 dist/releases/dh-linux-amd64 dist/releases/dh-linux-arm64 dist/releases/worker.mjs dist/releases/worker-manifest.json dist/releases/SHA256SUMS dist/releases/manifest.json"
           # Append .sig files if GPG signing ran
           for sig in dist/releases/*.sig; do
             [ -f "$sig" ] && ASSETS="$ASSETS $sig"

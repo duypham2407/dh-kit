@@ -43,6 +43,18 @@ export type RustEngineStatusProbeResult = {
   unavailableReason?: string;
 };
 
+export type RustRuntimePingState = "healthy/success" | "degraded" | "unsupported" | "timed-out" | "unavailable/failed";
+
+export type RustRuntimePingSummary = {
+  source: "rust_runtime_ping";
+  state: RustRuntimePingState;
+  ok: boolean;
+  workerState: string;
+  healthState: string;
+  phase: string;
+  reason: string;
+};
+
 type ParsedStatusFields = {
   status?: string;
   totalFiles: number;
@@ -484,6 +496,67 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+export function summarizeRuntimePing(raw: {
+  ok: boolean;
+  workerState: string;
+  healthState: string;
+  phase: string;
+}): RustRuntimePingSummary {
+  const state = mapRuntimePingState(raw);
+  const reason = describeRuntimePingReason(raw, state);
+  return {
+    source: "rust_runtime_ping",
+    state,
+    ok: raw.ok,
+    workerState: raw.workerState,
+    healthState: raw.healthState,
+    phase: raw.phase,
+    reason,
+  };
+}
+
+function mapRuntimePingState(raw: {
+  ok: boolean;
+  workerState: string;
+  healthState: string;
+  phase: string;
+}): RustRuntimePingState {
+  const normalizedWorkerState = raw.workerState.trim().toLowerCase();
+  const normalizedHealthState = raw.healthState.trim().toLowerCase();
+  const normalizedPhase = raw.phase.trim().toLowerCase();
+
+  if (
+    normalizedWorkerState.includes("unsupported")
+    || normalizedHealthState.includes("unsupported")
+    || normalizedPhase.includes("unsupported")
+  ) {
+    return "unsupported";
+  }
+
+  if (!raw.ok || normalizedHealthState === "down") {
+    return "degraded";
+  }
+
+  return "healthy/success";
+}
+
+function describeRuntimePingReason(raw: {
+  ok: boolean;
+  workerState: string;
+  healthState: string;
+  phase: string;
+}, state: RustRuntimePingState): string {
+  if (state === "healthy/success") {
+    return "runtime.ping reported healthy runtime lifecycle state";
+  }
+
+  if (state === "unsupported") {
+    return `runtime.ping reported unsupported lifecycle state (worker=${raw.workerState}, health=${raw.healthState}, phase=${raw.phase})`;
+  }
+
+  return `runtime.ping reported degraded lifecycle state (ok=${raw.ok}, worker=${raw.workerState}, health=${raw.healthState}, phase=${raw.phase})`;
 }
 
 function parseStatusOutput(raw: string): ParsedStatusFields {

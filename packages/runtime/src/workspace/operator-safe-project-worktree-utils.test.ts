@@ -36,7 +36,30 @@ describe("evaluateOperatorSafeProjectWorktree", () => {
     expect(result.allowed).toBe(true);
     expect(result.blockingReasons).toEqual([]);
     expect(result.context.workspace?.targetRelativePath).toBe("src/a.ts");
+    expect(result.context.workspace?.workspaceRelativePath).toBe("src/a.ts");
+    expect(result.context.workspace?.repoRelativePath).toBe("src/a.ts");
     expect(result.recommendedAction).toBe("run_dry_run");
+  });
+
+  it("adds repo-relative display and workspace boundary metadata for child workspaces", async () => {
+    const repo = makeRepo({ withMarker: false });
+    const workspaceRoot = path.join(repo, "packages", "api");
+    fs.mkdirSync(path.join(workspaceRoot, "src"), { recursive: true });
+    fs.writeFileSync(path.join(workspaceRoot, "package.json"), "{}\n", "utf8");
+    fs.writeFileSync(path.join(workspaceRoot, "src", "a.ts"), "export const a = 1;\n", "utf8");
+
+    const result = await evaluateOperatorSafeProjectWorktree({
+      mode: "check",
+      operation: "index_workspace",
+      repoRoot: repo,
+      targetPath: path.join(workspaceRoot, "src", "a.ts"),
+      requireVcs: false,
+    });
+
+    expect(result.allowed).toBe(true);
+    expect(result.context.workspace?.root).toBe(path.resolve(workspaceRoot).replace(/\\/g, "/"));
+    expect(result.context.workspace?.workspaceRelativePath).toBe("src/a.ts");
+    expect(result.context.workspace?.repoRelativePath).toBe("packages/api/src/a.ts");
   });
 
   it("blocks target path outside repository boundary", async () => {
@@ -133,13 +156,15 @@ describe("evaluateOperatorSafeProjectWorktree", () => {
     expect(["dry_run", "rollback_degraded"]).toContain(lifecycle.report.outcome);
     expect(lifecycle.report.snapshot?.required).toBe(true);
     expect(lifecycle.report.snapshot?.captured).toBe(true);
+    expect(lifecycle.report.context.workspaceRelativePath).toBe("src/a.ts");
+    expect(lifecycle.report.context.repoRelativePath).toBe("src/a.ts");
     expect(lifecycle.report.tempWorkspace?.created).toBe(true);
     expect(lifecycle.reportPath).toContain(".dh/runtime/operator-safe-worktree/reports/");
 
-    const artifacts = await listOperatorSafeArtifacts(repo);
-    expect(artifacts.reports.length).toBeGreaterThan(0);
-    expect(artifacts.snapshots.length).toBeGreaterThan(0);
-    expect(artifacts.tempWorkspaces.length).toBeGreaterThan(0);
+    const artifacts = await listOperatorSafeArtifacts({ repoRoot: repo });
+    expect(artifacts.families.report.length).toBeGreaterThan(0);
+    expect(artifacts.families.snapshot.length).toBeGreaterThan(0);
+    expect(artifacts.families.temp_workspace.length).toBeGreaterThan(0);
   });
 
   it("reports execute delegated flow as succeeded when rollback is unavailable", async () => {
@@ -207,18 +232,25 @@ describe("evaluateOperatorSafeProjectWorktree", () => {
       requireVcs: false,
     });
 
-    const before = await listOperatorSafeArtifacts(repo);
-    expect(before.reports.length).toBeGreaterThan(0);
+    const before = await listOperatorSafeArtifacts({ repoRoot: repo });
+    expect(before.families.report.length).toBeGreaterThan(0);
 
     const pruned = await pruneOperatorSafeArtifacts({
       repoRoot: repo,
-      olderThanMs: -1,
+      request: {
+        mode: "apply",
+        retentionOverridesMs: {
+          report: -1,
+          snapshot: -1,
+          temp_workspace: -1,
+        },
+      },
     });
-    expect(pruned.reportsRemoved).toBeGreaterThanOrEqual(1);
+    expect(pruned.removed.some((item) => item.family === "report")).toBe(true);
 
-    const after = await listOperatorSafeArtifacts(repo);
-    expect(after.reports.length).toBe(0);
-    expect(after.snapshots.length).toBe(0);
-    expect(after.tempWorkspaces.length).toBe(0);
+    const after = await listOperatorSafeArtifacts({ repoRoot: repo });
+    expect(after.families.report.length).toBe(0);
+    expect(after.families.snapshot.length).toBe(0);
+    expect(after.families.temp_workspace.length).toBe(0);
   });
 });

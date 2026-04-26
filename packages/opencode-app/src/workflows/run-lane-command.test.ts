@@ -5,6 +5,7 @@ import path from "node:path";
 import { runLaneWorkflow } from "./run-lane-command.js";
 import { closeDhDatabase } from "../../../storage/src/sqlite/db.js";
 import { createChatProviderError, type ChatProvider } from "../../../providers/src/chat/types.js";
+import { SessionRuntimeEventsRepo } from "../../../storage/src/sqlite/repositories/session-runtime-events-repo.js";
 
 let tmpDirs: string[] = [];
 
@@ -104,6 +105,47 @@ describe("runLaneWorkflow", () => {
 
     expect(report.exitCode).toBe(0);
     expect(calls).toBeGreaterThan(1);
+    const events = new SessionRuntimeEventsRepo(repo).listBySession(report.sessionId);
+    expect(events.some((event) => event.eventType === "retry" && event.eventJson.providerId === "flaky")).toBe(true);
+  });
+
+  it("uses injected provider as the base provider for quick workflow execution", async () => {
+    const repo = makeTmpRepo();
+    let calls = 0;
+    const provider: ChatProvider = {
+      providerId: "injected-base",
+      async chat() {
+        calls += 1;
+        return {
+          content: JSON.stringify({
+            lane: "quick",
+            stage: "quick_plan",
+            nextRole: "complete",
+            summary: "Injected provider handled quick workflow.",
+            handoffNotes: [],
+            blockers: [],
+          }),
+          model: "mock",
+          finishReason: "stop",
+          usage: {
+            promptTokens: 1,
+            completionTokens: 1,
+            totalTokens: 2,
+          },
+        };
+      },
+    };
+
+    const report = await runLaneWorkflow({
+      lane: "quick",
+      objective: "use injected provider",
+      repoRoot: repo,
+      provider,
+    });
+
+    expect(report.exitCode).toBe(0);
+    expect(calls).toBe(1);
+    expect(report.workflowSummary[0]).toContain("Injected provider handled quick workflow.");
   });
 
   it("resumes existing session instead of creating a new one", async () => {
@@ -125,5 +167,6 @@ describe("runLaneWorkflow", () => {
     expect(first.exitCode).toBe(0);
     expect(resumed.exitCode).toBe(0);
     expect(resumed.sessionId).toBe(first.sessionId);
+    expect(resumed.model).toBe(first.model);
   });
 });

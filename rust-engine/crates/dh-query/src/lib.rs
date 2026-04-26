@@ -2,12 +2,12 @@
 
 use anyhow::Result;
 use dh_graph::{EdgeResolution, GraphService, NodeId};
-use dh_storage::{Database, FileRepository, GraphRepository, ImportRepository};
+use dh_storage::{ChunkRepository, Database, FileRepository, GraphRepository, ImportRepository};
 use dh_types::{
     AnswerState, EvidenceBounds, EvidenceConfidence, EvidenceEntry, EvidenceKind, EvidencePacket,
-    EvidenceSource, LanguageCapability, LanguageCapabilityEntry, LanguageCapabilityLanguageSummary,
-    LanguageCapabilityState, LanguageCapabilitySummary, LanguageId, QuestionClass, SymbolId,
-    SymbolKind, WorkspaceId,
+    EvidenceSource, FreshnessState, LanguageCapability, LanguageCapabilityEntry,
+    LanguageCapabilityLanguageSummary, LanguageCapabilityState, LanguageCapabilitySummary,
+    LanguageId, ParseStatus, QuestionClass, SymbolId, SymbolKind, WorkspaceId,
 };
 use std::collections::HashSet;
 
@@ -80,6 +80,18 @@ pub struct ImpactAnalysisQuery {
 }
 
 #[derive(Debug, Clone)]
+pub struct BuildEvidenceQuery {
+    pub workspace_id: WorkspaceId,
+    pub query: String,
+    pub intent: String,
+    pub targets: Vec<String>,
+    pub max_files: usize,
+    pub max_symbols: usize,
+    pub max_snippets: usize,
+    pub freshness: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct SymbolMatch {
     pub symbol_id: SymbolId,
     pub name: String,
@@ -144,6 +156,12 @@ pub struct TraceFlowResult {
 pub struct ImpactAnalysisResult {
     pub answer_state: AnswerState,
     pub impacted: Vec<String>,
+    pub evidence: EvidencePacket,
+}
+
+#[derive(Debug, Clone)]
+pub struct BuildEvidenceResult {
+    pub answer_state: AnswerState,
     pub evidence: EvidencePacket,
 }
 
@@ -493,6 +511,7 @@ fn language_order_rank(language: LanguageId) -> u8 {
 
 pub trait QueryEngine {
     fn find_symbol(&self, query: FindSymbolQuery) -> Result<Vec<SymbolMatch>>;
+    fn build_evidence(&self, query: BuildEvidenceQuery) -> Result<BuildEvidenceResult>;
     fn goto_definition(&self, query: GotoDefinitionQuery) -> Result<Option<DefinitionResult>>;
     fn find_references(&self, query: FindReferencesQuery) -> Result<ReferencesQueryResult>;
     fn find_dependents(&self, query: FindDependentsQuery) -> Result<DependencyTraversalResult>;
@@ -568,6 +587,328 @@ impl QueryEngine for Database {
             });
         }
         Ok(out)
+    }
+
+    fn build_evidence(&self, query: BuildEvidenceQuery) -> Result<BuildEvidenceResult> {
+        let trimmed_query = query.query.trim().to_string();
+        if trimmed_query.is_empty() {
+            return Ok(BuildEvidenceResult {
+                answer_state: AnswerState::Insufficient,
+                evidence: packet(
+                    AnswerState::Insufficient,
+                    QuestionClass::BuildEvidence,
+                    "<empty>".into(),
+                    "Build evidence".into(),
+                    "insufficient evidence request: query is empty".into(),
+                    Vec::new(),
+                    vec!["missing query text for buildEvidence".into()],
+                    EvidenceBounds {
+                        hop_count: Some(0),
+                        node_limit: Some(query.max_files.max(1)),
+                        traversal_scope: Some("build_evidence".into()),
+                        stop_reason: Some("missing_query".into()),
+                    },
+                ),
+            });
+        }
+
+        let lowered_query = trimmed_query.to_ascii_lowercase();
+        let intent = query.intent.trim();
+        if !intent.is_empty() && !intent.eq_ignore_ascii_case("explain") {
+            return Ok(BuildEvidenceResult {
+                answer_state: AnswerState::Unsupported,
+                evidence: packet(
+                    AnswerState::Unsupported,
+                    QuestionClass::BuildEvidence,
+                    trimmed_query,
+                    "Build evidence (explain)".into(),
+                    format!(
+                        "unsupported build-evidence intent: '{intent}' is outside the bounded explain-only contract"
+                    ),
+                    Vec::new(),
+                    vec![format!(
+                        "query.buildEvidence intent must be empty or 'explain'; received '{intent}'"
+                    )],
+                    EvidenceBounds {
+                        hop_count: Some(0),
+                        node_limit: Some(query.max_files.max(1)),
+                        traversal_scope: Some("build_evidence".into()),
+                        stop_reason: Some("unsupported_intent".into()),
+                    },
+                ),
+            });
+        }
+
+        if let Some((unsupported_class, reason)) =
+            classify_unsupported_build_evidence_request(&lowered_query)
+        {
+            return Ok(BuildEvidenceResult {
+                answer_state: AnswerState::Unsupported,
+                evidence: packet(
+                    AnswerState::Unsupported,
+                    QuestionClass::BuildEvidence,
+                    trimmed_query,
+                    "Build evidence (explain)".into(),
+                    format!(
+                        "unsupported build-evidence request: {unsupported_class} is outside the bounded static repository-understanding contract"
+                    ),
+                    Vec::new(),
+                    vec![reason.to_string()],
+                    EvidenceBounds {
+                        hop_count: Some(0),
+                        node_limit: Some(query.max_files.max(1)),
+                        traversal_scope: Some("build_evidence".into()),
+                        stop_reason: Some(unsupported_class.into()),
+                    },
+                ),
+            });
+        }
+
+        let mut subject_hints = Vec::new();
+        if !query.targets.is_empty() {
+            subject_hints.extend(query.targets.clone());
+        }
+        subject_hints.extend(extract_subject_tokens(&trimmed_query));
+        if subject_hints.is_empty() {
+            subject_hints.push(trimmed_query.clone());
+        }
+
+        let mut evidence_rows = Vec::new();
+        let mut gaps = Vec::new();
+        let mut unsupported_language_boundary = false;
+        let mut degraded_index_boundary = false;
+        let mut seen = HashSet::new();
+        let mut limited = false;
+        let max_evidence_rows = query.max_files.max(1) * query.max_snippets.max(1);
+
+        'targets: for target in &subject_hints {
+            let symbols =
+                self.find_symbol_definitions(query.workspace_id, target, query.max_symbols.max(1))?;
+            for symbol in symbols {
+                let file = self.find_file_by_id(query.workspace_id, symbol.file_id)?;
+                let file_path = file
+                    .as_ref()
+                    .map(|file| file.rel_path.clone())
+                    .unwrap_or_else(|| "<unknown>".into());
+
+                if let Some(file) = &file {
+                    let capability = language_capability_for(
+                        file.language,
+                        LanguageCapability::StructuralIndexing,
+                    );
+                    if capability.state == LanguageCapabilityState::Unsupported {
+                        unsupported_language_boundary = true;
+                        push_unique_gap(
+                            &mut gaps,
+                            format!(
+                                "unsupported language/capability boundary at {}: {}",
+                                file.rel_path, capability.reason
+                            ),
+                        );
+                        continue;
+                    }
+                    if capability.state != LanguageCapabilityState::Supported {
+                        degraded_index_boundary = true;
+                        push_unique_gap(
+                            &mut gaps,
+                            format!(
+                                "partial language/capability boundary at {}: {}",
+                                file.rel_path, capability.reason
+                            ),
+                        );
+                    }
+                    if file.parse_status != ParseStatus::Parsed {
+                        degraded_index_boundary = true;
+                        push_unique_gap(
+                            &mut gaps,
+                            format!(
+                                "partial index coverage for {}: parse status is {:?}",
+                                file.rel_path, file.parse_status
+                            ),
+                        );
+                    }
+                    if !matches!(
+                        file.freshness_state,
+                        FreshnessState::RefreshedCurrent | FreshnessState::RetainedCurrent
+                    ) {
+                        degraded_index_boundary = true;
+                        push_unique_gap(
+                            &mut gaps,
+                            format!(
+                                "stale or partial index coverage for {}: freshness state is {:?}",
+                                file.rel_path, file.freshness_state
+                            ),
+                        );
+                    }
+                } else {
+                    degraded_index_boundary = true;
+                    push_unique_gap(
+                        &mut gaps,
+                        format!("indexed symbol '{}' points to a missing file", symbol.name),
+                    );
+                }
+
+                let key = format!(
+                    "definition:{}:{}:{}",
+                    file_path, symbol.qualified_name, symbol.span.start_line
+                );
+                if !seen.insert(key) {
+                    continue;
+                }
+                if evidence_rows.len() >= max_evidence_rows {
+                    limited = true;
+                    break 'targets;
+                }
+
+                evidence_rows.push(entry(
+                    EvidenceKind::Definition,
+                    file_path.clone(),
+                    Some(symbol.qualified_name.clone()),
+                    Some(symbol.span.start_line),
+                    Some(symbol.span.end_line),
+                    None,
+                    format!("indexed symbol candidate for '{}'", target),
+                    EvidenceSource::Storage,
+                    EvidenceConfidence::Grounded,
+                ));
+
+                for chunk in self
+                    .find_chunks_by_file(symbol.file_id)?
+                    .into_iter()
+                    .filter(|chunk| {
+                        chunk.symbol_id == Some(symbol.id)
+                            || chunk.parent_symbol_id == Some(symbol.id)
+                    })
+                    .take(query.max_snippets.max(1))
+                {
+                    let snippet = bounded_snippet(&chunk.content, 240);
+                    let chunk_key = format!(
+                        "chunk:{}:{}:{}",
+                        file_path, chunk.span.start_line, chunk.span.end_line
+                    );
+                    if !seen.insert(chunk_key) {
+                        continue;
+                    }
+                    if evidence_rows.len() >= max_evidence_rows {
+                        limited = true;
+                        break 'targets;
+                    }
+                    evidence_rows.push(entry(
+                        EvidenceKind::Chunk,
+                        file_path.clone(),
+                        Some(symbol.qualified_name.clone()),
+                        Some(chunk.span.start_line),
+                        Some(chunk.span.end_line),
+                        Some(snippet),
+                        format!("semantic chunk for symbol '{}'", symbol.name),
+                        EvidenceSource::Storage,
+                        EvidenceConfidence::Grounded,
+                    ));
+                }
+            }
+        }
+
+        if evidence_rows.len() > max_evidence_rows {
+            evidence_rows.truncate(max_evidence_rows);
+            limited = true;
+        }
+
+        let unresolved_rows = evidence_rows
+            .iter()
+            .filter(|row| row.confidence == EvidenceConfidence::Partial)
+            .count();
+
+        let answer_state = if evidence_rows.is_empty() && unsupported_language_boundary {
+            AnswerState::Unsupported
+        } else if evidence_rows.is_empty() {
+            AnswerState::Insufficient
+        } else if unresolved_rows > 0
+            || limited
+            || degraded_index_boundary
+            || unsupported_language_boundary
+        {
+            AnswerState::Partial
+        } else {
+            AnswerState::Grounded
+        };
+
+        if evidence_rows.is_empty() {
+            push_unique_gap(
+                &mut gaps,
+                "no indexed evidence entries matched the requested subject(s)".into(),
+            );
+        }
+        if limited {
+            push_unique_gap(
+                &mut gaps,
+                "bounded evidence limits reached; packet is truncated".into(),
+            );
+        }
+        if let Some(freshness) = query.freshness.as_deref() {
+            if freshness.eq_ignore_ascii_case("requireFresh")
+                || freshness.eq_ignore_ascii_case("require_fresh")
+            {
+                push_unique_gap(
+                    &mut gaps,
+                    "freshness requirement requested; packet is grounded to current indexed state only"
+                        .into(),
+                );
+            }
+        }
+
+        let summary_subject = if subject_hints.is_empty() {
+            trimmed_query.clone()
+        } else {
+            subject_hints.join(", ")
+        };
+
+        let conclusion = if answer_state == AnswerState::Grounded {
+            "bounded canonical evidence packet assembled from indexed definition and snippet truth"
+                .to_string()
+        } else if answer_state == AnswerState::Partial {
+            "bounded canonical evidence packet assembled from indexed definition and snippet truth with explicit partial limits".to_string()
+        } else if answer_state == AnswerState::Unsupported {
+            "unsupported language or capability boundary prevents a canonical build-evidence packet"
+                .to_string()
+        } else {
+            "insufficient indexed evidence for bounded canonical packet".to_string()
+        };
+
+        Ok(BuildEvidenceResult {
+            answer_state,
+            evidence: packet(
+                answer_state,
+                QuestionClass::BuildEvidence,
+                summary_subject,
+                format!(
+                    "Build evidence ({})",
+                    if query.intent.trim().is_empty() {
+                        "explain"
+                    } else {
+                        query.intent.as_str()
+                    }
+                ),
+                conclusion,
+                evidence_rows,
+                gaps,
+                EvidenceBounds {
+                    hop_count: Some(2),
+                    node_limit: Some(query.max_files.max(1)),
+                    traversal_scope: Some("build_evidence".into()),
+                    stop_reason: if limited {
+                        Some("node_limit_reached".into())
+                    } else if answer_state == AnswerState::Unsupported {
+                        Some("unsupported_language_capability".into())
+                    } else if degraded_index_boundary || unsupported_language_boundary {
+                        Some("partial_index_or_capability".into())
+                    } else if answer_state == AnswerState::Insufficient {
+                        Some("insufficient_evidence".into())
+                    } else {
+                        None
+                    },
+                },
+            ),
+        })
     }
 
     fn goto_definition(&self, query: GotoDefinitionQuery) -> Result<Option<DefinitionResult>> {
@@ -1392,6 +1733,111 @@ fn dedupe(mut input: Vec<String>) -> Vec<String> {
     input
 }
 
+fn push_unique_gap(gaps: &mut Vec<String>, gap: String) {
+    if !gaps.contains(&gap) {
+        gaps.push(gap);
+    }
+}
+
+fn classify_unsupported_build_evidence_request(
+    lowered_query: &str,
+) -> Option<(&'static str, &'static str)> {
+    if lowered_query.contains("runtime trace") || lowered_query.contains("trace flow") {
+        return Some((
+            "runtime_trace",
+            "runtime tracing and trace-flow execution are outside query.buildEvidence support",
+        ));
+    }
+    if lowered_query.contains("trace") {
+        return Some((
+            "runtime_trace",
+            "runtime tracing and trace-flow execution are outside query.buildEvidence support",
+        ));
+    }
+    if lowered_query.contains("impact analysis") || lowered_query.contains("impact") {
+        return Some((
+            "impact_analysis",
+            "impact-analysis requests are not part of the bounded build-evidence ask contract",
+        ));
+    }
+    if lowered_query.contains("could break") || lowered_query.contains("what would break") {
+        return Some((
+            "impact_analysis",
+            "impact-analysis requests are not part of the bounded build-evidence ask contract",
+        ));
+    }
+    if lowered_query.contains("call hierarchy")
+        || lowered_query.contains("call_hierarchy")
+        || lowered_query.contains("call-hierarchy")
+    {
+        return Some((
+            "call_hierarchy",
+            "call-hierarchy requests are outside the bounded build-evidence ask contract",
+        ));
+    }
+    if lowered_query.contains("multi-hop") {
+        return Some((
+            "multi_hop",
+            "multi-hop path exploration is outside first-wave build-evidence support",
+        ));
+    }
+    if lowered_query.contains("entire subsystem")
+        || lowered_query.contains("everything")
+        || lowered_query.contains("all behavior")
+    {
+        return Some((
+            "unbounded_scope",
+            "unbounded subsystem-wide requests need a finite subject before build evidence can be safe",
+        ));
+    }
+
+    None
+}
+
+fn extract_subject_tokens(query: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for token in query
+        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == '/' || c == '-'))
+        .map(str::trim)
+        .filter(|token| token.len() >= 3)
+    {
+        let lowered = token.to_ascii_lowercase();
+        if matches!(
+            lowered.as_str(),
+            "how"
+                | "does"
+                | "this"
+                | "that"
+                | "with"
+                | "work"
+                | "works"
+                | "project"
+                | "repo"
+                | "codebase"
+                | "the"
+                | "and"
+                | "for"
+                | "from"
+                | "what"
+        ) {
+            continue;
+        }
+        if seen.insert(lowered) {
+            out.push(token.to_string());
+        }
+    }
+    out
+}
+
+fn bounded_snippet(content: &str, max_chars: usize) -> String {
+    let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.chars().count() <= max_chars {
+        return normalized;
+    }
+    normalized.chars().take(max_chars).collect::<String>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1585,30 +2031,56 @@ mod tests {
             },
         }])?;
 
-        db.insert_chunks(&[Chunk {
-            id: 999,
-            workspace_id: 1,
-            file_id: 1,
-            symbol_id: Some(10),
-            parent_symbol_id: None,
-            kind: ChunkKind::Symbol,
-            language: LanguageId::TypeScript,
-            title: "run".into(),
-            content: "run helper".into(),
-            content_hash: "chunk".into(),
-            token_estimate: 4,
-            span: Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 1,
-                start_column: 0,
-                end_line: 1,
-                end_column: 1,
+        db.insert_chunks(&[
+            Chunk {
+                id: 999,
+                workspace_id: 1,
+                file_id: 1,
+                symbol_id: Some(10),
+                parent_symbol_id: None,
+                kind: ChunkKind::Symbol,
+                language: LanguageId::TypeScript,
+                title: "run".into(),
+                content: "run helper".into(),
+                content_hash: "chunk-run".into(),
+                token_estimate: 4,
+                span: Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 1,
+                    start_column: 0,
+                    end_line: 1,
+                    end_column: 1,
+                },
+                prev_chunk_id: None,
+                next_chunk_id: None,
+                embedding_status: EmbeddingStatus::NotQueued,
             },
-            prev_chunk_id: None,
-            next_chunk_id: None,
-            embedding_status: EmbeddingStatus::NotQueued,
-        }])?;
+            Chunk {
+                id: 1000,
+                workspace_id: 1,
+                file_id: 2,
+                symbol_id: Some(11),
+                parent_symbol_id: None,
+                kind: ChunkKind::Symbol,
+                language: LanguageId::TypeScript,
+                title: "helper".into(),
+                content: "helper implementation".into(),
+                content_hash: "chunk-helper".into(),
+                token_estimate: 4,
+                span: Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 1,
+                    start_column: 0,
+                    end_line: 1,
+                    end_column: 1,
+                },
+                prev_chunk_id: None,
+                next_chunk_id: None,
+                embedding_status: EmbeddingStatus::NotQueued,
+            },
+        ])?;
 
         Ok(())
     }
@@ -1647,7 +2119,8 @@ mod tests {
     }
 
     #[test]
-    fn supports_dependency_dependent_call_trace_impact_and_unsupported() -> anyhow::Result<()> {
+    fn supports_dependency_and_dependent_queries_without_expanding_rhbe_scope() -> anyhow::Result<()>
+    {
         let db = setup_db()?;
         seed(&db)?;
 
@@ -1664,40 +2137,6 @@ mod tests {
             limit: 10,
         })?;
         assert_eq!(dependents.answer_state, AnswerState::Grounded);
-
-        let calls = db.call_hierarchy(CallHierarchyQuery {
-            workspace_id: 1,
-            symbol: "helper".into(),
-            limit: 10,
-        })?;
-        assert!(!calls.callers.is_empty() || !calls.callees.is_empty());
-
-        let trace = db.trace_flow(TraceFlowQuery {
-            workspace_id: 1,
-            from_symbol: "run".into(),
-            to_symbol: "helper".into(),
-            max_hops: 4,
-        })?;
-        assert!(matches!(
-            trace.answer_state,
-            AnswerState::Grounded | AnswerState::Partial
-        ));
-
-        let impact = db.impact_analysis(ImpactAnalysisQuery {
-            workspace_id: 1,
-            target: "helper".into(),
-            hop_limit: 2,
-            node_limit: 10,
-        })?;
-        assert!(!impact.impacted.is_empty());
-
-        let unsupported = db.impact_analysis(ImpactAnalysisQuery {
-            workspace_id: 1,
-            target: "totally-unknown-target".into(),
-            hop_limit: 2,
-            node_limit: 10,
-        })?;
-        assert_eq!(unsupported.answer_state, AnswerState::Unsupported);
 
         Ok(())
     }
@@ -1809,5 +2248,301 @@ mod tests {
                 assert!(entry.reason.contains("unresolved"));
             }
         }
+    }
+
+    #[test]
+    fn build_evidence_packet_contract_covers_grounded_insufficient_and_unsupported(
+    ) -> anyhow::Result<()> {
+        let db = setup_db()?;
+        seed(&db)?;
+
+        let grounded = db.build_evidence(BuildEvidenceQuery {
+            workspace_id: 1,
+            query: "how does helper work?".into(),
+            intent: "explain".into(),
+            targets: vec!["helper".into()],
+            max_files: 5,
+            max_symbols: 8,
+            max_snippets: 8,
+            freshness: Some("indexed".into()),
+        })?;
+        assert_eq!(grounded.answer_state, AnswerState::Grounded);
+        assert_eq!(grounded.evidence.answer_state, AnswerState::Grounded);
+        assert_eq!(
+            grounded.evidence.question_class,
+            QuestionClass::BuildEvidence
+        );
+        assert!(!grounded.evidence.evidence.is_empty());
+        assert!(grounded.evidence.bounds.traversal_scope.as_deref() == Some("build_evidence"));
+
+        let insufficient = db.build_evidence(BuildEvidenceQuery {
+            workspace_id: 1,
+            query: "how does definitely_missing_subject work?".into(),
+            intent: "explain".into(),
+            targets: vec!["definitely_missing_subject".into()],
+            max_files: 5,
+            max_symbols: 8,
+            max_snippets: 8,
+            freshness: Some("indexed".into()),
+        })?;
+        assert_eq!(insufficient.answer_state, AnswerState::Insufficient);
+        assert_eq!(
+            insufficient.evidence.answer_state,
+            AnswerState::Insufficient
+        );
+        assert_eq!(
+            insufficient.evidence.bounds.stop_reason.as_deref(),
+            Some("insufficient_evidence")
+        );
+        assert!(insufficient
+            .evidence
+            .gaps
+            .iter()
+            .any(|gap| gap.contains("no indexed evidence")));
+
+        let unsupported = db.build_evidence(BuildEvidenceQuery {
+            workspace_id: 1,
+            query: "trace flow through the entire subsystem".into(),
+            intent: "explain".into(),
+            targets: Vec::new(),
+            max_files: 5,
+            max_symbols: 8,
+            max_snippets: 8,
+            freshness: Some("indexed".into()),
+        })?;
+        assert_eq!(unsupported.answer_state, AnswerState::Unsupported);
+        assert_eq!(unsupported.evidence.answer_state, AnswerState::Unsupported);
+        assert_eq!(
+            unsupported.evidence.question_class,
+            QuestionClass::BuildEvidence
+        );
+        assert_eq!(
+            unsupported.evidence.bounds.stop_reason.as_deref(),
+            Some("runtime_trace")
+        );
+        assert!(unsupported
+            .evidence
+            .gaps
+            .iter()
+            .any(|gap| gap.contains("runtime tracing")));
+
+        for (query_text, stop_reason, expected_gap) in [
+            (
+                "impact analysis for helper",
+                "impact_analysis",
+                "impact-analysis requests",
+            ),
+            (
+                "what could break if I change helper",
+                "impact_analysis",
+                "impact-analysis requests",
+            ),
+            (
+                "call hierarchy for helper",
+                "call_hierarchy",
+                "call-hierarchy requests",
+            ),
+            ("trace helper", "runtime_trace", "runtime tracing"),
+            (
+                "call_hierarchy for helper",
+                "call_hierarchy",
+                "call-hierarchy requests",
+            ),
+        ] {
+            let out_of_scope = db.build_evidence(BuildEvidenceQuery {
+                workspace_id: 1,
+                query: query_text.into(),
+                intent: "explain".into(),
+                targets: Vec::new(),
+                max_files: 5,
+                max_symbols: 8,
+                max_snippets: 8,
+                freshness: Some("indexed".into()),
+            })?;
+            assert_eq!(out_of_scope.answer_state, AnswerState::Unsupported);
+            assert_eq!(out_of_scope.evidence.answer_state, AnswerState::Unsupported);
+            assert_eq!(
+                out_of_scope.evidence.question_class,
+                QuestionClass::BuildEvidence
+            );
+            assert_eq!(
+                out_of_scope.evidence.bounds.traversal_scope.as_deref(),
+                Some("build_evidence")
+            );
+            assert_eq!(
+                out_of_scope.evidence.bounds.stop_reason.as_deref(),
+                Some(stop_reason)
+            );
+            assert!(out_of_scope
+                .evidence
+                .gaps
+                .iter()
+                .any(|gap| gap.contains(expected_gap)));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_evidence_packet_preserves_partial_bounds_and_gaps() -> anyhow::Result<()> {
+        let db = setup_db()?;
+        seed(&db)?;
+
+        let partial = db.build_evidence(BuildEvidenceQuery {
+            workspace_id: 1,
+            query: "how does run work?".into(),
+            intent: "explain".into(),
+            targets: vec!["run".into()],
+            max_files: 1,
+            max_symbols: 8,
+            max_snippets: 1,
+            freshness: Some("indexed".into()),
+        })?;
+
+        assert_eq!(partial.answer_state, AnswerState::Partial);
+        assert_eq!(partial.evidence.answer_state, AnswerState::Partial);
+        assert_eq!(
+            partial.evidence.bounds.stop_reason.as_deref(),
+            Some("node_limit_reached")
+        );
+        assert_eq!(partial.evidence.evidence.len(), 1);
+        assert!(partial
+            .evidence
+            .gaps
+            .iter()
+            .any(|gap| gap.contains("bounded evidence limits reached")));
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_evidence_packet_rejects_non_explain_intents() -> anyhow::Result<()> {
+        let db = setup_db()?;
+        seed(&db)?;
+
+        for intent in ["trace", "impact", "call_hierarchy", "arbitrary"] {
+            let unsupported = db.build_evidence(BuildEvidenceQuery {
+                workspace_id: 1,
+                query: "how does helper work?".into(),
+                intent: intent.into(),
+                targets: vec!["helper".into()],
+                max_files: 5,
+                max_symbols: 8,
+                max_snippets: 8,
+                freshness: Some("indexed".into()),
+            })?;
+
+            assert_eq!(unsupported.answer_state, AnswerState::Unsupported);
+            assert_eq!(unsupported.evidence.answer_state, AnswerState::Unsupported);
+            assert_eq!(
+                unsupported.evidence.question_class,
+                QuestionClass::BuildEvidence
+            );
+            assert!(unsupported.evidence.evidence.is_empty());
+            assert_eq!(
+                unsupported.evidence.bounds.stop_reason.as_deref(),
+                Some("unsupported_intent")
+            );
+            assert!(unsupported
+                .evidence
+                .gaps
+                .iter()
+                .any(|gap| gap.contains("query.buildEvidence intent")));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_evidence_packet_marks_exact_budget_cutoff_partial() -> anyhow::Result<()> {
+        let db = setup_db()?;
+        seed(&db)?;
+
+        let partial = db.build_evidence(BuildEvidenceQuery {
+            workspace_id: 1,
+            query: "how do helper and run work?".into(),
+            intent: "explain".into(),
+            targets: vec!["helper".into(), "run".into()],
+            max_files: 1,
+            max_symbols: 8,
+            max_snippets: 1,
+            freshness: Some("indexed".into()),
+        })?;
+
+        assert_eq!(partial.answer_state, AnswerState::Partial);
+        assert_eq!(partial.evidence.answer_state, AnswerState::Partial);
+        assert_eq!(partial.evidence.evidence.len(), 1);
+        assert_eq!(
+            partial.evidence.bounds.stop_reason.as_deref(),
+            Some("node_limit_reached")
+        );
+        assert!(partial
+            .evidence
+            .gaps
+            .iter()
+            .any(|gap| gap.contains("bounded evidence limits reached")));
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_evidence_packet_preserves_stale_index_as_partial() -> anyhow::Result<()> {
+        let db = setup_db()?;
+        seed(&db)?;
+
+        db.upsert_file(&File {
+            id: 2,
+            workspace_id: 1,
+            root_id: 1,
+            package_id: None,
+            rel_path: "src/util.ts".into(),
+            language: LanguageId::TypeScript,
+            size_bytes: 10,
+            mtime_unix_ms: 1,
+            content_hash: "b-stale".into(),
+            structure_hash: None,
+            public_api_hash: None,
+            parse_status: ParseStatus::ParsedWithErrors,
+            parse_error: Some("recoverable parser issue".into()),
+            symbol_count: 1,
+            chunk_count: 1,
+            is_barrel: false,
+            last_indexed_at_unix_ms: None,
+            deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::DegradedPartial,
+            freshness_reason: Some(FreshnessReason::RecoverableParseIssues),
+            last_freshness_run_id: Some("run-query-stale".into()),
+        })?;
+
+        let partial = db.build_evidence(BuildEvidenceQuery {
+            workspace_id: 1,
+            query: "how does helper work?".into(),
+            intent: "explain".into(),
+            targets: vec!["helper".into()],
+            max_files: 5,
+            max_symbols: 8,
+            max_snippets: 8,
+            freshness: Some("indexed".into()),
+        })?;
+
+        assert_eq!(partial.answer_state, AnswerState::Partial);
+        assert_eq!(partial.evidence.answer_state, AnswerState::Partial);
+        assert_eq!(
+            partial.evidence.bounds.stop_reason.as_deref(),
+            Some("partial_index_or_capability")
+        );
+        assert!(!partial.evidence.evidence.is_empty());
+        assert!(partial
+            .evidence
+            .gaps
+            .iter()
+            .any(|gap| gap.contains("partial index coverage")));
+        assert!(partial
+            .evidence
+            .gaps
+            .iter()
+            .any(|gap| gap.contains("stale or partial index coverage")));
+
+        Ok(())
     }
 }

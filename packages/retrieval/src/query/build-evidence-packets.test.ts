@@ -24,6 +24,54 @@ afterEach(() => {
 });
 
 describe("buildEvidencePackets", () => {
+  it("documents this builder as retrieval-local non-authoritative packet shape", async () => {
+    const repo = makeTmpRepo();
+    fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "src", "auth.ts"), "export function login() { return 'ok'; }\n", "utf8");
+
+    const packets = await buildEvidencePackets(repo, [{
+      entityType: "file",
+      entityId: createId("result"),
+      filePath: "src/auth.ts",
+      lineRange: [1, 10],
+      sourceTool: "keyword_search",
+      matchReason: "legacy packet builder compatibility path",
+      rawScore: 0.5,
+      normalizedScore: 0.8,
+      metadata: {},
+    }]);
+
+    expect(packets).toHaveLength(1);
+    expect(packets[0]!.sourceTools).toContain("keyword_search");
+    // Guardrail: this builder remains retrieval-local and non-authoritative.
+    expect(packets[0]!.reason).toContain("legacy packet builder compatibility path");
+  });
+
+  it("does not expose canonical Rust-hosted build-evidence authority metadata", async () => {
+    const repo = makeTmpRepo();
+    fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "src", "auth.ts"), "export function login() { return 'ok'; }\n", "utf8");
+
+    const packets = await buildEvidencePackets(repo, [{
+      entityType: "file",
+      entityId: createId("result"),
+      filePath: "src/auth.ts",
+      lineRange: [1, 10],
+      sourceTool: "semantic_search",
+      matchReason: "legacy retrieval-local evidence",
+      rawScore: 0.5,
+      normalizedScore: 0.8,
+      metadata: {},
+    }]);
+
+    const packet = packets[0] as Record<string, unknown>;
+    expect(packet.answerState).toBeUndefined();
+    expect(packet.questionClass).toBeUndefined();
+    expect(packet.bounds).toBeUndefined();
+    expect(packet.sourceTools).toEqual(["semantic_search"]);
+    expect(packet.reason).toBe("legacy retrieval-local evidence");
+  });
+
   it("keeps repo-relative contract for valid paths", async () => {
     const repo = makeTmpRepo();
     fs.mkdirSync(path.join(repo, "src"), { recursive: true });

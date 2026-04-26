@@ -23,4 +23,22 @@ describe("extractCallEdges", () => {
     expect(edges).toHaveLength(1);
     expect(edges[0]).toMatchObject({ fromId: "sym-1", toId: "sym-2", kind: "call" });
   });
+
+  it("reads call source from the owning workspaceRoot", async () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dh-call-edges-segmented-"));
+    const workspaceRoot = path.join(repoRoot, "packages", "app");
+    fs.mkdirSync(path.join(workspaceRoot, "src"), { recursive: true });
+    fs.writeFileSync(path.join(workspaceRoot, "src", "a.ts"), `function alpha() { beta() }\nfunction beta() {}`);
+
+    const files: IndexedFile[] = [
+      { id: "file-1", path: "src/a.ts", extension: ".ts", language: "typescript", sizeBytes: 10, status: "indexed", workspaceRoot },
+    ];
+    const symbols: IndexedSymbol[] = [
+      { id: "sym-1", fileId: "file-1", name: "alpha", kind: "function", lineStart: 1, lineEnd: 1 },
+      { id: "sym-2", fileId: "file-1", name: "beta", kind: "function", lineStart: 2, lineEnd: 2 },
+    ];
+
+    const edges = await extractCallEdges(repoRoot, files, symbols);
+    expect(edges).toContainEqual(expect.objectContaining({ fromId: "sym-1", toId: "sym-2", kind: "call" }));
+  });
 });

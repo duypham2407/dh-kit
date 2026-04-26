@@ -48,6 +48,10 @@ fi
 
 SHA_FILE="$RELEASE_DIR/SHA256SUMS"
 MANIFEST_FILE="$RELEASE_DIR/manifest.json"
+WORKER_ENTRY_FILE="$RELEASE_DIR/ts-worker/worker.mjs"
+WORKER_MANIFEST_FILE="$RELEASE_DIR/ts-worker/manifest.json"
+WORKER_RELEASE_ENTRY_FILE="$RELEASE_DIR/worker.mjs"
+WORKER_RELEASE_MANIFEST_FILE="$RELEASE_DIR/worker-manifest.json"
 
 SIGNATURE_STATUS="absent"
 SIGNATURE_REASON="no signature artifacts found in release bundle"
@@ -85,6 +89,26 @@ fi
 
 if [ ! -f "$MANIFEST_FILE" ]; then
   echo "missing manifest.json: $MANIFEST_FILE" >&2
+  exit 1
+fi
+
+if [ ! -f "$WORKER_ENTRY_FILE" ]; then
+  echo "missing TypeScript worker bundle: $WORKER_ENTRY_FILE" >&2
+  exit 1
+fi
+
+if [ ! -f "$WORKER_MANIFEST_FILE" ]; then
+  echo "missing TypeScript worker manifest: $WORKER_MANIFEST_FILE" >&2
+  exit 1
+fi
+
+if [ ! -f "$WORKER_RELEASE_ENTRY_FILE" ]; then
+  echo "missing flat GitHub TypeScript worker bundle asset: $WORKER_RELEASE_ENTRY_FILE" >&2
+  exit 1
+fi
+
+if [ ! -f "$WORKER_RELEASE_MANIFEST_FILE" ]; then
+  echo "missing flat GitHub TypeScript worker manifest asset: $WORKER_RELEASE_MANIFEST_FILE" >&2
   exit 1
 fi
 
@@ -137,6 +161,10 @@ const path = require("node:path");
 const releaseDir = process.argv[1];
 const shaFile = path.join(releaseDir, "SHA256SUMS");
 const manifestFile = path.join(releaseDir, "manifest.json");
+const workerEntryFile = path.join(releaseDir, "ts-worker", "worker.mjs");
+const workerManifestFile = path.join(releaseDir, "ts-worker", "manifest.json");
+const flatWorkerEntryFile = path.join(releaseDir, "worker.mjs");
+const flatWorkerManifestFile = path.join(releaseDir, "worker-manifest.json");
 
 const shaMap = new Map();
 for (const raw of fs.readFileSync(shaFile, "utf8").split(/\r?\n/)) {
@@ -180,6 +208,43 @@ for (const name of shaMap.keys()) {
   if (!inManifest) {
     throw new Error(`SHA256SUMS entry missing from manifest: ${name}`);
   }
+}
+
+const workerEntryName = "ts-worker/worker.mjs";
+const workerManifestName = "ts-worker/manifest.json";
+if (!shaMap.has(workerEntryName) || !shaMap.has(workerManifestName) || !shaMap.has("worker.mjs") || !shaMap.has("worker-manifest.json")) {
+  throw new Error("SHA256SUMS must include worker bundle nested and flat release asset entries");
+}
+
+const workerManifest = JSON.parse(fs.readFileSync(workerManifestFile, "utf8"));
+if (workerManifest.entryPath !== "worker.mjs") {
+  throw new Error("worker manifest entryPath must be worker.mjs");
+}
+if (workerManifest.protocolVersion !== "1") {
+  throw new Error("worker manifest protocolVersion must be 1");
+}
+if (workerManifest.requiredNodeMajor !== 22) {
+  throw new Error("worker manifest requiredNodeMajor must be 22");
+}
+if (!Array.isArray(workerManifest.supportedPlatforms) || workerManifest.supportedPlatforms.includes("windows")) {
+  throw new Error("worker manifest supportedPlatforms must not claim Windows support");
+}
+if (!workerManifest.supportedPlatforms.includes("linux") || !workerManifest.supportedPlatforms.includes("macos")) {
+  throw new Error("worker manifest supportedPlatforms must include linux and macos");
+}
+
+const workerChecksum = require("node:crypto")
+  .createHash("sha256")
+  .update(fs.readFileSync(workerEntryFile))
+  .digest("hex");
+if (workerManifest.checksumSha256 !== workerChecksum) {
+  throw new Error("worker manifest checksumSha256 does not match ts-worker/worker.mjs");
+}
+if (!fs.readFileSync(flatWorkerEntryFile).equals(fs.readFileSync(workerEntryFile))) {
+  throw new Error("flat worker.mjs asset must match ts-worker/worker.mjs");
+}
+if (!fs.readFileSync(flatWorkerManifestFile).equals(fs.readFileSync(workerManifestFile))) {
+  throw new Error("flat worker-manifest.json asset must match ts-worker/manifest.json");
 }
 ' "$RELEASE_DIR"
 
@@ -255,6 +320,8 @@ const payload = {
     checksums: true,
     manifest: true,
     fileSizes: true,
+    workerBundle: true,
+    workerManifest: true,
   },
   signature: {
     status: signatureStatus,

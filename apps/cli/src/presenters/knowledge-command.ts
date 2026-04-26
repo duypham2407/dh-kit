@@ -74,21 +74,59 @@ export function renderKnowledgeCommandText(report: KnowledgeCommandReport): stri
       lines.push("  - (none)");
     }
     if (report.rustEvidence) {
-      lines.push("rust envelope:");
+      lines.push("rust packet:");
+      lines.push(`  answer state: ${report.rustEvidence.answerState}`);
+      lines.push(`  question class: ${report.rustEvidence.questionClass}`);
+      if (report.rustEvidence.questionClass === "build_evidence") {
+        lines.push("  authority: canonical Rust-authored query.buildEvidence packet for bounded Rust-hosted broad ask");
+        lines.push("  legacy packet boundary: legacy retrieval/TypeScript-hosted packets are non-canonical for this flow");
+      }
       lines.push(`  subject: ${report.rustEvidence.subject}`);
       lines.push(`  summary: ${report.rustEvidence.summary}`);
       lines.push(`  conclusion: ${report.rustEvidence.conclusion}`);
+      lines.push("  evidence:");
+      if (report.rustEvidence.evidence.length > 0) {
+        for (const item of report.rustEvidence.evidence) {
+          const location = typeof item.lineStart === "number" && typeof item.lineEnd === "number"
+            ? `[${item.lineStart}-${item.lineEnd}]`
+            : "[line unknown]";
+          const provenance = [
+            `kind=${item.kind}`,
+            `source=${item.source}`,
+            `confidence=${item.confidence}`,
+            item.symbol ? `symbol=${item.symbol}` : null,
+          ].filter((value): value is string => Boolean(value)).join(" ");
+          lines.push(`    - ${item.filePath} ${location} reason=${item.reason} ${provenance}`);
+        }
+      } else {
+        lines.push("    - (none)");
+      }
+      lines.push("  gaps:");
+      if (report.rustEvidence.gaps.length > 0) {
+        lines.push(...report.rustEvidence.gaps.map((item) => `    - ${item}`));
+      } else {
+        lines.push("    - (none)");
+      }
+      lines.push("  bounds:");
       if (report.rustEvidence.bounds.traversalScope) {
-        lines.push(`  traversal scope: ${report.rustEvidence.bounds.traversalScope}`);
+        lines.push(`    traversal scope: ${report.rustEvidence.bounds.traversalScope}`);
       }
       if (typeof report.rustEvidence.bounds.hopCount === "number") {
-        lines.push(`  hop count: ${report.rustEvidence.bounds.hopCount}`);
+        lines.push(`    hop count: ${report.rustEvidence.bounds.hopCount}`);
       }
       if (typeof report.rustEvidence.bounds.nodeLimit === "number") {
-        lines.push(`  node limit: ${report.rustEvidence.bounds.nodeLimit}`);
+        lines.push(`    node limit: ${report.rustEvidence.bounds.nodeLimit}`);
       }
       if (report.rustEvidence.bounds.stopReason) {
-        lines.push(`  stop reason: ${report.rustEvidence.bounds.stopReason}`);
+        lines.push(`    stop reason: ${report.rustEvidence.bounds.stopReason}`);
+      }
+      if (
+        !report.rustEvidence.bounds.traversalScope
+        && typeof report.rustEvidence.bounds.hopCount !== "number"
+        && typeof report.rustEvidence.bounds.nodeLimit !== "number"
+        && !report.rustEvidence.bounds.stopReason
+      ) {
+        lines.push("    - (none)");
       }
     }
     if (report.limitations && report.limitations.length > 0) {
@@ -125,6 +163,12 @@ export function renderKnowledgeCommandText(report: KnowledgeCommandReport): stri
     if (report.bridgeEvidence.method) {
       lines.push(`bridge method: ${report.bridgeEvidence.method}`);
     }
+    if (report.bridgeEvidence.seamMethod) {
+      lines.push(`bridge seam method: ${report.bridgeEvidence.seamMethod}`);
+    }
+    if (report.bridgeEvidence.delegatedMethod) {
+      lines.push(`bridge delegated method: ${report.bridgeEvidence.delegatedMethod}`);
+    }
     if (typeof report.bridgeEvidence.requestId === "number") {
       lines.push(`bridge request id: ${report.bridgeEvidence.requestId}`);
     }
@@ -140,6 +184,34 @@ export function renderKnowledgeCommandText(report: KnowledgeCommandReport): stri
       lines.push(
         `bridge capability relationship relations: ${report.bridgeEvidence.capabilities.queryRelationship.supportedRelations.join(", ")}`,
       );
+    }
+  }
+  if (report.executionBoundary) {
+    lines.push("execution boundary:");
+    lines.push(`  path: ${report.executionBoundary.path}`);
+    lines.push(`  rust hosted: ${report.executionBoundary.rustHosted}`);
+    lines.push(`  lifecycle authority: ${report.executionBoundary.lifecycleAuthority}`);
+    lines.push(`  label: ${report.executionBoundary.label}`);
+    lines.push(`  note: ${report.executionBoundary.note}`);
+  }
+  if (report.hostLifecycle) {
+    lines.push("rust host lifecycle:");
+    lines.push(`  topology: ${report.hostLifecycle.topology}`);
+    lines.push(`  support boundary: ${report.hostLifecycle.supportBoundary}`);
+    lines.push(`  authority owner: ${report.hostLifecycle.authorityOwner}`);
+    lines.push(`  worker state: ${report.hostLifecycle.workerState}`);
+    lines.push(`  health state: ${report.hostLifecycle.healthState}`);
+    lines.push(`  failure phase: ${report.hostLifecycle.failurePhase}`);
+    lines.push(`  timeout class: ${report.hostLifecycle.timeoutClass}`);
+    lines.push(`  recovery outcome: ${report.hostLifecycle.recoveryOutcome}`);
+    lines.push(`  cleanup outcome: ${report.hostLifecycle.cleanupOutcome}`);
+    lines.push(`  final status: ${report.hostLifecycle.finalStatus}`);
+    lines.push(`  final exit code: ${report.hostLifecycle.finalExitCode}`);
+    if (report.hostLifecycle.legacyPathLabel) {
+      lines.push(`  legacy path label: ${report.hostLifecycle.legacyPathLabel}`);
+    }
+    if (report.hostLifecycle.launchabilityIssue) {
+      lines.push(`  launchability issue: ${report.hostLifecycle.launchabilityIssue}`);
     }
   }
 

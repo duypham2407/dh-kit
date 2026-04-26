@@ -16,8 +16,32 @@ Artifacts are produced in `dist/releases/`:
 - `dh-darwin-amd64`
 - `dh-linux-amd64`
 - `dh-linux-arm64`
+- `ts-worker/worker.mjs`
+- `ts-worker/manifest.json`
+- `worker.mjs` (flat GitHub Release asset copy of `ts-worker/worker.mjs`)
+- `worker-manifest.json` (flat GitHub Release asset copy of `ts-worker/manifest.json`)
 - `SHA256SUMS`
 - `manifest.json`
+
+The `ts-worker/` entries are required for the Rust-hosted first-wave knowledge
+command path (`ask`, `explain`, `trace`). The worker manifest records the worker
+version, protocol version, `worker.mjs` entry path, SHA-256 checksum, required
+Node major version (`22`), and Linux/macOS platform boundary. Windows worker
+runtime-launch support is not claimed.
+
+Lifecycle authority wording for release operators:
+
+- `ask`, `explain`, and `trace` are the supported Rust-hosted first-wave
+  knowledge-command lifecycle path when launched through the Rust `dh` binary.
+- The TypeScript worker is workflow/output code only on that path; Rust owns
+  worker launchability, readiness, health, timeout, recovery, shutdown, cleanup,
+  and final exit classification.
+- Existing TypeScript-hosted workflow, maintainer, and Rust bridge paths remain
+  legacy/compatibility surfaces until separately migrated. Do not describe them
+  as having equal Rust-host lifecycle authority.
+- Release/install work remains Linux/macOS only and does not imply daemon mode,
+  remote/local socket control plane behavior, shell/worktree orchestration
+  redesign, Windows platform support, or full workflow-lane parity.
 
 ## Verify release artifacts
 
@@ -77,8 +101,10 @@ scripts/install-from-release.sh dist/releases
 Verification floor in this path:
 
 - release bundle completeness (`dh-*` binary + `SHA256SUMS` + `manifest.json`)
+- Rust-hosted worker bundle completeness (`ts-worker/worker.mjs` + `ts-worker/manifest.json`)
 - checksum verification from `SHA256SUMS`
 - manifest consistency + file-size verification
+- worker manifest protocol/checksum/Node/platform verification
 - explicit signature status (`verified` / `skipped` / `unavailable` / `absent`)
 
 Expected lifecycle output contract:
@@ -236,10 +262,12 @@ Equivalent environment flags:
 - `DH_INSTALL_RUST_TOOLS_YES=1`
 - `DH_RUST_BOOTSTRAP_DRY_RUN=1` (optional preview mode)
 
-### Windows support note
+### Supported target platforms
 
-Current release/install scripts in this repository support macOS/Linux prebuilt binaries.
-No Windows runtime installer is implemented yet; do not assume Windows release parity.
+Current release/install scripts in this repository support Linux and macOS
+prebuilt binaries. Windows is not a current target platform; Windows-specific
+installer hardening, release assets, and parity work are out of scope unless a
+future product decision changes the target platforms.
 
 ## Diagnostics lifecycle classification
 
@@ -252,6 +280,14 @@ No Windows runtime installer is implemented yet; do not assume Windows release p
 Statuses are one of: `healthy`, `degraded`, `unsupported`, `misconfigured`.
 Nightly doctor snapshot checks treat `unsupported` and `misconfigured` lifecycle
 states as regressions requiring attention.
+
+For Rust-host lifecycle authority specifically, `dh doctor` reports a bounded
+`Rust-hosted knowledge-command lifecycle authority` section. That section must
+stay scoped to the first-wave `ask`/`explain`/`trace` path and must surface
+worker bundle/manifest readiness (`ts-worker/worker.mjs` and
+`ts-worker/manifest.json`). Runtime probes that still use the old TypeScript
+hosted Rust bridge are labeled as compatibility seams; they are useful for
+diagnostics but do not establish equal lifecycle authority.
 
 Doctor boundary reminder:
 

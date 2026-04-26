@@ -139,6 +139,10 @@ DH_INSTALL_RUST_TOOLS="$WITH_RUST_TOOLS" \
     exit 1
   }
 
+mkdir -p "$INSTALL_DIR/ts-worker"
+cp "$RELEASE_DIR/ts-worker/worker.mjs" "$INSTALL_DIR/ts-worker/worker.mjs"
+cp "$RELEASE_DIR/ts-worker/manifest.json" "$INSTALL_DIR/ts-worker/manifest.json"
+
 ROLLBACK_RESULT="not_needed"
 ROLLBACK_NOTE="post-upgrade verification passed; rollback not required"
 if [ -f "$UPGRADE_RESULT_FILE" ]; then
@@ -150,11 +154,11 @@ UPGRADE_LIMITED="runtime/workspace readiness is not verified by upgrade lifecycl
 if [ -n "$VERIFICATION_LIMITATIONS" ]; then
   UPGRADE_LIMITED="$VERIFICATION_LIMITATIONS; $UPGRADE_LIMITED"
 fi
-UPGRADE_LIMITED="$UPGRADE_LIMITED; Windows runtime installer parity remains unsupported"
+UPGRADE_LIMITED="$UPGRADE_LIMITED; supported release upgrade targets are Linux and macOS; Windows is not a current target platform"
 
 echo "[dh] surface: lifecycle upgrade (upgrade-from-release)"
 echo "[dh] condition: completed"
 echo "[dh] why: release artifacts verified at tier=$VERIFICATION_TIER (signature=$SIGNATURE_STATUS: $SIGNATURE_REASON), binary upgraded at $INSTALL_DIR/dh, rollback=$ROLLBACK_RESULT ($ROLLBACK_NOTE)"
-echo "[dh] works: dh binary is upgraded and rollback safety already checked by upgrade flow"
+echo "[dh] works: dh binary is upgraded and rollback safety already checked by upgrade flow; Rust-hosted TypeScript worker bundle is installed at $INSTALL_DIR/ts-worker/worker.mjs"
 echo "[dh] limited: $UPGRADE_LIMITED"
 echo "[dh] next: run '$INSTALL_DIR/dh --version' then '$INSTALL_DIR/dh doctor'"

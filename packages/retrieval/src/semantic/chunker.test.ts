@@ -137,6 +137,7 @@ describe("chunkFile", () => {
     const chunks = await chunkFile(tmpDir, file, []);
     expect(chunks.length).toBeGreaterThan(0);
     expect(chunks.every((chunk) => chunk.filePath === "packages/api/src/auth.ts")).toBe(true);
+    expect(chunks.some((chunk) => chunk.content.includes("login"))).toBe(true);
   });
 
   it("returns empty for missing file", async () => {

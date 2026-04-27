@@ -39,9 +39,9 @@ export class SessionManager {
   async createSession(lane: WorkflowLane, agent: AgentRegistryEntry): Promise<SessionBootstrapResult> {
     const session = createLaneLockedSession(this.repoRoot, lane);
     const assignment = await this.assignmentsRepo.findByAgentId(agent.agentId);
+    const resolvedModel = await resolveAgentModel(this.repoRoot, agent.agentId, assignment);
     const envelope: ExecutionEnvelopeState = {
-      ...buildExecutionEnvelope(this.repoRoot, session, agent),
-      resolvedModel: resolveAgentModel(this.repoRoot, agent.agentId, assignment),
+      ...buildExecutionEnvelope(this.repoRoot, session, agent, resolvedModel),
       id: createId("env"),
       createdAt: nowIso(),
     };

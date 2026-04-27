@@ -1,7 +1,5 @@
 import { DEFAULT_AGENT_REGISTRY } from "../../../shared/src/constants/roles.js";
-import { listModels } from "../../../providers/src/registry/model-registry.js";
-import { listProviders } from "../../../providers/src/registry/provider-registry.js";
-import { listVariants } from "../../../providers/src/registry/variant-registry.js";
+import { listProvidersAsync, listModelsAsync, listVariantsAsync } from "../../../providers/src/provider/legacy-adapter.js";
 import { validateResolvedModel } from "../../../providers/src/resolution/resolve-agent-model.js";
 import { AgentModelAssignmentsRepo } from "../../../storage/src/sqlite/repositories/agent-model-assignments-repo.js";
 import { ConfigRepo } from "../../../storage/src/sqlite/repositories/config-repo.js";
@@ -10,18 +8,17 @@ import type { AgentRegistryEntry } from "../../../shared/src/types/agent.js";
 import type { EmbeddingProviderConfig } from "../../../shared/src/types/embedding.js";
 import type { SemanticMode } from "../../../shared/src/types/lane.js";
 import { DEFAULT_EMBEDDING_CONFIG } from "../../../shared/src/types/embedding.js";
-import { OpencodeConfigSchema, type OpencodeConfig } from "../../../shared/src/types/config-schema.js";
-import fs from "node:fs";
-import path from "node:path";
+import { loadOpencodeConfig } from "./config-loader.js";
+import type { OpencodeConfig } from "../../../shared/src/types/config-schema.js";
 
 export type ConfigService = {
   loadProviderConfig(): OpencodeConfig["provider"];
   listAgents(): AgentRegistryEntry[];
   getAssignment(agentId: string): Promise<AgentModelAssignment | undefined>;
   listAssignments(): Promise<AgentModelAssignment[]>;
-  listProviders(): ProviderRegistryEntry[];
-  listModels(providerId: string): ModelRegistryEntry[];
-  listVariants(providerId: string, modelId: string): VariantRegistryEntry[];
+  listProviders(): Promise<ProviderRegistryEntry[]>;
+  listModels(providerId: string): Promise<ModelRegistryEntry[]>;
+  listVariants(providerId: string, modelId: string): Promise<VariantRegistryEntry[]>;
   assignModel(input: Omit<AgentModelAssignment, "updatedAt">): Promise<AgentModelAssignment>;
   getSemanticMode(): SemanticMode;
   setSemanticMode(mode: SemanticMode): void;
@@ -37,25 +34,14 @@ export function createConfigService(repoRoot: string): ConfigService {
     getAssignment: (agentId) => repo.findByAgentId(agentId),
     listAssignments: () => repo.list(),
     loadProviderConfig: () => {
-      const configPath = path.join(repoRoot, "opencode.json");
-      if (!fs.existsSync(configPath)) {
-        return undefined;
-      }
-      try {
-        const content = fs.readFileSync(configPath, "utf-8");
-        const json = JSON.parse(content);
-        const parsed = OpencodeConfigSchema.parse(json);
-        return parsed.provider;
-      } catch (e) {
-        console.error("Failed to parse opencode.json:", e);
-        return undefined;
-      }
+      const config = loadOpencodeConfig(repoRoot);
+      return config?.provider;
     },
-    listProviders: () => listProviders(repoRoot),
-    listModels: (providerId) => listModels(repoRoot, providerId),
-    listVariants: (providerId, modelId) => listVariants(repoRoot, providerId, modelId),
+    listProviders: () => listProvidersAsync(),
+    listModels: (providerId) => listModelsAsync(providerId),
+    listVariants: (providerId, modelId) => listVariantsAsync(providerId, modelId),
     assignModel: async (input) => {
-      validateResolvedModel(repoRoot, input.agentId, input.providerId, input.modelId, input.variantId);
+      await validateResolvedModel(repoRoot, input.agentId, input.providerId, input.modelId, input.variantId);
       return repo.saveAssignment(input);
     },
     getSemanticMode: () => {

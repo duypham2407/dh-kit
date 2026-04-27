@@ -15,9 +15,23 @@
     "vitest": "^4.1.2"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^4.0.96",
     "@ai-sdk/anthropic": "^3.0.71",
+    "@ai-sdk/azure": "^3.0.54",
+    "@ai-sdk/deepinfra": "^2.0.45",
+    "@ai-sdk/google": "^3.0.64",
+    "@ai-sdk/google-vertex": "^4.0.112",
+    "@ai-sdk/groq": "^3.0.35",
+    "@ai-sdk/mistral": "^3.0.30",
     "@ai-sdk/openai": "^3.0.53",
+    "@ai-sdk/openai-compatible": "^2.0.41",
+    "@ai-sdk/provider": "^3.0.8",
+    "@ai-sdk/xai": "^3.0.83",
+    "@openrouter/ai-sdk-provider": "^2.8.1",
     "ai": "^6.0.168",
+    "effect": "^3.21.2",
+    "fuzzysort": "^3.1.0",
+    "remeda": "^2.33.7",
     "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "0.24.7",
     "zod": "^4.3.6"

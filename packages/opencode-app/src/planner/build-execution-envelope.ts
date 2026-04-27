@@ -1,9 +1,9 @@
 import type { AgentRegistryEntry } from "../../../shared/src/types/agent.js";
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
+import type { ResolvedModelSelection } from "../../../shared/src/types/model.js";
 import type { SessionState } from "../../../shared/src/types/session.js";
 import { createId } from "../../../shared/src/utils/ids.js";
 import { nowIso } from "../../../shared/src/utils/time.js";
-import { chooseAgentModel } from "./choose-agent-model.js";
 import { chooseMcps } from "./choose-mcps.js";
 import { chooseSkills } from "./choose-skills.js";
 
@@ -21,7 +21,7 @@ function defaultMcpIntentForStage(stage: string): string {
   return "codebase";
 }
 
-export function buildExecutionEnvelope(repoRoot: string, session: SessionState, agent: AgentRegistryEntry): ExecutionEnvelopeState {
+export function buildExecutionEnvelope(repoRoot: string, session: SessionState, agent: AgentRegistryEntry, resolvedModel: ResolvedModelSelection): ExecutionEnvelopeState {
   const base: ExecutionEnvelopeState = {
     id: createId("env"),
     sessionId: session.sessionId,
@@ -29,7 +29,7 @@ export function buildExecutionEnvelope(repoRoot: string, session: SessionState, 
     role: agent.role,
     agentId: agent.agentId,
     stage: session.currentStage,
-    resolvedModel: chooseAgentModel(repoRoot, agent.agentId),
+    resolvedModel,
     activeSkills: [],
     activeMcps: [],
     requiredTools: [],

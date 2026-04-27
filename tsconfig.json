@@ -9,7 +9,13 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/effect": ["./packages/providers/src/effect/index.ts"],
+      "@/*": ["./packages/opencode-app/src/*", "./packages/shared/src/util-mocks/*"],
+      "@opencode-ai/core/*": ["./packages/shared/src/core-mocks/*"]
+    }
   },
   "include": [
     "apps/**/*.ts",

@@ -3,8 +3,7 @@ import { resolveDhPaths } from "../../../shared/src/utils/path.js";
 import { openDhDatabase, resolveSqliteDbPath } from "../../../storage/src/sqlite/db.js";
 import { checkDatabaseIntegrity, checkDatabaseReadable } from "../../../storage/src/sqlite/db-health.js";
 import { DEFAULT_AGENT_REGISTRY } from "../../../shared/src/constants/roles.js";
-import { listProviders } from "../../../providers/src/registry/provider-registry.js";
-import { listModels } from "../../../providers/src/registry/model-registry.js";
+import { listProvidersAsync, listModelsAsync } from "../../../providers/src/provider/legacy-adapter.js";
 import { ConfigRepo } from "../../../storage/src/sqlite/repositories/config-repo.js";
 import { EmbeddingsRepo } from "../../../storage/src/sqlite/repositories/embeddings-repo.js";
 import { ChunksRepo } from "../../../storage/src/sqlite/repositories/chunks-repo.js";
@@ -210,10 +209,11 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   // Database integrity check
   const integrityResult = checkDatabaseIntegrity(repoRoot);
 
-  const providers = listProviders(repoRoot);
+  const providers = await listProvidersAsync();
   const modelsByProvider = new Map<string, number>();
   for (const provider of providers) {
-    modelsByProvider.set(provider.providerId, listModels(repoRoot, provider.providerId).length);
+    const models = await listModelsAsync(provider.providerId);
+    modelsByProvider.set(provider.providerId, models.length);
   }
   const providersWithoutModels = providers
     .filter((provider) => (modelsByProvider.get(provider.providerId) ?? 0) === 0)

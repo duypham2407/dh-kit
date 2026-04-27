@@ -5,8 +5,10 @@
 
 import type { ResolvedModelSelection } from "../../../shared/src/types/model.js";
 import type { ChatProvider, ChatRequest, ChatResponse } from "./types.js";
-import { createLanguageModel } from "./ai-provider-factory.js";
 import { generateText, streamText } from "ai";
+import { Effect } from "effect";
+import { Provider } from "../provider/index.js";
+import type { ProviderID, ModelID } from "../schema.js";
 
 /**
  * Create a ChatProvider for the given model selection.
@@ -17,7 +19,16 @@ export async function createChatProvider(
   repoRoot: string,
   selection: ResolvedModelSelection
 ): Promise<ChatProvider> {
-  const model = await createLanguageModel(repoRoot, selection.providerId, selection.modelId);
+  const model = await Effect.runPromise(
+    Effect.provide(
+      Effect.gen(function* () {
+        const service = yield* Provider.Service;
+        const modelDef = yield* service.getModel(selection.providerId as ProviderID, selection.modelId as ModelID);
+        return yield* service.getLanguage(modelDef);
+      }),
+      Provider.layer
+    )
+  );
 
   return {
     providerId: selection.providerId,

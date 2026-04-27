@@ -12,11 +12,11 @@ export async function runConfigAgentFlow(repoRoot: string): Promise<ConfigAgentF
   const configService = createConfigService(repoRoot);
   const agent = await promptAgentSelection(configService.listAgents());
   const currentAssignment = await configService.getAssignment(agent.agentId);
-  const providers = ensureEnabledProviders(configService.listProviders());
+  const providers = ensureEnabledProviders(await configService.listProviders());
   const provider = await promptProviderSelection(providers);
-  const models = ensureAvailableModels(configService.listModels(provider.providerId));
+  const models = ensureAvailableModels(await configService.listModels(provider.providerId));
   const model = await promptModelSelection(models);
-  const variants = ensureAvailableVariants(configService.listVariants(provider.providerId, model.modelId));
+  const variants = ensureAvailableVariants(await configService.listVariants(provider.providerId, model.modelId));
   const variant = await promptVariantSelection(variants);
 
   await configService.assignModel({

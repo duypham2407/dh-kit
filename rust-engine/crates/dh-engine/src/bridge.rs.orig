@@ -16,13 +16,11 @@ use dh_query::{
     FindSymbolQuery, GotoDefinitionQuery, CallHierarchyQuery, EntryPointsQuery,
     TraceFlowQuery, ImpactAnalysisQuery, SemanticSearchQuery, QueryEngine,
 };
-use crate::hooks::{HookContext, HookDispatcher};
-use dh_types::HookName;
-use dh_storage::{Database, FileRepository, GraphRepository, HookLogRepository};
+use dh_storage::{Database, FileRepository, GraphRepository};
 use dh_types::{
     AnswerState, EvidenceBounds, EvidenceConfidence, EvidenceEntry, EvidenceKind, EvidencePacket,
     EvidenceSource, LanguageCapability, LanguageCapabilityState, LanguageCapabilitySummary,
-    LanguageId, QuestionClass, WorkflowLane, SessionState, SessionStatus, SemanticMode, ToolEnforcementLevel, AgentRole, HookDecision
+    LanguageId, QuestionClass,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -129,33 +127,15 @@ pub struct RpcRequest {
 pub struct BridgeRpcRouter<'a> {
     workspace: &'a Path,
     db: &'a Database,
-    dispatcher: &'a HookDispatcher,
-    log_repo: &'a dyn HookLogRepository,
 }
 
 impl<'a> BridgeRpcRouter<'a> {
-    pub fn new(
-        workspace: &'a Path,
-        db: &'a Database,
-        dispatcher: &'a HookDispatcher,
-        log_repo: &'a dyn HookLogRepository,
-    ) -> Self {
-        Self {
-            workspace,
-            db,
-            dispatcher,
-            log_repo,
-        }
+    pub fn new(workspace: &'a Path, db: &'a Database) -> Self {
+        Self { workspace, db }
     }
 
     pub fn route(&self, request: RpcRequest) -> Value {
-        handle_request(
-            self.workspace,
-            self.db,
-            self.dispatcher,
-            self.log_repo,
-            request,
-        )
+        handle_request(self.workspace, self.db, request)
     }
 
     pub fn route_worker_query(&self, request: RpcRequest) -> Value {
@@ -311,14 +291,12 @@ pub fn run_bridge_server(workspace: PathBuf) -> Result<()> {
     let db = Database::new(&db_path).with_context(|| format!("open db: {}", db_path.display()))?;
     db.initialize()?;
 
-    let dispatcher = HookDispatcher::new();
-
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut reader = BufReader::new(stdin.lock());
     let mut writer = io::BufWriter::new(stdout.lock());
 
-    let router = BridgeRpcRouter::new(&workspace, &db, &dispatcher, &db);
+    let router = BridgeRpcRouter::new(&workspace, &db);
 
     loop {
         let request = match read_rpc_request(&mut reader) {
@@ -382,13 +360,7 @@ fn read_rpc_request(reader: &mut BufReader<impl Read>) -> Result<RpcRequest> {
     Ok(RpcRequest { id, method, params })
 }
 
-fn handle_request(
-    workspace: &Path,
-    db: &Database,
-    dispatcher: &HookDispatcher,
-    log_repo: &dyn HookLogRepository,
-    request: RpcRequest,
-) -> Value {
+fn handle_request(workspace: &Path, db: &Database, request: RpcRequest) -> Value {
     match request.method.as_str() {
         "dh.initialize" => ok_result(request.id, initialize_result(workspace)),
         "dh.initialized" => ok_result(
@@ -450,49 +422,10 @@ fn handle_request(
                 );
             }
 
-            let session_state = SessionState {
-                id: "bridge-session".to_string(),
-                repo_root: workspace.to_string_lossy().to_string(),
-                lane: WorkflowLane::Quick,
-                lane_locked: false,
-                current_stage: "runCommand".to_string(),
-                status: SessionStatus::Active,
-                semantic_mode: SemanticMode::OnDemand,
-                tool_enforcement_level: ToolEnforcementLevel::Hard,
-                created_at_unix_ms: chrono::Utc::now().timestamp_millis(),
-                updated_at_unix_ms: chrono::Utc::now().timestamp_millis(),
-            };
-            let ctx = HookContext {
-                session: session_state,
-                agent_id: "bridge".to_string(),
-                role: AgentRole::Coordinator,
-                stage: "runCommand".to_string(),
-                lane: WorkflowLane::Quick,
-            };
-
-            let tool_name = query_method.clone();
-            let input = json!({
-                "tool_name": tool_name,
-                "tool_args": query_params,
-            });
-
-            let (log, result) = dispatcher.dispatch(HookName::PreToolExec, &ctx, &input, "bridge-session", None);
-            let _ = log_repo.insert_hook_log(&log);
-
-            if let HookDecision::Block = result.decision {
-                return BridgeRpcError::access_denied(format!("Hook blocked execution: {}", result.reason))
-                    .to_response(request.id);
-            }
-
-            let final_params = match result.decision {
-                HookDecision::Modify => result.output,
-                _ => query_params,
-            };
-
-            let delegated = BridgeRpcRouter::new(workspace, db, dispatcher, log_repo).route_worker_query(RpcRequest {
+            let delegated = BridgeRpcRouter::new(workspace, db).route_worker_query(RpcRequest {
                 id: request.id.clone(),
                 method: query_method.clone(),
-                params: final_params,
+                params: query_params,
             });
 
             if delegated.get("error").is_some() {
@@ -504,20 +437,7 @@ fn handle_request(
                 .cloned()
                 .unwrap_or_else(|| json!({}));
 
-            let (ans_log, ans_result) = dispatcher.dispatch(HookName::PreAnswer, &ctx, &delegated_result, "bridge-session", None);
-            let _ = log_repo.insert_hook_log(&ans_log);
-
-            if let HookDecision::Block = ans_result.decision {
-                return BridgeRpcError::execution_failed(format!("Hook blocked answer: {}", ans_result.reason))
-                    .to_response(request.id);
-            }
-
-            let final_result = match ans_result.decision {
-                HookDecision::Modify => ans_result.output,
-                _ => delegated_result,
-            };
-
-            match final_result {
+            match delegated_result {
                 Value::Object(mut map) => {
                     map.insert("method".to_string(), Value::String(query_method));
                     ok_result(request.id, Value::Object(map))
@@ -1825,7 +1745,6 @@ fn push_language(target: &mut Vec<LanguageId>, language: LanguageId) {
 #[cfg(test)]
 mod tests {
     use super::{handle_request, BridgeRpcRouter, RpcRequest};
-    use crate::hooks::HookDispatcher;
     use dh_storage::{
         Database, FileRepository, SymbolRepository, GraphEdgeRepository,
     };
@@ -2223,7 +2142,6 @@ mod tests {
     #[test]
     fn bridge_supports_required_question_classes() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
         seed(&db)?;
 
         let mk = |method: &str, params: Value| RpcRequest {
@@ -2232,7 +2150,10 @@ mod tests {
             params,
         };
 
-        let definition = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let definition = handle_request(
+            tmp.path(),
+            &db,
+            mk(
                 "query.definition",
                 json!({ "symbol": "helper", "workspaceId": 1 }),
             ),
@@ -2243,7 +2164,10 @@ mod tests {
             json!("definition")
         );
 
-        let search = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let search = handle_request(
+            tmp.path(),
+            &db,
+            mk(
                 "query.search",
                 json!({ "query": "main", "workspaceId": 1, "mode": "file_path" }),
             ),
@@ -2257,7 +2181,10 @@ mod tests {
             json!("search_file_discovery")
         );
 
-        let definition_none = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let definition_none = handle_request(
+            tmp.path(),
+            &db,
+            mk(
                 "query.definition",
                 json!({ "symbol": "missingSymbol", "workspaceId": 1 }),
             ),
@@ -2276,7 +2203,10 @@ mod tests {
                 .as_str()
                 .is_some_and(|text| text.contains("no parser-backed definition match")))));
 
-        let usage = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let usage = handle_request(
+            tmp.path(),
+            &db,
+            mk(
                 "query.relationship",
                 json!({ "relation": "usage", "symbol": "helper", "workspaceId": 1 }),
             ),
@@ -2285,21 +2215,30 @@ mod tests {
         assert_eq!(usage["result"]["answerState"], "grounded");
         assert!(usage["result"]["evidence"].is_object());
 
-        let deps = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let deps = handle_request(
+            tmp.path(),
+            &db,
+            mk(
                 "query.relationship",
                 json!({ "relation": "dependencies", "filePath": "src/main.ts", "workspaceId": 1 }),
             ),
         );
         assert!(deps["result"]["items"].as_array().is_some());
 
-        let dependents = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let dependents = handle_request(
+            tmp.path(),
+            &db,
+            mk(
                 "query.relationship",
                 json!({ "relation": "dependents", "target": "src/util.ts", "workspaceId": 1 }),
             ),
         );
         assert!(dependents["result"]["items"].as_array().is_some());
 
-        let build_evidence = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let build_evidence = handle_request(
+            tmp.path(),
+            &db,
+            mk(
                 "query.buildEvidence",
                 json!({
                     "query": "how does helper work?",
@@ -2327,7 +2266,10 @@ mod tests {
             .as_array()
             .is_some_and(|items| !items.is_empty()));
 
-        let build_evidence_unsupported = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let build_evidence_unsupported = handle_request(
+            tmp.path(),
+            &db,
+            mk(
                 "query.buildEvidence",
                 json!({
                     "query": "trace flow through the entire subsystem",
@@ -2345,7 +2287,10 @@ mod tests {
             json!("runtime_trace")
         );
 
-        let unsupported_unknown_usage = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let unsupported_unknown_usage = handle_request(
+            tmp.path(),
+            &db,
+            mk(
                 "query.relationship",
                 json!({ "relation": "usage", "symbol": "mystery_symbol", "workspaceId": 1 }),
             ),
@@ -2370,7 +2315,10 @@ mod tests {
             .as_array()
             .is_some_and(|gaps| !gaps.is_empty()));
 
-        let unsupported = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let unsupported = handle_request(
+            tmp.path(),
+            &db,
+            mk(
                 "query.relationship",
                 json!({ "relation": "deep_impact", "target": "unknown-target", "workspaceId": 1 }),
             ),
@@ -2397,7 +2345,10 @@ mod tests {
             }),
         }], 1)?;
 
-        let usage_partial = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let usage_partial = handle_request(
+            tmp.path(),
+            &db,
+            mk(
                 "query.relationship",
                 json!({ "relation": "usage", "symbol": "helper", "workspaceId": 1 }),
             ),
@@ -2416,8 +2367,10 @@ mod tests {
     #[test]
     fn initialize_advertises_stable_v2_capabilities() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
-        let response = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let response = handle_request(
+            tmp.path(),
+            &db,
+            RpcRequest {
                 id: Some(json!(42)),
                 method: "dh.initialize".into(),
                 params: json!({}),
@@ -2461,8 +2414,10 @@ mod tests {
     #[test]
     fn initialize_advertises_bounded_rust_host_lifecycle_contract() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
-        let response = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let response = handle_request(
+            tmp.path(),
+            &db,
+            RpcRequest {
                 id: Some(json!(43)),
                 method: "dh.initialize".into(),
                 params: json!({}),
@@ -2532,10 +2487,8 @@ mod tests {
     #[test]
     fn bridge_rpc_router_reuses_query_handlers_without_stdio_server() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
         seed(&db)?;
-        let dispatcher = HookDispatcher::new();
-        let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
+        let router = BridgeRpcRouter::new(tmp.path(), &db);
 
         let response = router.route_worker_query(RpcRequest {
             id: Some(json!(44)),
@@ -2555,10 +2508,8 @@ mod tests {
     fn bridge_rpc_router_routes_named_build_evidence_without_generic_passthrough(
     ) -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
         seed(&db)?;
-        let dispatcher = HookDispatcher::new();
-        let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
+        let router = BridgeRpcRouter::new(tmp.path(), &db);
 
         let response = router.route_worker_query(RpcRequest {
             id: Some(json!(46)),
@@ -2600,10 +2551,8 @@ mod tests {
     #[test]
     fn bridge_build_evidence_rejects_non_explain_intents_without_grounding() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
         seed(&db)?;
-        let dispatcher = HookDispatcher::new();
-        let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
+        let router = BridgeRpcRouter::new(tmp.path(), &db);
 
         for intent in ["trace", "impact", "call_hierarchy", "arbitrary"] {
             let response = router.route_worker_query(RpcRequest {
@@ -2644,10 +2593,8 @@ mod tests {
     #[test]
     fn bridge_build_evidence_preserves_unsupported_language_packet_state() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
         seed(&db)?;
-        let dispatcher = HookDispatcher::new();
-        let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
+        let router = BridgeRpcRouter::new(tmp.path(), &db);
 
         let response = router.route_worker_query(RpcRequest {
             id: Some(json!(47)),
@@ -2685,10 +2632,8 @@ mod tests {
     fn bridge_build_evidence_preserves_partial_and_insufficient_packet_states() -> anyhow::Result<()>
     {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
         seed(&db)?;
-        let dispatcher = HookDispatcher::new();
-        let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
+        let router = BridgeRpcRouter::new(tmp.path(), &db);
 
         db.upsert_file(&File {
             id: 1,
@@ -2780,9 +2725,7 @@ mod tests {
     #[test]
     fn bridge_rpc_router_rejects_methods_outside_worker_query_contract() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
-        let dispatcher = HookDispatcher::new();
-        let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
+        let router = BridgeRpcRouter::new(tmp.path(), &db);
 
         for method in [
             "tool.execute",
@@ -2812,10 +2755,12 @@ mod tests {
     fn direct_bridge_rejects_out_of_scope_query_methods_with_capability_reason(
     ) -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
 
         for method in ["query.trace"] {
-            let response = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+            let response = handle_request(
+                tmp.path(),
+                &db,
+                RpcRequest {
                     id: Some(json!(72)),
                     method: method.into(),
                     params: json!({}),
@@ -2838,10 +2783,12 @@ mod tests {
     #[test]
     fn lifecycle_control_methods_are_supported() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
         seed(&db)?;
 
-        let initialized = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let initialized = handle_request(
+            tmp.path(),
+            &db,
+            RpcRequest {
                 id: Some(json!(7)),
                 method: "dh.initialized".into(),
                 params: json!({}),
@@ -2850,7 +2797,10 @@ mod tests {
         assert_eq!(initialized["result"]["accepted"], json!(true));
         assert_eq!(initialized["result"]["phase"], json!("startup"));
 
-        let ready = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let ready = handle_request(
+            tmp.path(),
+            &db,
+            RpcRequest {
                 id: Some(json!(8)),
                 method: "dh.ready".into(),
                 params: json!({}),
@@ -2860,7 +2810,10 @@ mod tests {
         assert_eq!(ready["result"]["workerState"], json!("ready"));
         assert_eq!(ready["result"]["healthState"], json!("healthy"));
 
-        let ping = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let ping = handle_request(
+            tmp.path(),
+            &db,
+            RpcRequest {
                 id: Some(json!(9)),
                 method: "runtime.ping".into(),
                 params: json!({}),
@@ -2869,7 +2822,10 @@ mod tests {
         assert_eq!(ping["result"]["ok"], json!(true));
         assert_eq!(ping["result"]["phase"], json!("health"));
 
-        let run_command = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let run_command = handle_request(
+            tmp.path(),
+            &db,
+            RpcRequest {
                 id: Some(json!(10)),
                 method: "session.runCommand".into(),
                 params: json!({
@@ -2886,7 +2842,10 @@ mod tests {
         assert_eq!(run_command["result"]["method"], json!("query.definition"));
         assert!(run_command["result"]["items"].as_array().is_some());
 
-        let run_build_evidence = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let run_build_evidence = handle_request(
+            tmp.path(),
+            &db,
+            RpcRequest {
                 id: Some(json!(12)),
                 method: "session.runCommand".into(),
                 params: json!({
@@ -2915,7 +2874,10 @@ mod tests {
             json!("build_evidence")
         );
 
-        let run_arbitrary_method = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let run_arbitrary_method = handle_request(
+            tmp.path(),
+            &db,
+            RpcRequest {
                 id: Some(json!(13)),
                 method: "session.runCommand".into(),
                 params: json!({
@@ -2932,7 +2894,10 @@ mod tests {
             json!("CAPABILITY_UNSUPPORTED")
         );
 
-        let shutdown = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let shutdown = handle_request(
+            tmp.path(),
+            &db,
+            RpcRequest {
                 id: Some(json!(11)),
                 method: "dh.shutdown".into(),
                 params: json!({}),
@@ -2947,11 +2912,13 @@ mod tests {
     #[test]
     fn out_of_scope_relation_family_requests_are_rejected() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
         seed(&db)?;
 
         for relation in ["call_hierarchy", "trace_flow", "impact"] {
-            let response = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+            let response = handle_request(
+                tmp.path(),
+                &db,
+                RpcRequest {
                     id: Some(json!(71)),
                     method: "query.relationship".into(),
                     params: json!({

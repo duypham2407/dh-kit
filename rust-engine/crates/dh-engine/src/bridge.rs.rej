@@ -1,0 +1,12 @@
+@@ -16,8 +16,9 @@
+     FindSymbolQuery, GotoDefinitionQuery, CallHierarchyQuery, EntryPointsQuery,
+     TraceFlowQuery, ImpactAnalysisQuery, SemanticSearchQuery, QueryEngine,
+ };
+-use dh_storage::{Database, FileRepository, GraphRepository};
++use dh_storage::{Database, FileRepository, GraphRepository, HookLogRepository};
++use crate::hooks::{HookContext, HookDecision, HookDispatcher, PreToolExecArgs, StandardHooks};
+ use dh_types::{
+     AnswerState, EvidenceBounds, EvidenceConfidence, EvidenceEntry, EvidenceKind, EvidencePacket,
+     EvidenceSource, LanguageCapability, LanguageCapabilityState, LanguageCapabilitySummary,
+-    LanguageId, QuestionClass,
++    LanguageId, QuestionClass, WorkflowLane,

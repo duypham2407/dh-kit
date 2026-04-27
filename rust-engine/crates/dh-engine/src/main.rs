@@ -1,8 +1,8 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use dh_indexer::{IndexWorkspaceRequest, Indexer, IndexerApi};
 use dh_storage::{Database, IndexStateRepository};
-use dh_types::{BenchmarkClass, IndexRunStatus, IndexState};
+use dh_types::{BenchmarkClass, IndexRunStatus, IndexState, WorkflowLane};
 use std::path::PathBuf;
 
 mod benchmark;
@@ -77,6 +77,55 @@ enum Commands {
         #[arg(long = "worker-entry")]
         worker_entry: Option<PathBuf>,
     },
+    Session {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SessionAction {
+    Create {
+        #[arg(long, value_enum)]
+        lane: LaneArg,
+        #[arg(long, default_value = ".")]
+        workspace: PathBuf,
+    },
+    Resume {
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value = ".")]
+        workspace: PathBuf,
+    },
+    Status {
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value = ".")]
+        workspace: PathBuf,
+    },
+    Complete {
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value = ".")]
+        workspace: PathBuf,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum LaneArg {
+    Quick,
+    Delivery,
+    Migration,
+}
+
+impl From<LaneArg> for WorkflowLane {
+    fn from(value: LaneArg) -> Self {
+        match value {
+            LaneArg::Quick => WorkflowLane::Quick,
+            LaneArg::Delivery => WorkflowLane::Delivery,
+            LaneArg::Migration => WorkflowLane::Migration,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -92,6 +141,8 @@ struct KnowledgeCommandArgs {
     worker_manifest: Option<PathBuf>,
     #[arg(long = "resume-session")]
     resume_session_id: Option<String>,
+    #[arg(long, value_enum, default_value = "quick")]
+    lane: LaneArg,
     #[arg(long, default_value_t = false)]
     json: bool,
 }
@@ -493,6 +544,67 @@ fn main() -> Result<()> {
             }
             println!("\nDoctor check complete.");
         }
+        Commands::Session { action } => {
+            match action {
+                SessionAction::Create { lane, workspace } => {
+                    let db_path = workspace.join(DEFAULT_DB_NAME);
+                    let db = Database::new(&db_path)?;
+                    db.initialize()?;
+                    let session_mgr = session_manager::SessionManager::new(&db);
+                    
+                    let id = format!("session-{}", chrono::Utc::now().timestamp_millis());
+                    let session = session_mgr.create_session(
+                        &id,
+                        &workspace.to_string_lossy(),
+                        lane.into(),
+                    )?;
+                    session_mgr.activate_session(&session.id)?;
+                    
+                    println!("{}", serde_json::to_string_pretty(&session)?);
+                }
+                SessionAction::Resume { id, workspace } => {
+                    let db_path = workspace.join(DEFAULT_DB_NAME);
+                    let db = Database::new(&db_path)?;
+                    db.initialize()?;
+                    let session_mgr = session_manager::SessionManager::new(&db);
+                    
+                    let session = session_mgr.resume_session(&id)?
+                        .context("session not found")?;
+                    session_mgr.activate_session(&session.id)?;
+                    
+                    println!("{}", serde_json::to_string_pretty(&session)?);
+                }
+                SessionAction::Status { id, workspace } => {
+                    let db_path = workspace.join(DEFAULT_DB_NAME);
+                    let db = Database::new(&db_path)?;
+                    db.initialize()?;
+                    let session_mgr = session_manager::SessionManager::new(&db);
+                    
+                    let session = session_mgr.resume_session(&id)?
+                        .context("session not found")?;
+                    let history = session_mgr.stage_history(&id)?;
+                    
+                    let status_payload = serde_json::json!({
+                        "session": session,
+                        "history": history,
+                    });
+                    
+                    println!("{}", serde_json::to_string_pretty(&status_payload)?);
+                }
+                SessionAction::Complete { id, workspace } => {
+                    let db_path = workspace.join(DEFAULT_DB_NAME);
+                    let db = Database::new(&db_path)?;
+                    db.initialize()?;
+                    let session_mgr = session_manager::SessionManager::new(&db);
+                    
+                    session_mgr.complete_session(&id)?;
+                    let session = session_mgr.resume_session(&id)?
+                        .context("session not found")?;
+                        
+                    println!("{}", serde_json::to_string_pretty(&session)?);
+                }
+            }
+        }
     }
 
     Ok(())
@@ -569,6 +681,7 @@ fn run_knowledge_command(
             replay_safety: worker_supervisor::ReplaySafety::ReplaySafeReadOnly,
             output_json: args.json,
             resume_session_id: args.resume_session_id,
+            lane: args.lane.into(),
         })?;
     let exit_code = report.rust_lifecycle.final_exit_code;
 

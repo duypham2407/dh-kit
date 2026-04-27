@@ -1,0 +1,22 @@
+@@ -126,16 +127,18 @@
+ pub struct BridgeRpcRouter<'a> {
+     workspace: &'a Path,
+     db: &'a Database,
++    dispatcher: &'a HookDispatcher,
++    log_repo: &'a HookLogRepository,
+ }
+ 
+ impl<'a> BridgeRpcRouter<'a> {
+-    pub fn new(workspace: &'a Path, db: &'a Database) -> Self {
+-        Self { workspace, db }
++    pub fn new(workspace: &'a Path, db: &'a Database, dispatcher: &'a HookDispatcher, log_repo: &'a HookLogRepository) -> Self {
++        Self { workspace, db, dispatcher, log_repo }
+     }
+ 
+     pub fn route(&self, request: RpcRequest) -> Value {
+-        handle_request(self.workspace, self.db, request)
++        handle_request(self.workspace, self.db, self.dispatcher, self.log_repo, request)
+     }
+ 
+ 
+ 

@@ -4,7 +4,7 @@
 //! and gate evaluation. It persists all state to SQLite via the storage repositories.
 
 use dh_storage::{
-    Database, ExecutionEnvelopeRepository, HookLogRepository, SessionRepository,
+    Database, ExecutionEnvelopeRepository, SessionRepository,
     WorkflowStageRepository,
 };
 use dh_types::{
@@ -294,7 +294,7 @@ impl<'a> SessionManager<'a> {
     }
 
     /// Fail a session (set status to Failed).
-    pub fn fail_session(&self, session_id: &str, reason: &str) -> Result<()> {
+    pub fn fail_session(&self, session_id: &str, _reason: &str) -> Result<()> {
         let session = self.db.get_session(session_id)?
             .context("session not found")?;
 

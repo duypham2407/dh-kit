@@ -37,6 +37,7 @@ impl HostKnowledgeCommandKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostKnowledgeCommandRequest {
+    pub lane: dh_types::WorkflowLane,
     pub kind: HostKnowledgeCommandKind,
     pub input: String,
     pub workspace_root: PathBuf,
@@ -98,7 +99,8 @@ pub fn run_hosted_knowledge_command_with_config(
         }
     };
 
-    let router = BridgeRpcRouter::new(workspace, db);
+    let dispatcher = crate::hooks::HookDispatcher::new();
+    let router = BridgeRpcRouter::new(workspace, db, &dispatcher, db);
     let worker_outcome = send_session_run_command(&mut supervisor, &request, workspace, &router);
 
     match worker_outcome {
@@ -790,6 +792,7 @@ sleep 0.05
         let replay_marker = tmp.path().join("unexpected-replay");
         let worker = worker_fixture(&tmp, &no_replay_worker_body(&first_marker, &replay_marker))?;
         let request = HostKnowledgeCommandRequest {
+            lane: dh_types::WorkflowLane::Quick,
             kind: HostKnowledgeCommandKind::Ask,
             input: "find auth".into(),
             workspace_root: tmp.path().to_path_buf(),
@@ -850,6 +853,7 @@ sleep 0.05
 "#,
         )?;
         let request = HostKnowledgeCommandRequest {
+            lane: dh_types::WorkflowLane::Quick,
             kind: HostKnowledgeCommandKind::Ask,
             input: "find auth".into(),
             workspace_root: tmp.path().to_path_buf(),
@@ -967,6 +971,7 @@ sleep 0.05
         let crash_marker = tmp.path().join("first-worker-crashed");
         let worker = worker_fixture(&tmp, &replay_recovery_worker_body(&crash_marker))?;
         let request = HostKnowledgeCommandRequest {
+            lane: dh_types::WorkflowLane::Quick,
             kind: HostKnowledgeCommandKind::Ask,
             input: "find auth".into(),
             workspace_root: tmp.path().to_path_buf(),
@@ -1043,6 +1048,7 @@ sleep 0.05
 "#,
         )?;
         let request = HostKnowledgeCommandRequest {
+            lane: dh_types::WorkflowLane::Quick,
             kind: HostKnowledgeCommandKind::Explain,
             input: "auth".into(),
             workspace_root: tmp.path().to_path_buf(),
@@ -1097,6 +1103,7 @@ sleep 0.05
 "#,
         )?;
         let request = HostKnowledgeCommandRequest {
+            lane: dh_types::WorkflowLane::Quick,
             kind: HostKnowledgeCommandKind::Explain,
             input: "auth".into(),
             workspace_root: tmp.path().to_path_buf(),

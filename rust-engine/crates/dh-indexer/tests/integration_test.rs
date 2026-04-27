@@ -3,7 +3,8 @@ use dh_storage::{
     CallEdgeRepository, ChunkRepository, Database, FileRepository, ImportRepository,
     IndexStateRepository, ReferenceRepository, SymbolRepository,
 };
-use dh_types::{FreshnessReason, FreshnessState, ParseStatus};
+use dh_types::{FreshnessReason, FreshnessState, ImportKind, ParseStatus};
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -248,6 +249,74 @@ fn index_paths_reindexes_requested_path() {
 
     assert!(result.reindexed_files >= 1);
     assert!(result.changed_files >= 1);
+}
+
+#[test]
+fn indexer_persists_run_lane_command_imports_without_duplicate_ids() {
+    let fixture = TempDir::new().expect("create temp fixture workspace");
+    let workspace = fixture.path();
+    let rel_path = "packages/opencode-app/src/workflows/run-lane-command.ts";
+    let source =
+        include_str!("../../../../packages/opencode-app/src/workflows/run-lane-command.ts");
+
+    let target_path = workspace.join(rel_path);
+    fs::create_dir_all(
+        target_path
+            .parent()
+            .expect("fixture target should have a parent directory"),
+    )
+    .expect("create fixture directories");
+    fs::write(&target_path, source).expect("write affected TypeScript fixture");
+
+    let db_path = workspace.join("dh-index.db");
+    let indexer = Indexer::new(db_path.clone());
+
+    indexer
+        .index_workspace(IndexWorkspaceRequest {
+            roots: vec![workspace.to_path_buf()],
+            force_full: false,
+            max_files: None,
+            include_embeddings: false,
+        })
+        .expect("indexing affected TypeScript fixture should not fail on duplicate import IDs");
+
+    let db = Database::new(&db_path).expect("open db");
+    db.initialize().expect("initialize db");
+
+    let indexed_file = db
+        .get_file_by_path(1, rel_path)
+        .expect("affected file lookup should not fail")
+        .expect("affected file should be indexed");
+    let imports = db
+        .find_imports_by_file(indexed_file.id)
+        .expect("imports lookup should not fail");
+    let unique_ids = imports
+        .iter()
+        .map(|import| import.id)
+        .collect::<HashSet<_>>();
+
+    assert_eq!(
+        imports.len(),
+        unique_ids.len(),
+        "persisted imports for the affected file must not contain duplicate primary-key IDs"
+    );
+    assert!(
+        imports.iter().any(|import| {
+            import.raw_specifier == "../../../shared/src/constants/roles.js"
+                && import.kind == ImportKind::EsmNamed
+                && import.imported_name.as_deref() == Some("DEFAULT_AGENT_REGISTRY")
+        }),
+        "indexing must preserve concrete imports from the affected file"
+    );
+    assert!(
+        imports.iter().any(|import| {
+            import.raw_specifier == "../../../shared/src/types/lane.js"
+                && import.kind == ImportKind::EsmNamed
+                && import.imported_name.as_deref() == Some("WorkflowLane")
+                && import.is_type_only
+        }),
+        "indexing must preserve type-only imports from the affected file"
+    );
 }
 
 #[cfg(unix)]

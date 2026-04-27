@@ -435,24 +435,7 @@ impl LanguageAdapter for TypeScriptAdapter {
             }
         }
 
-        imports.sort_by(|a, b| {
-            (
-                a.span.start_byte,
-                a.span.end_byte,
-                format!("{:?}", a.kind),
-                a.raw_specifier.as_str(),
-                a.imported_name.as_deref().unwrap_or(""),
-                a.local_name.as_deref().unwrap_or(""),
-            )
-                .cmp(&(
-                    b.span.start_byte,
-                    b.span.end_byte,
-                    format!("{:?}", b.kind),
-                    b.raw_specifier.as_str(),
-                    b.imported_name.as_deref().unwrap_or(""),
-                    b.local_name.as_deref().unwrap_or(""),
-                ))
-        });
+        sort_and_dedupe_imports(&mut imports);
 
         imports
     }
@@ -952,6 +935,56 @@ impl LanguageAdapter for TypeScriptAdapter {
         entries.sort();
         blake3_hex(&entries.join("\n"))
     }
+}
+
+fn sort_and_dedupe_imports(imports: &mut Vec<Import>) {
+    imports.sort_by(|a, b| {
+        (
+            a.span.start_byte,
+            a.span.end_byte,
+            format!("{:?}", a.kind),
+            a.raw_specifier.as_str(),
+            a.imported_name.as_deref().unwrap_or(""),
+            a.local_name.as_deref().unwrap_or(""),
+            a.alias.as_deref().unwrap_or(""),
+            a.is_type_only,
+            a.is_reexport,
+            a.resolution_error.as_deref().unwrap_or(""),
+            a.id,
+        )
+            .cmp(&(
+                b.span.start_byte,
+                b.span.end_byte,
+                format!("{:?}", b.kind),
+                b.raw_specifier.as_str(),
+                b.imported_name.as_deref().unwrap_or(""),
+                b.local_name.as_deref().unwrap_or(""),
+                b.alias.as_deref().unwrap_or(""),
+                b.is_type_only,
+                b.is_reexport,
+                b.resolution_error.as_deref().unwrap_or(""),
+                b.id,
+            ))
+    });
+    imports.dedup_by(|a, b| same_import_extraction_artifact(a, b));
+}
+
+fn same_import_extraction_artifact(a: &Import, b: &Import) -> bool {
+    a.id == b.id
+        && a.workspace_id == b.workspace_id
+        && a.source_file_id == b.source_file_id
+        && a.source_symbol_id == b.source_symbol_id
+        && a.raw_specifier == b.raw_specifier
+        && a.imported_name == b.imported_name
+        && a.local_name == b.local_name
+        && a.alias == b.alias
+        && a.kind == b.kind
+        && a.is_type_only == b.is_type_only
+        && a.is_reexport == b.is_reexport
+        && a.resolved_file_id == b.resolved_file_id
+        && a.resolved_symbol_id == b.resolved_symbol_id
+        && a.span == b.span
+        && a.resolution_error == b.resolution_error
 }
 
 fn build_symbol(
@@ -1656,7 +1689,13 @@ fn first_line(input: &str, max_len: usize) -> String {
     if line.len() <= max_len {
         line.to_string()
     } else {
-        format!("{}…", &line[..max_len])
+        let end = line
+            .char_indices()
+            .map(|(idx, _)| idx)
+            .take_while(|idx| *idx <= max_len)
+            .last()
+            .unwrap_or(0);
+        format!("{}…", &line[..end])
     }
 }
 

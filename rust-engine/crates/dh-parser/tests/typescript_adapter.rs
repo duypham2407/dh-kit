@@ -3,6 +3,7 @@ use dh_parser::{
     ExtractionContext, LanguageAdapter,
 };
 use dh_types::{CallKind, ChunkKind, ImportKind, LanguageId, ReferenceKind, SymbolKind};
+use std::collections::HashSet;
 use std::path::Path;
 
 fn parse_with_adapter<'a>(
@@ -228,6 +229,47 @@ fn extracts_normalized_facts_from_ts_fixture() {
 }
 
 #[test]
+fn extract_imports_deduplicates_run_lane_command_import_ids() {
+    let source =
+        include_str!("../../../../packages/opencode-app/src/workflows/run-lane-command.ts");
+    let adapter = TypeScriptAdapter::for_language(LanguageId::TypeScript);
+    let (parsed, ctx) = parse_with_adapter(
+        &adapter,
+        "packages/opencode-app/src/workflows/run-lane-command.ts",
+        source,
+    );
+
+    let imports = adapter.extract_imports(&ctx, &parsed.tree);
+    let unique_ids = imports
+        .iter()
+        .map(|import| import.id)
+        .collect::<HashSet<_>>();
+
+    assert_eq!(
+        imports.len(),
+        unique_ids.len(),
+        "TypeScript import extraction must not emit duplicate import primary-key IDs"
+    );
+    assert!(
+        imports.iter().any(|import| {
+            import.raw_specifier == "../../../shared/src/constants/roles.js"
+                && import.kind == ImportKind::EsmNamed
+                && import.imported_name.as_deref() == Some("DEFAULT_AGENT_REGISTRY")
+        }),
+        "deduplication must preserve concrete import facts from the affected file"
+    );
+    assert!(
+        imports.iter().any(|import| {
+            import.raw_specifier == "../../../shared/src/types/lane.js"
+                && import.kind == ImportKind::EsmNamed
+                && import.imported_name.as_deref() == Some("WorkflowLane")
+                && import.is_type_only
+        }),
+        "deduplication must preserve type-only import facts from the affected file"
+    );
+}
+
+#[test]
 fn file_header_span_matches_fallback_content_when_first_symbol_starts_at_zero() {
     let source = "export function root() {\n  return 1;\n}\n";
     let adapter = TypeScriptAdapter::for_language(LanguageId::TypeScript);
@@ -243,6 +285,28 @@ fn file_header_span_matches_fallback_content_when_first_symbol_starts_at_zero() 
     assert_eq!(header.span.start_byte, 0);
     assert_eq!(header.span.end_byte as usize, header.content.len());
     assert!(!header.content.is_empty());
+}
+
+#[test]
+fn symbol_signatures_truncate_without_splitting_unicode_scalars() {
+    let source = include_str!("../../../../packages/runtime/src/jobs/index-job-runner.ts");
+    let adapter = TypeScriptAdapter::for_language(LanguageId::TypeScript);
+    let (parsed, ctx) = parse_with_adapter(
+        &adapter,
+        "packages/runtime/src/jobs/index-job-runner.ts",
+        source,
+    );
+
+    let symbols = adapter.extract_symbols(&ctx, &parsed.tree);
+
+    assert!(symbols.iter().any(|symbol| {
+        symbol.kind == SymbolKind::Function
+            && symbol.name == "runIndexWorkflow"
+            && symbol
+                .signature
+                .as_deref()
+                .is_some_and(|signature| signature.ends_with('…'))
+    }));
 }
 
 #[test]

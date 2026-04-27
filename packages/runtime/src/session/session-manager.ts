@@ -40,8 +40,8 @@ export class SessionManager {
     const session = createLaneLockedSession(this.repoRoot, lane);
     const assignment = await this.assignmentsRepo.findByAgentId(agent.agentId);
     const envelope: ExecutionEnvelopeState = {
-      ...buildExecutionEnvelope(session, agent),
-      resolvedModel: resolveAgentModel(agent.agentId, assignment),
+      ...buildExecutionEnvelope(this.repoRoot, session, agent),
+      resolvedModel: resolveAgentModel(this.repoRoot, agent.agentId, assignment),
       id: createId("env"),
       createdAt: nowIso(),
     };

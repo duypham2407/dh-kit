@@ -900,7 +900,7 @@ impl QueryEngine for Database {
                         Some(snippet),
                         format!("full-text search match (score: {:.2})", score),
                         EvidenceSource::Storage,
-                        EvidenceConfidence::Partial,
+                        EvidenceConfidence::Grounded,
                     ));
                 }
             }
@@ -2574,7 +2574,7 @@ mod tests {
         let db = setup_db()?;
         seed(&db)?;
 
-        let grounded = db.build_evidence(BuildEvidenceQuery {
+        let grounded = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
             workspace_id: 1,
             query: "how does helper work?".into(),
             intent: "explain".into(),
@@ -2593,7 +2593,7 @@ mod tests {
         assert!(!grounded.evidence.evidence.is_empty());
         assert!(grounded.evidence.bounds.traversal_scope.as_deref() == Some("build_evidence"));
 
-        let insufficient = db.build_evidence(BuildEvidenceQuery {
+        let insufficient = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
             workspace_id: 1,
             query: "how does definitely_missing_subject work?".into(),
             intent: "explain".into(),
@@ -2618,7 +2618,7 @@ mod tests {
             .iter()
             .any(|gap| gap.contains("no indexed evidence")));
 
-        let unsupported = db.build_evidence(BuildEvidenceQuery {
+        let unsupported = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
             workspace_id: 1,
             query: "trace flow through the entire subsystem".into(),
             intent: "explain".into(),
@@ -2667,7 +2667,7 @@ mod tests {
                 "call-hierarchy requests",
             ),
         ] {
-            let out_of_scope = db.build_evidence(BuildEvidenceQuery {
+            let out_of_scope = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
                 workspace_id: 1,
                 query: query_text.into(),
                 intent: "explain".into(),
@@ -2706,7 +2706,7 @@ mod tests {
         let db = setup_db()?;
         seed(&db)?;
 
-        let partial = db.build_evidence(BuildEvidenceQuery {
+        let partial = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
             workspace_id: 1,
             query: "how does run work?".into(),
             intent: "explain".into(),
@@ -2739,7 +2739,7 @@ mod tests {
         seed(&db)?;
 
         for intent in ["trace", "impact", "call_hierarchy", "arbitrary"] {
-            let unsupported = db.build_evidence(BuildEvidenceQuery {
+            let unsupported = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
                 workspace_id: 1,
                 query: "how does helper work?".into(),
                 intent: intent.into(),
@@ -2776,7 +2776,7 @@ mod tests {
         let db = setup_db()?;
         seed(&db)?;
 
-        let partial = db.build_evidence(BuildEvidenceQuery {
+        let partial = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
             workspace_id: 1,
             query: "how do helper and run work?".into(),
             intent: "explain".into(),
@@ -2832,7 +2832,7 @@ mod tests {
             last_freshness_run_id: Some("run-query-stale".into()),
         })?;
 
-        let partial = db.build_evidence(BuildEvidenceQuery {
+        let partial = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
             workspace_id: 1,
             query: "how does helper work?".into(),
             intent: "explain".into(),

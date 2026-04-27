@@ -38,40 +38,29 @@ describe("createMockChatProvider", () => {
 });
 
 describe("createChatProvider", () => {
-  it("falls back to mock when no API keys are set", () => {
-    const original = {
-      openai: process.env.OPENAI_API_KEY,
-      anthropic: process.env.ANTHROPIC_API_KEY,
-    };
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-
-    const openai = createChatProvider({
+  it("creates providers with correct providerId", async () => {
+    const openai = await createChatProvider("", {
       providerId: "openai",
       modelId: "gpt-4o",
       variantId: "default",
     });
-    expect(openai.providerId).toBe("mock");
+    expect(openai.providerId).toBe("openai");
 
-    const anthropic = createChatProvider({
+    const anthropic = await createChatProvider("", {
       providerId: "anthropic",
       modelId: "claude-opus",
       variantId: "default",
     });
-    expect(anthropic.providerId).toBe("mock");
-
-    // Restore
-    if (original.openai !== undefined) process.env.OPENAI_API_KEY = original.openai;
-    if (original.anthropic !== undefined) process.env.ANTHROPIC_API_KEY = original.anthropic;
+    expect(anthropic.providerId).toBe("anthropic");
   });
 
-  it("returns mock for unknown provider", () => {
-    const provider = createChatProvider({
+  it("creates provider even for unknown providerId", async () => {
+    const provider = await createChatProvider("", {
       providerId: "unknown-provider",
       modelId: "x",
       variantId: "y",
     });
-    expect(provider.providerId).toBe("mock");
+    expect(provider.providerId).toBe("unknown-provider");
   });
 
   it("supports retry wrapper with provider metadata", async () => {

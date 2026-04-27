@@ -4,36 +4,91 @@
  */
 
 import type { ResolvedModelSelection } from "../../../shared/src/types/model.js";
-import type { ChatProvider } from "./types.js";
-import { createOpenAIChatProvider } from "./openai-chat.js";
-import { createAnthropicChatProvider } from "./anthropic-chat.js";
-import { createMockChatProvider } from "./mock-chat.js";
+import type { ChatProvider, ChatRequest, ChatResponse } from "./types.js";
+import { createLanguageModel } from "./ai-provider-factory.js";
+import { generateText, streamText } from "ai";
 
 /**
  * Create a ChatProvider for the given model selection.
  *
- * Falls back to mock when the required API key is not set.
+ * This is a compatibility wrapper during the migration to Vercel AI SDK.
  */
-export function createChatProvider(selection: ResolvedModelSelection): ChatProvider {
-  switch (selection.providerId) {
-    case "openai": {
-      if (isKeyAvailable("OPENAI_API_KEY")) {
-        return createOpenAIChatProvider();
+export async function createChatProvider(
+  repoRoot: string,
+  selection: ResolvedModelSelection
+): Promise<ChatProvider> {
+  const model = await createLanguageModel(repoRoot, selection.providerId, selection.modelId);
+
+  return {
+    providerId: selection.providerId,
+    async chat(request: ChatRequest): Promise<ChatResponse> {
+      const response = await generateText({
+        model,
+        messages: request.messages.map((m) => ({
+          role: m.role as "user" | "system" | "assistant",
+          content: m.content,
+        })),
+        maxOutputTokens: request.maxTokens,
+        temperature: request.temperature,
+      });
+
+      return {
+        content: response.text,
+        model: request.model,
+        finishReason: mapFinishReason(response.finishReason),
+        usage: {
+          promptTokens: response.usage.inputTokens ?? 0,
+          completionTokens: response.usage.outputTokens ?? 0,
+          totalTokens: response.usage.totalTokens ?? 0,
+        },
+      };
+    },
+
+    async chatStream(request: ChatRequest, onChunk: (chunk: string) => void): Promise<ChatResponse> {
+      const response = streamText({
+        model,
+        messages: request.messages.map((m) => ({
+          role: m.role as "user" | "system" | "assistant",
+          content: m.content,
+        })),
+        maxOutputTokens: request.maxTokens,
+        temperature: request.temperature,
+      });
+
+      for await (const chunk of response.textStream) {
+        onChunk(chunk);
       }
-      return createMockChatProvider();
+
+      const text = await response.text;
+      const usage = await response.usage;
+      const finishReason = await response.finishReason;
+
+      return {
+        content: text,
+        model: request.model,
+        finishReason: mapFinishReason(finishReason),
+        usage: {
+          promptTokens: usage.inputTokens ?? 0,
+          completionTokens: usage.outputTokens ?? 0,
+          totalTokens: usage.totalTokens ?? 0,
+        },
+      };
     }
-    case "anthropic": {
-      if (isKeyAvailable("ANTHROPIC_API_KEY")) {
-        return createAnthropicChatProvider();
-      }
-      return createMockChatProvider();
-    }
+  };
+}
+
+function mapFinishReason(reason: string): "stop" | "length" | "content_filter" | "tool_calls" | "unknown" {
+  switch (reason) {
+    case "stop":
+    case "length":
+    case "content-filter":
+    case "tool-calls":
+    case "unknown":
+      if (reason === "content-filter") return "content_filter";
+      if (reason === "tool-calls") return "tool_calls";
+      return reason as "stop" | "length" | "unknown";
     default:
-      return createMockChatProvider();
+      return "unknown";
   }
 }
 
-function isKeyAvailable(envVar: string): boolean {
-  const value = process.env[envVar];
-  return typeof value === "string" && value.length > 0;
-}

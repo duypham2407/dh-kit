@@ -210,10 +210,10 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   // Database integrity check
   const integrityResult = checkDatabaseIntegrity(repoRoot);
 
-  const providers = listProviders();
+  const providers = listProviders(repoRoot);
   const modelsByProvider = new Map<string, number>();
   for (const provider of providers) {
-    modelsByProvider.set(provider.providerId, listModels(provider.providerId).length);
+    modelsByProvider.set(provider.providerId, listModels(repoRoot, provider.providerId).length);
   }
   const providersWithoutModels = providers
     .filter((provider) => (modelsByProvider.get(provider.providerId) ?? 0) === 0)

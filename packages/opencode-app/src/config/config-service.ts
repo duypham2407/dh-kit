@@ -10,8 +10,12 @@ import type { AgentRegistryEntry } from "../../../shared/src/types/agent.js";
 import type { EmbeddingProviderConfig } from "../../../shared/src/types/embedding.js";
 import type { SemanticMode } from "../../../shared/src/types/lane.js";
 import { DEFAULT_EMBEDDING_CONFIG } from "../../../shared/src/types/embedding.js";
+import { OpencodeConfigSchema, type OpencodeConfig } from "../../../shared/src/types/config-schema.js";
+import fs from "node:fs";
+import path from "node:path";
 
 export type ConfigService = {
+  loadProviderConfig(): OpencodeConfig["provider"];
   listAgents(): AgentRegistryEntry[];
   getAssignment(agentId: string): Promise<AgentModelAssignment | undefined>;
   listAssignments(): Promise<AgentModelAssignment[]>;
@@ -32,11 +36,26 @@ export function createConfigService(repoRoot: string): ConfigService {
     listAgents: () => DEFAULT_AGENT_REGISTRY,
     getAssignment: (agentId) => repo.findByAgentId(agentId),
     listAssignments: () => repo.list(),
-    listProviders,
-    listModels,
-    listVariants,
+    loadProviderConfig: () => {
+      const configPath = path.join(repoRoot, "opencode.json");
+      if (!fs.existsSync(configPath)) {
+        return undefined;
+      }
+      try {
+        const content = fs.readFileSync(configPath, "utf-8");
+        const json = JSON.parse(content);
+        const parsed = OpencodeConfigSchema.parse(json);
+        return parsed.provider;
+      } catch (e) {
+        console.error("Failed to parse opencode.json:", e);
+        return undefined;
+      }
+    },
+    listProviders: () => listProviders(repoRoot),
+    listModels: (providerId) => listModels(repoRoot, providerId),
+    listVariants: (providerId, modelId) => listVariants(repoRoot, providerId, modelId),
     assignModel: async (input) => {
-      validateResolvedModel(input.agentId, input.providerId, input.modelId, input.variantId);
+      validateResolvedModel(repoRoot, input.agentId, input.providerId, input.modelId, input.variantId);
       return repo.saveAssignment(input);
     },
     getSemanticMode: () => {

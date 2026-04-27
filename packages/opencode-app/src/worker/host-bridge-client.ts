@@ -12,6 +12,7 @@ import {
   type BridgeSessionRunCommandRequest,
 } from "../bridge/dh-jsonrpc-stdio-client.js";
 import { JsonRpcPeerError, type WorkerJsonRpcPeer } from "./worker-jsonrpc-stdio.js";
+import { z } from "zod";
 
 export const HOST_BACKED_BRIDGE_ENGINE_NAME = "dh-engine";
 export const HOST_BACKED_BRIDGE_PROTOCOL_VERSION = "1";
@@ -415,108 +416,118 @@ function boundedBuildEvidenceBudgetFromLimit(limit?: number): { maxFiles: number
   };
 }
 
+const BridgeEvidenceConfidenceSchema = z.enum(["grounded", "partial"]);
+
+const BridgeEvidenceEntrySchema = z.object({
+  kind: z.string(),
+  filePath: z.string().optional(),
+  file_path: z.string().optional(),
+  reason: z.string(),
+  source: z.string(),
+  confidence: BridgeEvidenceConfidenceSchema,
+  symbol: z.string().optional(),
+  lineStart: z.number().optional(),
+  line_start: z.number().optional(),
+  lineEnd: z.number().optional(),
+  line_end: z.number().optional(),
+  snippet: z.string().optional(),
+}).transform((raw) => {
+  const filePath = raw.filePath ?? raw.file_path;
+  if (!filePath) {
+    throw new Error("filePath or file_path is required");
+  }
+  return {
+    kind: raw.kind,
+    filePath,
+    reason: raw.reason,
+    source: raw.source,
+    confidence: raw.confidence,
+    symbol: raw.symbol,
+    lineStart: raw.lineStart ?? raw.line_start,
+    lineEnd: raw.lineEnd ?? raw.line_end,
+    snippet: raw.snippet,
+  };
+});
+
+const BridgeEvidencePacketSchema = z.object({
+  answerState: z.enum(["grounded", "partial", "insufficient", "unsupported"]).optional(),
+  answer_state: z.enum(["grounded", "partial", "insufficient", "unsupported"]).optional(),
+  questionClass: z.string().optional(),
+  question_class: z.string().optional(),
+  subject: z.string(),
+  summary: z.string(),
+  conclusion: z.string(),
+  evidence: z.array(BridgeEvidenceEntrySchema).default([]),
+  gaps: z.array(z.string()).default([]),
+  bounds: z.object({
+    hopCount: z.number().optional(),
+    hop_count: z.number().optional(),
+    nodeLimit: z.number().optional(),
+    node_limit: z.number().optional(),
+    traversalScope: z.string().optional(),
+    traversal_scope: z.string().optional(),
+    stopReason: z.string().optional(),
+    stop_reason: z.string().optional(),
+  }).optional().default({}),
+}).transform((raw) => {
+  const answerState = raw.answerState ?? raw.answer_state;
+  const questionClass = raw.questionClass ?? raw.question_class;
+  if (!answerState || !questionClass) {
+    throw new Error("Missing answerState or questionClass in EvidencePacket");
+  }
+  return {
+    answerState,
+    questionClass,
+    subject: raw.subject,
+    summary: raw.summary,
+    conclusion: raw.conclusion,
+    evidence: raw.evidence,
+    gaps: raw.gaps,
+    bounds: {
+      hopCount: raw.bounds?.hopCount ?? raw.bounds?.hop_count,
+      nodeLimit: raw.bounds?.nodeLimit ?? raw.bounds?.node_limit,
+      traversalScope: raw.bounds?.traversalScope ?? raw.bounds?.traversal_scope,
+      stopReason: raw.bounds?.stopReason ?? raw.bounds?.stop_reason,
+    },
+  };
+});
+
 function parseEvidencePacket(value: unknown): BridgeAskResult["evidence"] {
   if (value === null || value === undefined) {
     return null;
   }
-  const raw = asRecord(value);
-  const answerState = asBridgeAnswerState(raw.answerState ?? raw.answer_state);
-  const questionClass = asString(raw.questionClass) ?? asString(raw.question_class);
-  const subject = asString(raw.subject);
-  const summary = asString(raw.summary);
-  const conclusion = asString(raw.conclusion);
-  if (!answerState || !questionClass || !subject || !summary || !conclusion) {
-    return null;
+  const result = BridgeEvidencePacketSchema.safeParse(value);
+  if (!result.success) {
+    return null; // Fallback to null if invalid, preserving previous manual parsing behaviour which also returned null
   }
-
-  const bounds = asRecord(raw.bounds);
-  const hopCount = asNumber(bounds.hopCount) ?? asNumber(bounds.hop_count);
-  const nodeLimit = asNumber(bounds.nodeLimit) ?? asNumber(bounds.node_limit);
-
-  return {
-    answerState,
-    questionClass,
-    subject,
-    summary,
-    conclusion,
-    evidence: asUnknownArray(raw.evidence)?.map(parseEvidenceEntry).filter(isNotNull) ?? [],
-    gaps: asStringArray(raw.gaps) ?? [],
-    bounds: {
-      hopCount: hopCount ?? undefined,
-      nodeLimit: nodeLimit ?? undefined,
-      traversalScope: asString(bounds.traversalScope) ?? asString(bounds.traversal_scope) ?? undefined,
-      stopReason: asString(bounds.stopReason) ?? asString(bounds.stop_reason) ?? undefined,
-    },
-  };
+  return result.data as BridgeAskResult["evidence"];
 }
 
-function parseEvidenceEntry(value: unknown): BridgeAskResult["evidence"] extends infer E
-  ? E extends { evidence: Array<infer Entry> }
-    ? Entry | null
-    : never
-  : never {
-  const raw = asRecord(value);
-  const kind = asString(raw.kind);
-  const filePath = asString(raw.filePath) ?? asString(raw.file_path);
-  const reason = asString(raw.reason);
-  const source = asString(raw.source);
-  const confidence = asEvidenceConfidence(raw.confidence);
-  if (!kind || !filePath || !reason || !source || !confidence) {
-    return null;
-  }
-  const lineStart = asNumber(raw.lineStart) ?? asNumber(raw.line_start);
-  const lineEnd = asNumber(raw.lineEnd) ?? asNumber(raw.line_end);
-  return {
-    kind,
-    filePath,
-    reason,
-    source,
-    confidence,
-    symbol: asString(raw.symbol) ?? undefined,
-    lineStart: lineStart ?? undefined,
-    lineEnd: lineEnd ?? undefined,
-    snippet: asString(raw.snippet) ?? undefined,
-  };
-}
+const BridgeLanguageCapabilityStateSchema = z.enum(["supported", "partial", "best-effort", "unsupported", "best_effort"]).transform((val) => val === "best_effort" ? "best-effort" : val);
+
+const BridgeLanguageSummarySchema = z.object({
+  language: z.string(),
+  state: BridgeLanguageCapabilityStateSchema,
+  reason: z.string(),
+  parserBacked: z.boolean(),
+});
+
+const BridgeLanguageCapabilitySummarySchema = z.object({
+  capability: z.string(),
+  weakestState: BridgeLanguageCapabilityStateSchema,
+  retrievalOnly: z.boolean(),
+  languages: z.array(BridgeLanguageSummarySchema).default([]),
+});
 
 function parseLanguageCapabilitySummary(value: unknown): BridgeAskResult["languageCapabilitySummary"] {
   if (value === null || value === undefined) {
     return null;
   }
-  const raw = asRecord(value);
-  const capability = asString(raw.capability);
-  const weakestState = asCapabilityState(raw.weakestState);
-  const retrievalOnly = asBoolean(raw.retrievalOnly);
-  if (!capability || !weakestState || retrievalOnly === null) {
+  const result = BridgeLanguageCapabilitySummarySchema.safeParse(value);
+  if (!result.success) {
     return null;
   }
-  return {
-    capability,
-    weakestState,
-    retrievalOnly,
-    languages: asUnknownArray(raw.languages)?.map(parseLanguageSummary).filter(isNotNull) ?? [],
-  };
-}
-
-function parseLanguageSummary(value: unknown): BridgeAskResult["languageCapabilitySummary"] extends infer S
-  ? S extends { languages: Array<infer Entry> }
-    ? Entry | null
-    : never
-  : never {
-  const raw = asRecord(value);
-  const language = asString(raw.language);
-  const state = asCapabilityState(raw.state);
-  const reason = asString(raw.reason);
-  const parserBacked = asBoolean(raw.parserBacked);
-  if (!language || !state || !reason || parserBacked === null) {
-    return null;
-  }
-  return {
-    language,
-    state,
-    reason,
-    parserBacked,
-  };
+  return result.data as BridgeAskResult["languageCapabilitySummary"];
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -534,21 +545,6 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function asBoolean(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
-}
-
-function asUnknownArray(value: unknown): unknown[] | null {
-  return Array.isArray(value) ? value : null;
-}
-
-function asStringArray(value: unknown): string[] | null {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    return null;
-  }
-  return value as string[];
-}
-
 function asBridgeAnswerState(value: unknown): BridgeAskResult["answerState"] | null {
   if (value === "grounded" || value === "partial" || value === "insufficient" || value === "unsupported") {
     return value;
@@ -556,23 +552,10 @@ function asBridgeAnswerState(value: unknown): BridgeAskResult["answerState"] | n
   return null;
 }
 
-function asEvidenceConfidence(value: unknown): "grounded" | "partial" | null {
-  if (value === "grounded" || value === "partial") {
-    return value;
-  }
-  return null;
-}
-
-function asCapabilityState(value: unknown): "supported" | "partial" | "best-effort" | "unsupported" | null {
-  if (value === "supported" || value === "partial" || value === "best-effort" || value === "unsupported") {
-    return value;
-  }
-  if (value === "best_effort") {
-    return "best-effort";
-  }
-  return null;
-}
-
 function isNotNull<T>(value: T | null): value is T {
   return value !== null;
+}
+
+function asUnknownArray(value: unknown): unknown[] | null {
+  return Array.isArray(value) ? value : null;
 }

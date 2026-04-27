@@ -74,4 +74,5 @@ export function createChatProviderError(input: {
 export type ChatProvider = {
   readonly providerId: string;
   chat(request: ChatRequest): Promise<ChatResponse>;
+  chatStream?(request: ChatRequest, onChunk: (chunk: string) => void): Promise<ChatResponse>;
 };

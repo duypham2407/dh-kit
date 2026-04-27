@@ -21,7 +21,7 @@ function defaultMcpIntentForStage(stage: string): string {
   return "codebase";
 }
 
-export function buildExecutionEnvelope(session: SessionState, agent: AgentRegistryEntry): ExecutionEnvelopeState {
+export function buildExecutionEnvelope(repoRoot: string, session: SessionState, agent: AgentRegistryEntry): ExecutionEnvelopeState {
   const base: ExecutionEnvelopeState = {
     id: createId("env"),
     sessionId: session.sessionId,
@@ -29,7 +29,7 @@ export function buildExecutionEnvelope(session: SessionState, agent: AgentRegist
     role: agent.role,
     agentId: agent.agentId,
     stage: session.currentStage,
-    resolvedModel: chooseAgentModel(agent.agentId),
+    resolvedModel: chooseAgentModel(repoRoot, agent.agentId),
     activeSkills: [],
     activeMcps: [],
     requiredTools: [],

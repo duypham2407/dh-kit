@@ -46,7 +46,7 @@ impl WorkerSupervisorConfig {
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             health_timeout: DEFAULT_HEALTH_TIMEOUT,
             shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
-            max_replay_safe_restarts: 1,
+            max_replay_safe_restarts: 3,
         }
     }
 
@@ -663,6 +663,17 @@ impl WorkerSupervisor {
 
             if jsonrpc_message_method(&message) == Some("dh.ready") {
                 self.ready_seen = true;
+                continue;
+            }
+
+            if jsonrpc_message_method(&message) == Some("event.tool.outputChunk") {
+                if let Some(params) = message.get("params") {
+                    if let Some(chunk) = params.get("chunk").and_then(|c| c.as_str()) {
+                        use std::io::Write;
+                        print!("{}", chunk);
+                        let _ = std::io::stdout().flush();
+                    }
+                }
                 continue;
             }
 

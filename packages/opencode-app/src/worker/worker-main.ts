@@ -5,6 +5,7 @@ import {
 } from "./host-bridge-client.js";
 import { WorkerCommandRouter, type WorkerRunCommandParams } from "./worker-command-router.js";
 import { JsonRpcResponseError, WorkerJsonRpcPeer } from "./worker-jsonrpc-stdio.js";
+import { z } from "zod";
 
 const WORKER_PROTOCOL_VERSION = "1";
 
@@ -160,56 +161,54 @@ async function markReady(runtime: WorkerRuntime): Promise<void> {
   });
 }
 
+const InitializeParamsSchema = z.object({
+  protocolVersion: z.string().optional(),
+  workspaceRoot: z.string().optional(),
+  platform: z.string().optional(),
+  topology: z.string().optional(),
+  supportBoundary: z.string().optional(),
+  lifecycleAuthority: z.string().optional(),
+  hostIdentity: z.object({
+    name: z.string().optional(),
+    version: z.string().optional(),
+  }).optional(),
+});
+
+const WorkerRunCommandParamsSchema = z.object({
+  command: z.enum(["ask", "explain", "trace"]).optional(),
+  kind: z.enum(["ask", "explain", "trace"]).optional(),
+  input: z.string().optional(),
+  prompt: z.string().optional(),
+  query: z.string().optional(),
+  workspaceRoot: z.string().optional(),
+  repoRoot: z.string().optional(),
+  resumeSessionId: z.string().optional(),
+  outputMode: z.enum(["text", "json"]).optional(),
+  replaySafety: z.enum(["replay_safe_read_only", "replay_unsafe", "uncertain"]).optional(),
+});
+
 function asInitializeParams(value: unknown): InitializeParams {
-  const raw = asRecord(value);
-  const hostIdentity = asRecord(raw.hostIdentity);
-  return {
-    protocolVersion: asString(raw.protocolVersion),
-    workspaceRoot: asString(raw.workspaceRoot),
-    platform: asString(raw.platform),
-    topology: asString(raw.topology),
-    supportBoundary: asString(raw.supportBoundary),
-    lifecycleAuthority: asString(raw.lifecycleAuthority),
-    hostIdentity: Object.keys(hostIdentity).length > 0
-      ? {
-        name: asString(hostIdentity.name),
-        version: asString(hostIdentity.version),
-      }
-      : undefined,
-  };
+  const result = InitializeParamsSchema.safeParse(value);
+  if (!result.success) {
+    throw new JsonRpcResponseError({
+      code: -32602,
+      message: `Invalid InitializeParams: ${result.error.message}`,
+      data: result.error.format(),
+    });
+  }
+  return result.data;
 }
 
 function asRunCommandParams(value: unknown): WorkerRunCommandParams {
-  const raw = asRecord(value);
-  return {
-    command: asCommandKind(raw.command),
-    kind: asCommandKind(raw.kind),
-    input: asString(raw.input),
-    prompt: asString(raw.prompt),
-    query: asString(raw.query),
-    workspaceRoot: asString(raw.workspaceRoot),
-    repoRoot: asString(raw.repoRoot),
-    resumeSessionId: asString(raw.resumeSessionId),
-    outputMode: raw.outputMode === "text" || raw.outputMode === "json" ? raw.outputMode : undefined,
-    replaySafety: raw.replaySafety === "replay_safe_read_only" || raw.replaySafety === "replay_unsafe" || raw.replaySafety === "uncertain"
-      ? raw.replaySafety
-      : undefined,
-  };
-}
-
-function asCommandKind(value: unknown): WorkerRunCommandParams["command"] {
-  return value === "ask" || value === "explain" || value === "trace" ? value : undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
+  const result = WorkerRunCommandParamsSchema.safeParse(value);
+  if (!result.success) {
+    throw new JsonRpcResponseError({
+      code: -32602,
+      message: `Invalid session.runCommand params: ${result.error.message}`,
+      data: result.error.format(),
+    });
   }
-  return value as Record<string, unknown>;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
+  return result.data;
 }
 
 if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {

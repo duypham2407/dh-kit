@@ -126,7 +126,7 @@ export async function runLaneWorkflow(input: {
   const checkpointsRepo = new SessionCheckpointsRepo(input.repoRoot);
   const sessionsRepo = new SessionsRepo(input.repoRoot);
 
-  const baseProvider = input.provider ?? createChatProvider(envelope.resolvedModel);
+  const baseProvider = input.provider ?? await createChatProvider(input.repoRoot, envelope.resolvedModel);
   const provider = createRetryingChatProvider(baseProvider, {
     audit: {
       onRetryAttempt: async (attempt) => {

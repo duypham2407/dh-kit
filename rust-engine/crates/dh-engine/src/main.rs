@@ -67,6 +67,14 @@ enum Commands {
         #[arg(long, default_value = ".")]
         workspace: PathBuf,
     },
+    Doctor {
+        #[arg(long, default_value = ".")]
+        workspace: PathBuf,
+        #[arg(long = "node-runtime", default_value = "node")]
+        node_runtime: PathBuf,
+        #[arg(long = "worker-entry")]
+        worker_entry: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -388,6 +396,100 @@ fn main() -> Result<()> {
         Commands::Serve { workspace } => {
             let workspace = workspace.canonicalize()?;
             bridge::run_bridge_server(workspace)?;
+        }
+        Commands::Doctor {
+            workspace,
+            node_runtime,
+            worker_entry,
+        } => {
+            println!("== DH Engine Doctor ==");
+            
+            // 1. Environment
+            println!("\n[1] Environment");
+            println!("OS: {}", std::env::consts::OS);
+            println!("Architecture: {}", std::env::consts::ARCH);
+            println!("Current Dir: {}", std::env::current_dir()?.display());
+            let workspace = workspace.canonicalize().unwrap_or(workspace);
+            println!("Workspace: {}", workspace.display());
+
+            // 2. Database
+            println!("\n[2] Database Status");
+            let db_path = workspace.join(DEFAULT_DB_NAME);
+            if db_path.exists() {
+                println!("Database File: {} (exists)", db_path.display());
+                match Database::new(&db_path) {
+                    Ok(db) => {
+                        if let Err(e) = db.initialize() {
+                            println!("ERROR: Failed to initialize DB: {}", e);
+                        } else {
+                            match db.get_state(1) {
+                                Ok(Some(state)) => {
+                                    println!("Status: {:?}", state.status);
+                                    println!("Indexed Files: {}", state.indexed_files);
+                                }
+                                Ok(None) => println!("ERROR: No state found for workspace_id=1"),
+                                Err(e) => println!("ERROR: Failed to get state: {}", e),
+                            }
+                        }
+                    }
+                    Err(e) => println!("ERROR: Failed to open DB: {}", e),
+                }
+            } else {
+                println!("Database File: {} (not found, run `dh index`)", db_path.display());
+            }
+
+            // 3. TS Worker
+            println!("\n[3] TS Worker Health");
+            let worker_path = worker_entry.unwrap_or_else(|| {
+                std::env::current_dir().unwrap().join("dist").join("ts-worker").join("worker.mjs")
+            });
+            println!("Node Runtime: {}", node_runtime.display());
+            println!("Worker Entry: {}", worker_path.display());
+            if !worker_path.exists() {
+                println!("ERROR: Worker entry file not found!");
+            } else {
+                let launch_request = crate::runtime_launch::RuntimeLaunchRequest::new(&node_runtime, &worker_path);
+                let launchability = crate::runtime_launch::check_worker_launchability(&launch_request);
+                if !launchability.is_launchable() {
+                    println!("ERROR: Worker is not launchable: {:?}", launchability.issue);
+                } else {
+                    println!("Worker is launchable. Testing supervisor startup...");
+                    let config = crate::worker_supervisor::WorkerSupervisorConfig::new(launch_request, workspace.clone());
+                    let mut supervisor = crate::worker_supervisor::WorkerSupervisor::new(config);
+                    
+                    let start = std::time::Instant::now();
+                    match supervisor.launch() {
+                        Ok(report) => {
+                            let duration = start.elapsed();
+                            println!("SUCCESS: Worker launched and ready in {:?}", duration);
+                            println!("Worker state: {:?}", report.worker_state);
+                            println!("Health state: {:?}", report.health_state);
+                        }
+                        Err(e) => {
+                            println!("ERROR: Failed to launch worker: {}", e);
+                        }
+                    }
+                    let _ = supervisor.shutdown();
+                }
+            }
+            
+            // 4. Configuration
+            println!("\n[4] API Configurations");
+            let api_keys = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "PROXYPAL_API_KEY"];
+            for key in api_keys {
+                match std::env::var(key) {
+                    Ok(val) => {
+                        let masked = if val.len() > 4 {
+                            format!("{}...{}", &val[0..4], &val[val.len()-4..])
+                        } else {
+                            "***".to_string()
+                        };
+                        println!("{}: SET ({})", key, masked);
+                    }
+                    Err(_) => println!("{}: NOT SET", key),
+                }
+            }
+            println!("\nDoctor check complete.");
         }
     }
 

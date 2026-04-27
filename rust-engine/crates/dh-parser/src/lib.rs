@@ -14,7 +14,7 @@ pub mod registry;
 use adapters::{
     go::GoAdapter, python::PythonAdapter, rust::RustAdapter, typescript::TypeScriptAdapter,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use dh_types::{
     CallEdge, Chunk, ExportFact, FileChangeEvent, Import, IndexProgressEvent, LanguageId,
     ParseDiagnostic, ParseStatus, Reference, Symbol,
@@ -90,9 +90,25 @@ pub fn extract_file_facts(
     language: LanguageId,
     ctx: &ExtractionContext<'_>,
 ) -> Result<ExtractedFacts> {
-    let adapter = registry
-        .by_language(language)
-        .ok_or_else(|| anyhow!("no adapter registered for language {language:?}"))?;
+    let adapter = match registry.by_language(language) {
+        Some(adapter) => adapter,
+        None => {
+            return Ok(ExtractedFacts {
+                parse_status: ParseStatus::Skipped,
+                parse_error: None,
+                has_errors: false,
+                symbols: Vec::new(),
+                imports: Vec::new(),
+                exports: Vec::new(),
+                call_edges: Vec::new(),
+                references: Vec::new(),
+                chunks: Vec::new(),
+                diagnostics: Vec::new(),
+                structure_fingerprint: String::new(),
+                public_api_fingerprint: String::new(),
+            });
+        }
+    };
 
     let parsed = {
         let parser = pool

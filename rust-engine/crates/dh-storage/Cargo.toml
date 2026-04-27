@@ -8,6 +8,7 @@ license.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 rusqlite.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 dh-types = { path = "../dh-types" }
 

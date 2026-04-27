@@ -373,6 +373,7 @@ dependencies = [
  "anyhow",
  "dh-types",
  "rusqlite",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tracing",
@@ -383,6 +384,7 @@ name = "dh-types"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]

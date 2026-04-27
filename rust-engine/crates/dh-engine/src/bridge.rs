@@ -2145,7 +2145,7 @@ mod tests {
         seed(&db)?;
 
         let mk = |method: &str, params: Value| RpcRequest {
-            id: json!(1),
+            id: Some(json!(1)),
             method: method.into(),
             params,
         };
@@ -2371,7 +2371,7 @@ mod tests {
             tmp.path(),
             &db,
             RpcRequest {
-                id: json!(42),
+                id: Some(json!(42)),
                 method: "dh.initialize".into(),
                 params: json!({}),
             },
@@ -2418,7 +2418,7 @@ mod tests {
             tmp.path(),
             &db,
             RpcRequest {
-                id: json!(43),
+                id: Some(json!(43)),
                 method: "dh.initialize".into(),
                 params: json!({}),
             },
@@ -2491,7 +2491,7 @@ mod tests {
         let router = BridgeRpcRouter::new(tmp.path(), &db);
 
         let response = router.route_worker_query(RpcRequest {
-            id: json!(44),
+            id: Some(json!(44)),
             method: "query.definition".into(),
             params: json!({ "symbol": "helper", "workspaceId": 1 }),
         });
@@ -2512,7 +2512,7 @@ mod tests {
         let router = BridgeRpcRouter::new(tmp.path(), &db);
 
         let response = router.route_worker_query(RpcRequest {
-            id: json!(46),
+            id: Some(json!(46)),
             method: "query.buildEvidence".into(),
             params: json!({
                 "query": "how does helper work?",
@@ -2556,7 +2556,7 @@ mod tests {
 
         for intent in ["trace", "impact", "call_hierarchy", "arbitrary"] {
             let response = router.route_worker_query(RpcRequest {
-                id: json!(50),
+                id: Some(json!(50)),
                 method: "query.buildEvidence".into(),
                 params: json!({
                     "query": "how does helper work?",
@@ -2597,7 +2597,7 @@ mod tests {
         let router = BridgeRpcRouter::new(tmp.path(), &db);
 
         let response = router.route_worker_query(RpcRequest {
-            id: json!(47),
+            id: Some(json!(47)),
             method: "query.buildEvidence".into(),
             params: json!({
                 "query": "how does mystery_symbol work?",
@@ -2660,7 +2660,7 @@ mod tests {
         })?;
 
         let partial = router.route_worker_query(RpcRequest {
-            id: json!(48),
+            id: Some(json!(48)),
             method: "query.buildEvidence".into(),
             params: json!({
                 "query": "how does run work?",
@@ -2691,7 +2691,7 @@ mod tests {
                 .is_some_and(|value| value.contains("partial index coverage")))));
 
         let insufficient = router.route_worker_query(RpcRequest {
-            id: json!(49),
+            id: Some(json!(49)),
             method: "query.buildEvidence".into(),
             params: json!({
                 "query": "how does definitely_missing_subject work?",
@@ -2733,7 +2733,7 @@ mod tests {
             "arbitrary.forward",
         ] {
             let response = router.route_worker_query(RpcRequest {
-                id: json!(45),
+                id: Some(json!(45)),
                 method: method.into(),
                 params: json!({}),
             });
@@ -2761,7 +2761,7 @@ mod tests {
                 tmp.path(),
                 &db,
                 RpcRequest {
-                    id: json!(72),
+                    id: Some(json!(72)),
                     method: method.into(),
                     params: json!({}),
                 },
@@ -2789,7 +2789,7 @@ mod tests {
             tmp.path(),
             &db,
             RpcRequest {
-                id: json!(7),
+                id: Some(json!(7)),
                 method: "dh.initialized".into(),
                 params: json!({}),
             },
@@ -2801,7 +2801,7 @@ mod tests {
             tmp.path(),
             &db,
             RpcRequest {
-                id: json!(8),
+                id: Some(json!(8)),
                 method: "dh.ready".into(),
                 params: json!({}),
             },
@@ -2814,7 +2814,7 @@ mod tests {
             tmp.path(),
             &db,
             RpcRequest {
-                id: json!(9),
+                id: Some(json!(9)),
                 method: "runtime.ping".into(),
                 params: json!({}),
             },
@@ -2826,7 +2826,7 @@ mod tests {
             tmp.path(),
             &db,
             RpcRequest {
-                id: json!(10),
+                id: Some(json!(10)),
                 method: "session.runCommand".into(),
                 params: json!({
                     "query": {
@@ -2846,7 +2846,7 @@ mod tests {
             tmp.path(),
             &db,
             RpcRequest {
-                id: json!(12),
+                id: Some(json!(12)),
                 method: "session.runCommand".into(),
                 params: json!({
                     "query": {
@@ -2878,7 +2878,7 @@ mod tests {
             tmp.path(),
             &db,
             RpcRequest {
-                id: json!(13),
+                id: Some(json!(13)),
                 method: "session.runCommand".into(),
                 params: json!({
                     "query": {
@@ -2898,7 +2898,7 @@ mod tests {
             tmp.path(),
             &db,
             RpcRequest {
-                id: json!(11),
+                id: Some(json!(11)),
                 method: "dh.shutdown".into(),
                 params: json!({}),
             },
@@ -2919,7 +2919,7 @@ mod tests {
                 tmp.path(),
                 &db,
                 RpcRequest {
-                    id: json!(71),
+                    id: Some(json!(71)),
                     method: "query.relationship".into(),
                     params: json!({
                         "relation": relation,

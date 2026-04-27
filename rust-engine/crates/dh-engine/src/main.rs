@@ -9,7 +9,9 @@ mod benchmark;
 mod bridge;
 mod host_commands;
 mod host_lifecycle;
+mod hooks;
 mod runtime_launch;
+mod session_manager;
 mod worker_protocol;
 mod worker_supervisor;
 

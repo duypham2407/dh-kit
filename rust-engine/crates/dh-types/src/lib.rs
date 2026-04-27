@@ -870,3 +870,334 @@ pub struct SemanticMatch {
     pub span: Span,
 }
 
+// ─── Runtime State: Session & Lane ────────────────────────────────────────────
+
+pub type SessionId = String;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowLane {
+    Quick,
+    Delivery,
+    Migration,
+}
+
+impl WorkflowLane {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Quick => "quick",
+            Self::Delivery => "delivery",
+            Self::Migration => "migration",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "quick" => Some(Self::Quick),
+            "delivery" => Some(Self::Delivery),
+            "migration" => Some(Self::Migration),
+            _ => None,
+        }
+    }
+
+    pub fn stage_chain(self) -> &'static [&'static str] {
+        match self {
+            Self::Quick => QUICK_STAGES,
+            Self::Delivery => DELIVERY_STAGES,
+            Self::Migration => MIGRATION_STAGES,
+        }
+    }
+}
+
+pub const QUICK_STAGES: &[&str] = &[
+    "quick_intake",
+    "quick_plan",
+    "quick_execute",
+    "quick_verify",
+    "quick_complete",
+];
+
+pub const DELIVERY_STAGES: &[&str] = &[
+    "delivery_intake",
+    "delivery_analysis",
+    "delivery_solution",
+    "delivery_task_split",
+    "delivery_execute",
+    "delivery_review",
+    "delivery_verify",
+    "delivery_complete",
+];
+
+pub const MIGRATION_STAGES: &[&str] = &[
+    "migration_intake",
+    "migration_baseline",
+    "migration_strategy",
+    "migration_task_split",
+    "migration_execute",
+    "migration_review",
+    "migration_verify",
+    "migration_complete",
+];
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStatus {
+    Pending,
+    Active,
+    Paused,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticMode {
+    Always,
+    OnDemand,
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolEnforcementLevel {
+    /// Block all non-whitelisted tools.
+    VeryHard,
+    /// Warn on non-standard usage, allow override.
+    Hard,
+    /// Log only, no enforcement.
+    Soft,
+    /// No enforcement.
+    Off,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionState {
+    pub id: SessionId,
+    pub repo_root: String,
+    pub lane: WorkflowLane,
+    pub lane_locked: bool,
+    pub current_stage: String,
+    pub status: SessionStatus,
+    pub semantic_mode: SemanticMode,
+    pub tool_enforcement_level: ToolEnforcementLevel,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LaneSource {
+    UserExplicit,
+    AutoRouted,
+    Resumed,
+}
+
+// ─── Runtime State: Workflow Stages ───────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StageStatus {
+    Pending,
+    InProgress,
+    Passed,
+    Failed,
+    Blocked,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GateStatus {
+    Pending,
+    Passed,
+    Failed,
+    Waived,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowStageState {
+    pub session_id: SessionId,
+    pub lane: WorkflowLane,
+    pub stage: String,
+    pub stage_status: StageStatus,
+    pub previous_stage: Option<String>,
+    pub gate_status: GateStatus,
+    pub updated_at_unix_ms: i64,
+}
+
+// ─── Runtime State: Hook System ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum HookName {
+    ModelOverride,
+    PreToolExec,
+    PreAnswer,
+    SkillActivation,
+    McpRouting,
+    SessionStateInjection,
+}
+
+impl HookName {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ModelOverride => "model_override",
+            Self::PreToolExec => "pre_tool_exec",
+            Self::PreAnswer => "pre_answer",
+            Self::SkillActivation => "skill_activation",
+            Self::McpRouting => "mcp_routing",
+            Self::SessionStateInjection => "session_state_injection",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HookDecision {
+    Allow,
+    Block,
+    Modify,
+    Passthrough,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookInvocationLog {
+    pub id: String,
+    pub session_id: SessionId,
+    pub envelope_id: Option<String>,
+    pub hook_name: HookName,
+    pub input_json: serde_json::Value,
+    pub output_json: serde_json::Value,
+    pub decision: HookDecision,
+    pub reason: String,
+    pub duration_ms: u64,
+    pub created_at_unix_ms: i64,
+}
+
+// ─── Runtime State: Execution Envelope ────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRole {
+    Coordinator,
+    ProductLead,
+    SolutionLead,
+    Implementer,
+    CodeReviewer,
+    QaAgent,
+    QuickAgent,
+}
+
+impl AgentRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Coordinator => "coordinator",
+            Self::ProductLead => "product_lead",
+            Self::SolutionLead => "solution_lead",
+            Self::Implementer => "implementer",
+            Self::CodeReviewer => "code_reviewer",
+            Self::QaAgent => "qa_agent",
+            Self::QuickAgent => "quick_agent",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedModel {
+    pub provider_id: String,
+    pub model_id: String,
+    pub variant_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionEnvelope {
+    pub id: String,
+    pub session_id: SessionId,
+    pub lane: WorkflowLane,
+    pub role: AgentRole,
+    pub agent_id: String,
+    pub stage: String,
+    pub work_item_id: Option<String>,
+    pub resolved_model: Option<ResolvedModel>,
+    pub active_skills: Vec<String>,
+    pub active_mcps: Vec<String>,
+    pub created_at_unix_ms: i64,
+}
+
+// ─── Runtime State: Work Items ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkItemStatus {
+    Backlog,
+    InProgress,
+    InReview,
+    Done,
+    Blocked,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkItem {
+    pub id: String,
+    pub session_id: SessionId,
+    pub title: String,
+    pub status: WorkItemStatus,
+    pub assigned_role: Option<AgentRole>,
+    pub parent_id: Option<String>,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+}
+
+// ─── Runtime State: Audit Logging ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolUsageAudit {
+    pub id: String,
+    pub session_id: SessionId,
+    pub envelope_id: String,
+    pub tool_name: String,
+    pub decision: HookDecision,
+    pub reason: String,
+    pub role: AgentRole,
+    pub stage: String,
+    pub created_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActivationAudit {
+    pub id: String,
+    pub session_id: SessionId,
+    pub envelope_id: String,
+    pub skill_id: String,
+    pub activated: bool,
+    pub reason: String,
+    pub role: AgentRole,
+    pub stage: String,
+    pub created_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpRouteAudit {
+    pub id: String,
+    pub session_id: SessionId,
+    pub envelope_id: String,
+    pub mcp_id: String,
+    pub priority: u32,
+    pub allowed: bool,
+    pub reason: String,
+    pub role: AgentRole,
+    pub stage: String,
+    pub created_at_unix_ms: i64,
+}
+

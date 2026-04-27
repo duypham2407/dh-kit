@@ -1,9 +1,12 @@
-//! SQLite storage layer for DH index facts.
+//! SQLite storage layer for DH index facts and runtime state.
 
 use anyhow::{Context, Result};
 use dh_types::{
-    Chunk, ChunkId, EmbeddingRecord, EmbeddingStatus, File, FileId, FreshnessReason,
-    FreshnessState, IndexRunStatus, IndexState, LanguageId, ParseStatus, Span, Symbol, SymbolId, SymbolKind, Visibility, WorkspaceId,
+    AgentRole, Chunk, ChunkId, EmbeddingRecord, EmbeddingStatus, ExecutionEnvelope, File, FileId,
+    FreshnessReason, FreshnessState, GateStatus, HookDecision, HookInvocationLog, HookName,
+    IndexRunStatus, IndexState, LanguageId, ParseStatus, SemanticMode, SessionState,
+    SessionStatus, Span, StageStatus, Symbol, SymbolId, SymbolKind, ToolEnforcementLevel,
+    Visibility, WorkflowLane, WorkflowStageState, WorkspaceId,
 };
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -237,6 +240,61 @@ impl Database {
               finished_at_unix_ms INTEGER,
               message TEXT
             );
+
+            -- Runtime State: Sessions
+            CREATE TABLE IF NOT EXISTS sessions (
+              id TEXT PRIMARY KEY,
+              repo_root TEXT NOT NULL,
+              lane TEXT NOT NULL CHECK(lane IN ('quick','delivery','migration')),
+              lane_locked INTEGER NOT NULL DEFAULT 1,
+              current_stage TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              semantic_mode TEXT NOT NULL DEFAULT 'always',
+              tool_enforcement_level TEXT NOT NULL DEFAULT 'very_hard',
+              created_at_unix_ms INTEGER NOT NULL,
+              updated_at_unix_ms INTEGER NOT NULL
+            );
+
+            -- Runtime State: Workflow Stage Transitions
+            CREATE TABLE IF NOT EXISTS workflow_stages (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+              lane TEXT NOT NULL,
+              stage TEXT NOT NULL,
+              stage_status TEXT NOT NULL DEFAULT 'pending',
+              previous_stage TEXT,
+              gate_status TEXT NOT NULL DEFAULT 'pending',
+              updated_at_unix_ms INTEGER NOT NULL
+            );
+
+            -- Runtime State: Hook Invocation Audit Logs
+            CREATE TABLE IF NOT EXISTS hook_invocation_logs (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL,
+              envelope_id TEXT,
+              hook_name TEXT NOT NULL,
+              input_json TEXT NOT NULL,
+              output_json TEXT NOT NULL,
+              decision TEXT NOT NULL CHECK(decision IN ('allow','block','modify','passthrough')),
+              reason TEXT NOT NULL,
+              duration_ms INTEGER NOT NULL,
+              created_at_unix_ms INTEGER NOT NULL
+            );
+
+            -- Runtime State: Execution Envelopes
+            CREATE TABLE IF NOT EXISTS execution_envelopes (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+              lane TEXT NOT NULL,
+              role TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              stage TEXT NOT NULL,
+              work_item_id TEXT,
+              resolved_model_json TEXT,
+              active_skills_json TEXT NOT NULL DEFAULT '[]',
+              active_mcps_json TEXT NOT NULL DEFAULT '[]',
+              created_at_unix_ms INTEGER NOT NULL
+            );
             ",
         )?;
         Ok(())
@@ -269,6 +327,13 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_embedding_jobs_status ON embedding_jobs(status, updated_at_unix_ms);
             CREATE INDEX IF NOT EXISTS idx_index_runs_workspace_status ON index_runs(workspace_id, status);
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_repo ON sessions(repo_root);
+            CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+            CREATE INDEX IF NOT EXISTS idx_workflow_stages_session ON workflow_stages(session_id);
+            CREATE INDEX IF NOT EXISTS idx_hook_logs_session ON hook_invocation_logs(session_id);
+            CREATE INDEX IF NOT EXISTS idx_hook_logs_hook ON hook_invocation_logs(hook_name);
+            CREATE INDEX IF NOT EXISTS idx_envelopes_session ON execution_envelopes(session_id);
             ",
         )?;
         Ok(())
@@ -2009,7 +2074,525 @@ fn index_run_status_from_str(value: &str) -> std::result::Result<IndexRunStatus,
     }
 }
 
+// ─── Runtime State: Enum Helpers ──────────────────────────────────────────────
 
+fn lane_to_str(lane: WorkflowLane) -> &'static str {
+    lane.as_str()
+}
+
+fn str_to_lane(s: &str) -> std::result::Result<WorkflowLane, StorageError> {
+    WorkflowLane::from_str(s).ok_or_else(|| StorageError::InvalidEnumValue {
+        field: "lane",
+        value: s.to_string(),
+    })
+}
+
+fn session_status_to_str(s: SessionStatus) -> &'static str {
+    match s {
+        SessionStatus::Pending => "pending",
+        SessionStatus::Active => "active",
+        SessionStatus::Paused => "paused",
+        SessionStatus::Completed => "completed",
+        SessionStatus::Failed => "failed",
+        SessionStatus::Cancelled => "cancelled",
+    }
+}
+
+fn str_to_session_status(s: &str) -> std::result::Result<SessionStatus, StorageError> {
+    match s {
+        "pending" => Ok(SessionStatus::Pending),
+        "active" => Ok(SessionStatus::Active),
+        "paused" => Ok(SessionStatus::Paused),
+        "completed" => Ok(SessionStatus::Completed),
+        "failed" => Ok(SessionStatus::Failed),
+        "cancelled" => Ok(SessionStatus::Cancelled),
+        _ => Err(StorageError::InvalidEnumValue { field: "session_status", value: s.to_string() }),
+    }
+}
+
+fn semantic_mode_to_str(m: SemanticMode) -> &'static str {
+    match m {
+        SemanticMode::Always => "always",
+        SemanticMode::OnDemand => "on_demand",
+        SemanticMode::Off => "off",
+    }
+}
+
+fn str_to_semantic_mode(s: &str) -> std::result::Result<SemanticMode, StorageError> {
+    match s {
+        "always" => Ok(SemanticMode::Always),
+        "on_demand" => Ok(SemanticMode::OnDemand),
+        "off" => Ok(SemanticMode::Off),
+        _ => Err(StorageError::InvalidEnumValue { field: "semantic_mode", value: s.to_string() }),
+    }
+}
+
+fn enforcement_to_str(e: ToolEnforcementLevel) -> &'static str {
+    match e {
+        ToolEnforcementLevel::VeryHard => "very_hard",
+        ToolEnforcementLevel::Hard => "hard",
+        ToolEnforcementLevel::Soft => "soft",
+        ToolEnforcementLevel::Off => "off",
+    }
+}
+
+fn str_to_enforcement(s: &str) -> std::result::Result<ToolEnforcementLevel, StorageError> {
+    match s {
+        "very_hard" => Ok(ToolEnforcementLevel::VeryHard),
+        "hard" => Ok(ToolEnforcementLevel::Hard),
+        "soft" => Ok(ToolEnforcementLevel::Soft),
+        "off" => Ok(ToolEnforcementLevel::Off),
+        _ => Err(StorageError::InvalidEnumValue { field: "tool_enforcement_level", value: s.to_string() }),
+    }
+}
+
+fn stage_status_to_str(s: StageStatus) -> &'static str {
+    match s {
+        StageStatus::Pending => "pending",
+        StageStatus::InProgress => "in_progress",
+        StageStatus::Passed => "passed",
+        StageStatus::Failed => "failed",
+        StageStatus::Blocked => "blocked",
+        StageStatus::Skipped => "skipped",
+    }
+}
+
+fn str_to_stage_status(s: &str) -> std::result::Result<StageStatus, StorageError> {
+    match s {
+        "pending" => Ok(StageStatus::Pending),
+        "in_progress" => Ok(StageStatus::InProgress),
+        "passed" => Ok(StageStatus::Passed),
+        "failed" => Ok(StageStatus::Failed),
+        "blocked" => Ok(StageStatus::Blocked),
+        "skipped" => Ok(StageStatus::Skipped),
+        _ => Err(StorageError::InvalidEnumValue { field: "stage_status", value: s.to_string() }),
+    }
+}
+
+fn gate_status_to_str(g: GateStatus) -> &'static str {
+    match g {
+        GateStatus::Pending => "pending",
+        GateStatus::Passed => "passed",
+        GateStatus::Failed => "failed",
+        GateStatus::Waived => "waived",
+    }
+}
+
+fn str_to_gate_status(s: &str) -> std::result::Result<GateStatus, StorageError> {
+    match s {
+        "pending" => Ok(GateStatus::Pending),
+        "passed" => Ok(GateStatus::Passed),
+        "failed" => Ok(GateStatus::Failed),
+        "waived" => Ok(GateStatus::Waived),
+        _ => Err(StorageError::InvalidEnumValue { field: "gate_status", value: s.to_string() }),
+    }
+}
+
+fn hook_name_to_str(h: HookName) -> &'static str {
+    h.as_str()
+}
+
+fn str_to_hook_name(s: &str) -> std::result::Result<HookName, StorageError> {
+    match s {
+        "model_override" => Ok(HookName::ModelOverride),
+        "pre_tool_exec" => Ok(HookName::PreToolExec),
+        "pre_answer" => Ok(HookName::PreAnswer),
+        "skill_activation" => Ok(HookName::SkillActivation),
+        "mcp_routing" => Ok(HookName::McpRouting),
+        "session_state_injection" => Ok(HookName::SessionStateInjection),
+        _ => Err(StorageError::InvalidEnumValue { field: "hook_name", value: s.to_string() }),
+    }
+}
+
+fn hook_decision_to_str(d: HookDecision) -> &'static str {
+    match d {
+        HookDecision::Allow => "allow",
+        HookDecision::Block => "block",
+        HookDecision::Modify => "modify",
+        HookDecision::Passthrough => "passthrough",
+    }
+}
+
+fn str_to_hook_decision(s: &str) -> std::result::Result<HookDecision, StorageError> {
+    match s {
+        "allow" => Ok(HookDecision::Allow),
+        "block" => Ok(HookDecision::Block),
+        "modify" => Ok(HookDecision::Modify),
+        "passthrough" => Ok(HookDecision::Passthrough),
+        _ => Err(StorageError::InvalidEnumValue { field: "hook_decision", value: s.to_string() }),
+    }
+}
+
+fn agent_role_to_str(r: AgentRole) -> &'static str {
+    r.as_str()
+}
+
+fn str_to_agent_role(s: &str) -> std::result::Result<AgentRole, StorageError> {
+    match s {
+        "coordinator" => Ok(AgentRole::Coordinator),
+        "product_lead" => Ok(AgentRole::ProductLead),
+        "solution_lead" => Ok(AgentRole::SolutionLead),
+        "implementer" => Ok(AgentRole::Implementer),
+        "code_reviewer" => Ok(AgentRole::CodeReviewer),
+        "qa_agent" => Ok(AgentRole::QaAgent),
+        "quick_agent" => Ok(AgentRole::QuickAgent),
+        _ => Err(StorageError::InvalidEnumValue { field: "agent_role", value: s.to_string() }),
+    }
+}
+
+// ─── Runtime State: Repository Traits ─────────────────────────────────────────
+
+pub trait SessionRepository {
+    fn create_session(&self, session: &SessionState) -> Result<()>;
+    fn get_session(&self, id: &str) -> Result<Option<SessionState>>;
+    fn update_session_status(&self, id: &str, status: SessionStatus, now_ms: i64) -> Result<()>;
+    fn update_session_stage(&self, id: &str, stage: &str, now_ms: i64) -> Result<()>;
+    fn list_sessions_by_status(&self, status: SessionStatus) -> Result<Vec<SessionState>>;
+}
+
+pub trait WorkflowStageRepository {
+    fn insert_stage(&self, state: &WorkflowStageState) -> Result<()>;
+    fn get_current_stage(&self, session_id: &str) -> Result<Option<WorkflowStageState>>;
+    fn update_stage_status(&self, session_id: &str, stage: &str, status: StageStatus, gate: GateStatus, now_ms: i64) -> Result<()>;
+    fn list_stages(&self, session_id: &str) -> Result<Vec<WorkflowStageState>>;
+}
+
+pub trait HookLogRepository {
+    fn insert_hook_log(&self, log: &HookInvocationLog) -> Result<()>;
+    fn list_hook_logs(&self, session_id: &str, limit: usize) -> Result<Vec<HookInvocationLog>>;
+    fn list_hook_logs_by_name(&self, session_id: &str, hook: HookName, limit: usize) -> Result<Vec<HookInvocationLog>>;
+}
+
+pub trait ExecutionEnvelopeRepository {
+    fn insert_envelope(&self, envelope: &ExecutionEnvelope) -> Result<()>;
+    fn get_envelope(&self, id: &str) -> Result<Option<ExecutionEnvelope>>;
+    fn list_envelopes(&self, session_id: &str) -> Result<Vec<ExecutionEnvelope>>;
+}
+
+// ─── Runtime State: Repository Implementations ───────────────────────────────
+
+impl SessionRepository for Database {
+    fn create_session(&self, s: &SessionState) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO sessions (id, repo_root, lane, lane_locked, current_stage, status, semantic_mode, tool_enforcement_level, created_at_unix_ms, updated_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                s.id,
+                s.repo_root,
+                lane_to_str(s.lane),
+                s.lane_locked as i32,
+                s.current_stage,
+                session_status_to_str(s.status),
+                semantic_mode_to_str(s.semantic_mode),
+                enforcement_to_str(s.tool_enforcement_level),
+                s.created_at_unix_ms,
+                s.updated_at_unix_ms,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_session(&self, id: &str) -> Result<Option<SessionState>> {
+        self.conn.query_row(
+            "SELECT id, repo_root, lane, lane_locked, current_stage, status, semantic_mode, tool_enforcement_level, created_at_unix_ms, updated_at_unix_ms
+             FROM sessions WHERE id = ?1",
+            params![id],
+            |row| {
+                let lane_str: String = row.get(2)?;
+                let status_str: String = row.get(5)?;
+                let sm_str: String = row.get(6)?;
+                let te_str: String = row.get(7)?;
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, lane_str,
+                    row.get::<_, i32>(3)?, row.get::<_, String>(4)?, status_str,
+                    sm_str, te_str, row.get::<_, i64>(8)?, row.get::<_, i64>(9)?))
+            },
+        )
+        .optional()?
+        .map(|(id, repo_root, lane_str, locked, stage, status_str, sm_str, te_str, created, updated)| {
+            Ok(SessionState {
+                id,
+                repo_root,
+                lane: str_to_lane(&lane_str)?,
+                lane_locked: locked != 0,
+                current_stage: stage,
+                status: str_to_session_status(&status_str)?,
+                semantic_mode: str_to_semantic_mode(&sm_str)?,
+                tool_enforcement_level: str_to_enforcement(&te_str)?,
+                created_at_unix_ms: created,
+                updated_at_unix_ms: updated,
+            })
+        })
+        .transpose()
+    }
+
+    fn update_session_status(&self, id: &str, status: SessionStatus, now_ms: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET status = ?1, updated_at_unix_ms = ?2 WHERE id = ?3",
+            params![session_status_to_str(status), now_ms, id],
+        )?;
+        Ok(())
+    }
+
+    fn update_session_stage(&self, id: &str, stage: &str, now_ms: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET current_stage = ?1, updated_at_unix_ms = ?2 WHERE id = ?3",
+            params![stage, now_ms, id],
+        )?;
+        Ok(())
+    }
+
+    fn list_sessions_by_status(&self, status: SessionStatus) -> Result<Vec<SessionState>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, repo_root, lane, lane_locked, current_stage, status, semantic_mode, tool_enforcement_level, created_at_unix_ms, updated_at_unix_ms
+             FROM sessions WHERE status = ?1 ORDER BY created_at_unix_ms DESC",
+        )?;
+        let rows = stmt.query_map(params![session_status_to_str(status)], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
+                row.get::<_, i32>(3)?, row.get::<_, String>(4)?, row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?, row.get::<_, String>(7)?, row.get::<_, i64>(8)?, row.get::<_, i64>(9)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, repo_root, lane_str, locked, stage, status_str, sm_str, te_str, created, updated) = row?;
+            out.push(SessionState {
+                id, repo_root,
+                lane: str_to_lane(&lane_str)?,
+                lane_locked: locked != 0,
+                current_stage: stage,
+                status: str_to_session_status(&status_str)?,
+                semantic_mode: str_to_semantic_mode(&sm_str)?,
+                tool_enforcement_level: str_to_enforcement(&te_str)?,
+                created_at_unix_ms: created,
+                updated_at_unix_ms: updated,
+            });
+        }
+        Ok(out)
+    }
+}
+
+impl WorkflowStageRepository for Database {
+    fn insert_stage(&self, s: &WorkflowStageState) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO workflow_stages (session_id, lane, stage, stage_status, previous_stage, gate_status, updated_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                s.session_id,
+                lane_to_str(s.lane),
+                s.stage,
+                stage_status_to_str(s.stage_status),
+                s.previous_stage,
+                gate_status_to_str(s.gate_status),
+                s.updated_at_unix_ms,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_current_stage(&self, session_id: &str) -> Result<Option<WorkflowStageState>> {
+        self.conn.query_row(
+            "SELECT session_id, lane, stage, stage_status, previous_stage, gate_status, updated_at_unix_ms
+             FROM workflow_stages WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
+            params![session_id],
+            |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?, row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(5)?, row.get::<_, i64>(6)?))
+            },
+        )
+        .optional()?
+        .map(|(sid, lane_str, stage, ss_str, prev, gs_str, updated)| {
+            Ok(WorkflowStageState {
+                session_id: sid,
+                lane: str_to_lane(&lane_str)?,
+                stage,
+                stage_status: str_to_stage_status(&ss_str)?,
+                previous_stage: prev,
+                gate_status: str_to_gate_status(&gs_str)?,
+                updated_at_unix_ms: updated,
+            })
+        })
+        .transpose()
+    }
+
+    fn update_stage_status(&self, session_id: &str, stage: &str, status: StageStatus, gate: GateStatus, now_ms: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE workflow_stages SET stage_status = ?1, gate_status = ?2, updated_at_unix_ms = ?3
+             WHERE session_id = ?4 AND stage = ?5",
+            params![stage_status_to_str(status), gate_status_to_str(gate), now_ms, session_id, stage],
+        )?;
+        Ok(())
+    }
+
+    fn list_stages(&self, session_id: &str) -> Result<Vec<WorkflowStageState>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT session_id, lane, stage, stage_status, previous_stage, gate_status, updated_at_unix_ms
+             FROM workflow_stages WHERE session_id = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?, row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?, row.get::<_, i64>(6)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (sid, lane_str, stage, ss_str, prev, gs_str, updated) = row?;
+            out.push(WorkflowStageState {
+                session_id: sid,
+                lane: str_to_lane(&lane_str)?,
+                stage,
+                stage_status: str_to_stage_status(&ss_str)?,
+                previous_stage: prev,
+                gate_status: str_to_gate_status(&gs_str)?,
+                updated_at_unix_ms: updated,
+            });
+        }
+        Ok(out)
+    }
+}
+
+impl HookLogRepository for Database {
+    fn insert_hook_log(&self, log: &HookInvocationLog) -> Result<()> {
+        let input = serde_json::to_string(&log.input_json)?;
+        let output = serde_json::to_string(&log.output_json)?;
+        self.conn.execute(
+            "INSERT INTO hook_invocation_logs (id, session_id, envelope_id, hook_name, input_json, output_json, decision, reason, duration_ms, created_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                log.id,
+                log.session_id,
+                log.envelope_id,
+                hook_name_to_str(log.hook_name),
+                input,
+                output,
+                hook_decision_to_str(log.decision),
+                log.reason,
+                log.duration_ms as i64,
+                log.created_at_unix_ms,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn list_hook_logs(&self, session_id: &str, limit: usize) -> Result<Vec<HookInvocationLog>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, envelope_id, hook_name, input_json, output_json, decision, reason, duration_ms, created_at_unix_ms
+             FROM hook_invocation_logs WHERE session_id = ?1 ORDER BY created_at_unix_ms DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![session_id, limit as i64], map_hook_log)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row??);
+        }
+        Ok(out)
+    }
+
+    fn list_hook_logs_by_name(&self, session_id: &str, hook: HookName, limit: usize) -> Result<Vec<HookInvocationLog>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, envelope_id, hook_name, input_json, output_json, decision, reason, duration_ms, created_at_unix_ms
+             FROM hook_invocation_logs WHERE session_id = ?1 AND hook_name = ?2 ORDER BY created_at_unix_ms DESC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![session_id, hook_name_to_str(hook), limit as i64], map_hook_log)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row??);
+        }
+        Ok(out)
+    }
+}
+
+fn map_hook_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<HookInvocationLog>> {
+    let input_str: String = row.get(4)?;
+    let output_str: String = row.get(5)?;
+    let hook_str: String = row.get(3)?;
+    let decision_str: String = row.get(6)?;
+    Ok((|| {
+        Ok(HookInvocationLog {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            envelope_id: row.get(2)?,
+            hook_name: str_to_hook_name(&hook_str)?,
+            input_json: serde_json::from_str(&input_str)?,
+            output_json: serde_json::from_str(&output_str)?,
+            decision: str_to_hook_decision(&decision_str)?,
+            reason: row.get(7)?,
+            duration_ms: row.get::<_, i64>(8)? as u64,
+            created_at_unix_ms: row.get(9)?,
+        })
+    })())
+}
+
+impl ExecutionEnvelopeRepository for Database {
+    fn insert_envelope(&self, e: &ExecutionEnvelope) -> Result<()> {
+        let model_json = e.resolved_model.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
+        let skills_json = serde_json::to_string(&e.active_skills)?;
+        let mcps_json = serde_json::to_string(&e.active_mcps)?;
+        self.conn.execute(
+            "INSERT INTO execution_envelopes (id, session_id, lane, role, agent_id, stage, work_item_id, resolved_model_json, active_skills_json, active_mcps_json, created_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                e.id,
+                e.session_id,
+                lane_to_str(e.lane),
+                agent_role_to_str(e.role),
+                e.agent_id,
+                e.stage,
+                e.work_item_id,
+                model_json,
+                skills_json,
+                mcps_json,
+                e.created_at_unix_ms,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_envelope(&self, id: &str) -> Result<Option<ExecutionEnvelope>> {
+        self.conn.query_row(
+            "SELECT id, session_id, lane, role, agent_id, stage, work_item_id, resolved_model_json, active_skills_json, active_mcps_json, created_at_unix_ms
+             FROM execution_envelopes WHERE id = ?1",
+            params![id],
+            map_envelope,
+        )
+        .optional()?
+        .transpose()
+    }
+
+    fn list_envelopes(&self, session_id: &str) -> Result<Vec<ExecutionEnvelope>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, lane, role, agent_id, stage, work_item_id, resolved_model_json, active_skills_json, active_mcps_json, created_at_unix_ms
+             FROM execution_envelopes WHERE session_id = ?1 ORDER BY created_at_unix_ms ASC",
+        )?;
+        let rows = stmt.query_map(params![session_id], map_envelope)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row??);
+        }
+        Ok(out)
+    }
+}
+
+fn map_envelope(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<ExecutionEnvelope>> {
+    let lane_str: String = row.get(2)?;
+    let role_str: String = row.get(3)?;
+    let model_str: Option<String> = row.get(7)?;
+    let skills_str: String = row.get(8)?;
+    let mcps_str: String = row.get(9)?;
+    Ok((|| {
+        Ok(ExecutionEnvelope {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            lane: str_to_lane(&lane_str)?,
+            role: str_to_agent_role(&role_str)?,
+            agent_id: row.get(4)?,
+            stage: row.get(5)?,
+            work_item_id: row.get(6)?,
+            resolved_model: model_str.map(|s| serde_json::from_str(&s)).transpose()?,
+            active_skills: serde_json::from_str(&skills_str)?,
+            active_mcps: serde_json::from_str(&mcps_str)?,
+            created_at_unix_ms: row.get(10)?,
+        })
+    })())
+}
 
 #[cfg(test)]
 mod tests {

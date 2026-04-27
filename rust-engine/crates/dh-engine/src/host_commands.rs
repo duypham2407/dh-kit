@@ -423,7 +423,7 @@ fn route_worker_to_host_message(message: &Value, router: &BridgeRpcRouter<'_>) -
     let method = jsonrpc_message_method(message)?.to_string();
     let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
     Some(router.route_worker_query(RpcRequest {
-        id: json!(id),
+        id: Some(json!(id)),
         method,
         params,
     }))

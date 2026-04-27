@@ -144,6 +144,9 @@ pub struct WorkerSupervisor {
     recovery_attempts: u8,
     request_phase_started: bool,
     ready_seen: bool,
+    last_message_received_at: Instant,
+    last_ping_sent_at: Option<Instant>,
+    missed_heartbeats: u8,
 }
 
 #[allow(dead_code)]
@@ -169,6 +172,9 @@ impl WorkerSupervisor {
             recovery_attempts: 0,
             request_phase_started: false,
             ready_seen: false,
+            last_message_received_at: Instant::now(),
+            last_ping_sent_at: None,
+            missed_heartbeats: 0,
         }
     }
 
@@ -184,6 +190,9 @@ impl WorkerSupervisor {
         self.force_drop_existing_process();
         self.request_phase_started = false;
         self.ready_seen = false;
+        self.last_message_received_at = Instant::now();
+        self.last_ping_sent_at = None;
+        self.missed_heartbeats = 0;
 
         let launchability = check_worker_launchability(&self.config.launch);
         if !launchability.is_launchable() {
@@ -657,9 +666,70 @@ impl WorkerSupervisor {
 
         let deadline = Instant::now() + timeout;
         loop {
-            let message = self.recv_message_before(deadline).map_err(|failure| {
-                self.classify_receive_failure(failure, failure_phase, timeout_class)
-            })?;
+            let now = Instant::now();
+            let health_timeout = self.config.health_timeout;
+            
+            if now.saturating_duration_since(self.last_message_received_at) > health_timeout {
+                let should_ping = match self.last_ping_sent_at {
+                    Some(last_ping) => now.saturating_duration_since(last_ping) > health_timeout,
+                    None => true,
+                };
+                if should_ping {
+                    self.missed_heartbeats += 1;
+                    if self.missed_heartbeats >= 2 {
+                        let failure = ReceiveFailure::HeartbeatFailed;
+                        return Err(self.classify_receive_failure(failure, failure_phase, timeout_class));
+                    }
+                    let _ = self.send_notification("runtime.ping", json!({ "ts": format!("{:?}", now) }), failure_phase);
+                    self.last_ping_sent_at = Some(now);
+                }
+            }
+
+            let next_ping_time = match self.last_ping_sent_at {
+                Some(last_ping) => last_ping + health_timeout,
+                None => self.last_message_received_at + health_timeout,
+            };
+            let wait_deadline = std::cmp::min(deadline, next_ping_time);
+
+            let message = match self.recv_message_before(wait_deadline) {
+                Ok(msg) => {
+                    self.last_message_received_at = Instant::now();
+                    self.missed_heartbeats = 0;
+                    self.last_ping_sent_at = None;
+                    msg
+                },
+                Err(ReceiveFailure::Timeout) => {
+                    if Instant::now() >= deadline {
+                        let _ = self.send_notification("session.cancel", json!({ "reason": "timeout" }), failure_phase);
+                        let grace_deadline = Instant::now() + Duration::from_millis(500);
+                        
+                        let mut final_msg = None;
+                        while Instant::now() < grace_deadline {
+                            match self.recv_message_before(grace_deadline) {
+                                Ok(msg) => {
+                                    if jsonrpc_message_id(&msg) == Some(id) {
+                                        final_msg = Some(msg);
+                                        break;
+                                    }
+                                },
+                                Err(_) => break,
+                            }
+                        }
+                        
+                        if let Some(msg) = final_msg {
+                            msg
+                        } else {
+                            let _ = self.force_cleanup(timeout_class);
+                            return Err(self.classify_receive_failure(ReceiveFailure::Timeout, failure_phase, timeout_class));
+                        }
+                    } else {
+                        continue;
+                    }
+                },
+                Err(failure) => {
+                    return Err(self.classify_receive_failure(failure, failure_phase, timeout_class));
+                }
+            };
 
             if jsonrpc_message_method(&message) == Some("dh.ready") {
                 self.ready_seen = true;
@@ -881,6 +951,11 @@ impl WorkerSupervisor {
                 format!("worker response timed out during {failure_phase:?}"),
                 timeout_class,
             ),
+            ReceiveFailure::HeartbeatFailed => (
+                WorkerSupervisorErrorKind::Timeout,
+                format!("worker missed 2 heartbeats during {failure_phase:?}"),
+                timeout_class,
+            ),
             ReceiveFailure::Exited(status) => (
                 WorkerSupervisorErrorKind::WorkerExited,
                 format!("worker exited before expected response: {status:?}"),
@@ -970,6 +1045,7 @@ impl Drop for WorkerSupervisor {
 #[derive(Debug)]
 enum ReceiveFailure {
     Timeout,
+    HeartbeatFailed,
     Exited(Option<ExitStatus>),
     ReadFailed(String),
 }

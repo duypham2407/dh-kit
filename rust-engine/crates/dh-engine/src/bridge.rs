@@ -102,10 +102,10 @@ impl BridgeRpcError {
         }
     }
 
-    pub fn to_response(self, id: Value) -> Value {
+    pub fn to_response(self, id: Option<Value>) -> Value {
         json!({
             "jsonrpc": "2.0",
-            "id": id,
+            "id": id.unwrap_or(Value::Null),
             "error": {
                 "code": self.jsonrpc_code,
                 "message": self.message,
@@ -119,7 +119,7 @@ impl BridgeRpcError {
 
 #[derive(Debug, Clone)]
 pub struct RpcRequest {
-    pub id: Value,
+    pub id: Option<Value>,
     pub method: String,
     pub params: Value,
 }
@@ -349,7 +349,7 @@ fn read_rpc_request(reader: &mut BufReader<impl Read>) -> Result<RpcRequest> {
     let payload = String::from_utf8(buf).context("request payload is not utf8")?;
     let value: Value = serde_json::from_str(&payload).context("invalid json request payload")?;
 
-    let id = value.get("id").cloned().context("missing request id")?;
+    let id = value.get("id").cloned();
     let method = value
         .get("method")
         .and_then(Value::as_str)
@@ -1241,26 +1241,26 @@ fn initialize_result(workspace: &Path) -> InitializeResult {
     }
 }
 
-fn ok_result(id: Value, result: impl Serialize) -> Value {
+fn ok_result(id: Option<Value>, result: impl Serialize) -> Value {
     json!({
         "jsonrpc": "2.0",
-        "id": id,
+        "id": id.unwrap_or(Value::Null),
         "result": result,
     })
 }
 
-fn invalid_params(id: Value, message: &str) -> Value {
+fn invalid_params(id: Option<Value>, message: &str) -> Value {
     BridgeRpcError::invalid_request(message).to_response(id)
 }
 
-fn method_not_supported(id: Value, message: &str) -> Value {
+fn method_not_supported(id: Option<Value>, message: &str) -> Value {
     BridgeRpcError::capability_unsupported(message).to_response(id)
 }
 
-fn internal_error(id: Value, message: String) -> Value {
+fn internal_error(id: Option<Value>, message: String) -> Value {
     json!({
         "jsonrpc": "2.0",
-        "id": id,
+        "id": id.unwrap_or(Value::Null),
         "error": {
             "code": -32001,
             "message": message

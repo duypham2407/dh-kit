@@ -2,10 +2,10 @@ import type { ModelMessage } from "ai"
 import { mergeDeep, unique } from "remeda"
 import type { JSONSchema7 } from "@ai-sdk/provider"
 import type { JSONSchema } from "zod/v4/core"
-import type * as Provider from "./provider"
+import type * as Provider from "./provider.js"
+import { Flag } from "../../../shared/src/core-mocks/flag/flag.js"
 
 const iife = <T>(fn: () => T) => fn();
-import { Flag } from "@opencode-ai/core/flag/flag"
 
 type Modality = keyof NonNullable<Provider.Model["capabilities"]>["input"]
 

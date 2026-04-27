@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use dh_graph::{EdgeResolution, GraphService, NodeId};
-use dh_storage::{ChunkRepository, Database, FileRepository, GraphRepository, ImportRepository};
+use dh_storage::{ChunkRepository, Database, FileRepository, GraphRepository, SymbolRepository, GraphEdgeRepository};
 use dh_types::{
     AnswerState, EvidenceBounds, EvidenceConfidence, EvidenceEntry, EvidenceKind, EvidencePacket,
     EvidenceSource, FreshnessState, LanguageCapability, LanguageCapabilityEntry,
@@ -970,10 +970,22 @@ impl QueryEngine for Database {
     }
 
     fn find_references(&self, query: FindReferencesQuery) -> Result<ReferencesQueryResult> {
-        let references = if let Some(symbol_id) = query.symbol_id {
-            self.find_references_to_symbol(query.workspace_id, symbol_id, query.limit)?
+        let references: Vec<dh_types::GraphEdge> = if let Some(symbol_id) = query.symbol_id {
+            self.find_incoming_edges(query.workspace_id, "symbol", symbol_id as i64, query.limit)?
+                .into_iter()
+                .filter(|e| matches!(e.kind, dh_types::EdgeKind::References))
+                .collect()
         } else if let Some(symbol) = &query.symbol {
-            self.find_references_to_target_name(query.workspace_id, symbol, query.limit)?
+            let mut refs = Vec::new();
+            if let Ok(syms) = self.find_symbol_definitions(query.workspace_id, symbol, 1) {
+                if let Some(s) = syms.first() {
+                    refs = self.find_incoming_edges(query.workspace_id, "symbol", s.id as i64, query.limit)?
+                        .into_iter()
+                        .filter(|e| matches!(e.kind, dh_types::EdgeKind::References))
+                        .collect();
+                }
+            }
+            refs
         } else {
             Vec::new()
         };
@@ -987,11 +999,19 @@ impl QueryEngine for Database {
             .or(query.symbol_id.map(|id| id.to_string()))
             .unwrap_or_else(|| "<unknown>".into());
         for r in references {
-            if !query.include_type_only && matches!(r.kind, dh_types::ReferenceKind::Type) {
-                continue;
-            }
+            let source_file_id = match &r.from {
+                NodeId::File(id) => *id,
+                NodeId::Symbol(id) => self.find_symbol_by_id(query.workspace_id, *id)?.map(|s| s.file_id).unwrap_or(0),
+                _ => 0,
+            };
+            let source_symbol_id = match &r.from {
+                NodeId::Symbol(id) => Some(*id),
+                _ => None,
+            };
+            let resolved = r.resolution == EdgeResolution::Resolved;
+
             let file_path = self
-                .find_file_by_id(query.workspace_id, r.source_file_id)?
+                .find_file_by_id(query.workspace_id, source_file_id)?
                 .map(|f| f.rel_path)
                 .unwrap_or_else(|| "<unknown>".into());
             if !query.include_tests && file_path.contains("test") {
@@ -999,28 +1019,28 @@ impl QueryEngine for Database {
             }
             out.push(ReferenceResult {
                 file_path: file_path.clone(),
-                symbol_id: r.source_symbol_id,
-                line_start: r.span.start_line,
-                line_end: r.span.end_line,
-                reason: format!("reference kind {:?}", r.kind),
-                resolved: r.resolved,
+                symbol_id: source_symbol_id,
+                line_start: r.span.as_ref().map(|s| s.start_line).unwrap_or(0),
+                line_end: r.span.as_ref().map(|s| s.end_line).unwrap_or(0),
+                reason: r.reason.clone(),
+                resolved,
             });
             evidence.push(entry(
                 EvidenceKind::Reference,
                 file_path,
-                r.source_symbol_id
+                source_symbol_id
                     .and_then(|id| {
                         self.find_symbol_by_id(query.workspace_id, id)
                             .ok()
                             .flatten()
                     })
                     .map(|s| s.qualified_name),
-                Some(r.span.start_line),
-                Some(r.span.end_line),
+                r.span.as_ref().map(|s| s.start_line),
+                r.span.as_ref().map(|s| s.end_line),
                 None,
-                format!("reference kind {:?} to {}", r.kind, r.target_name),
+                r.reason.clone(),
                 EvidenceSource::Graph,
-                if r.resolved {
+                if resolved {
                     EvidenceConfidence::Grounded
                 } else {
                     unresolved_seen = true;
@@ -1080,18 +1100,22 @@ impl QueryEngine for Database {
         let mut unresolved_seen = false;
 
         if let Some(target_file) = files.iter().find(|f| f.rel_path == query.target) {
-            for imp in self
-                .find_reverse_imports_by_file(query.workspace_id, target_file.id, query.limit)?
+            let edges = self.find_incoming_edges(query.workspace_id, "file", target_file.id as i64, query.limit)?
                 .into_iter()
-            {
-                if let Some(src) = files.iter().find(|f| f.id == imp.source_file_id) {
+                .filter(|e| matches!(e.kind, dh_types::EdgeKind::Imports) || matches!(e.kind, dh_types::EdgeKind::ReExports));
+            for imp in edges {
+                let source_file_id = match imp.from {
+                    NodeId::File(id) => id,
+                    _ => continue,
+                };
+                if let Some(src) = files.iter().find(|f| f.id == source_file_id) {
                     items.push(src.rel_path.clone());
                     evidence.push(entry(
                         EvidenceKind::Dependent,
                         src.rel_path.clone(),
                         None,
-                        Some(imp.span.start_line),
-                        Some(imp.span.end_line),
+                        imp.span.as_ref().map(|s| s.start_line),
+                        imp.span.as_ref().map(|s| s.end_line),
                         None,
                         format!("imports {}", query.target),
                         EvidenceSource::Graph,
@@ -1102,12 +1126,18 @@ impl QueryEngine for Database {
         } else {
             let symbols = self.find_symbol_definitions(query.workspace_id, &query.target, 1)?;
             if let Some(target_symbol) = symbols.first() {
-                for r in self
-                    .find_references_to_symbol(query.workspace_id, target_symbol.id, query.limit)?
+                let edges = self.find_incoming_edges(query.workspace_id, "symbol", target_symbol.id as i64, query.limit)?
                     .into_iter()
-                {
-                    if let Some(src) = files.iter().find(|f| f.id == r.source_file_id) {
-                        if !r.resolved {
+                    .filter(|e| matches!(e.kind, dh_types::EdgeKind::References));
+                for r in edges {
+                    let source_file_id = match r.from {
+                        NodeId::File(id) => id,
+                        NodeId::Symbol(id) => self.find_symbol_by_id(query.workspace_id, id)?.map(|s| s.file_id).unwrap_or(0),
+                        _ => 0,
+                    };
+                    if let Some(src) = files.iter().find(|f| f.id == source_file_id) {
+                        let resolved = r.resolution == EdgeResolution::Resolved;
+                        if !resolved {
                             unresolved_seen = true;
                         }
                         items.push(src.rel_path.clone());
@@ -1115,12 +1145,12 @@ impl QueryEngine for Database {
                             EvidenceKind::Dependent,
                             src.rel_path.clone(),
                             Some(query.target.clone()),
-                            Some(r.span.start_line),
-                            Some(r.span.end_line),
+                            r.span.as_ref().map(|s| s.start_line),
+                            r.span.as_ref().map(|s| s.end_line),
                             None,
                             "reference to target symbol".into(),
                             EvidenceSource::Graph,
-                            if r.resolved {
+                            if resolved {
                                 EvidenceConfidence::Grounded
                             } else {
                                 EvidenceConfidence::Partial
@@ -1199,28 +1229,26 @@ impl QueryEngine for Database {
         let files = self.list_files_by_workspace(query.workspace_id)?;
         let mut items = Vec::new();
         let mut evidence = Vec::new();
-        let imports = self.find_imports_by_file(file.id)?;
-        for imp in imports.into_iter().take(query.limit) {
-            let label = imp
-                .resolved_file_id
-                .and_then(|id| {
-                    files
-                        .iter()
-                        .find(|f| f.id == id)
-                        .map(|f| f.rel_path.clone())
-                })
-                .unwrap_or_else(|| imp.raw_specifier.clone());
+        let imports = self.find_outgoing_edges(query.workspace_id, "file", file.id as i64, query.limit)?
+            .into_iter()
+            .filter(|e| matches!(e.kind, dh_types::EdgeKind::Imports) || matches!(e.kind, dh_types::EdgeKind::ReExports));
+        for imp in imports {
+            let label = match imp.to {
+                NodeId::File(id) => files.iter().find(|f| f.id == id).map(|f| f.rel_path.clone()).unwrap_or_else(|| imp.reason.clone()),
+                NodeId::Symbol(id) => self.find_symbol_by_id(query.workspace_id, id)?.map(|s| s.qualified_name).unwrap_or_else(|| imp.reason.clone()),
+                _ => imp.reason.clone(),
+            };
             items.push(label.clone());
             evidence.push(entry(
                 EvidenceKind::Dependency,
                 file.rel_path.clone(),
                 None,
-                Some(imp.span.start_line),
-                Some(imp.span.end_line),
+                imp.span.as_ref().map(|s| s.start_line),
+                imp.span.as_ref().map(|s| s.end_line),
                 None,
                 format!("imports {}", label),
                 EvidenceSource::Graph,
-                if imp.resolved_file_id.is_some() || imp.resolved_symbol_id.is_some() {
+                if imp.resolution == EdgeResolution::Resolved {
                     EvidenceConfidence::Grounded
                 } else {
                     EvidenceConfidence::Partial
@@ -1294,32 +1322,41 @@ impl QueryEngine for Database {
         let mut evidence = Vec::new();
         let mut unresolved = false;
 
-        for c in self.find_calls_to_symbol(query.workspace_id, subject.id, query.limit)? {
-            let label = c
-                .caller_symbol_id
+        for c in self.find_incoming_edges(query.workspace_id, "symbol", subject.id as i64, query.limit)?.into_iter().filter(|e| matches!(e.kind, dh_types::EdgeKind::Calls)) {
+            let caller_symbol_id = match c.from {
+                NodeId::Symbol(id) => Some(id),
+                _ => None,
+            };
+            let source_file_id = match c.from {
+                NodeId::File(id) => id,
+                NodeId::Symbol(id) => self.find_symbol_by_id(query.workspace_id, id)?.map(|s| s.file_id).unwrap_or(0),
+                _ => 0,
+            };
+            let label = caller_symbol_id
                 .and_then(|id| {
                     self.find_symbol_by_id(query.workspace_id, id)
                         .ok()
                         .flatten()
                 })
                 .map(|s| s.qualified_name)
-                .unwrap_or_else(|| format!("file:{}", c.source_file_id));
+                .unwrap_or_else(|| format!("file:{}", source_file_id));
             callers.push(label.clone());
-            if !c.resolved {
+            let resolved = c.resolution == EdgeResolution::Resolved;
+            if !resolved {
                 unresolved = true;
             }
             evidence.push(entry(
                 EvidenceKind::Call,
-                self.find_file_by_id(query.workspace_id, c.source_file_id)?
+                self.find_file_by_id(query.workspace_id, source_file_id)?
                     .map(|f| f.rel_path)
                     .unwrap_or_else(|| "<unknown>".into()),
                 Some(label),
-                Some(c.span.start_line),
-                Some(c.span.end_line),
+                c.span.as_ref().map(|s| s.start_line),
+                c.span.as_ref().map(|s| s.end_line),
                 None,
                 "caller edge".into(),
                 EvidenceSource::Graph,
-                if c.resolved {
+                if resolved {
                     EvidenceConfidence::Grounded
                 } else {
                     EvidenceConfidence::Partial
@@ -1327,33 +1364,41 @@ impl QueryEngine for Database {
             ));
         }
 
-        for c in self.find_calls_from_symbol(query.workspace_id, subject.id, query.limit)? {
-            let label = c
-                .callee_symbol_id
+        for c in self.find_outgoing_edges(query.workspace_id, "symbol", subject.id as i64, query.limit)?.into_iter().filter(|e| matches!(e.kind, dh_types::EdgeKind::Calls)) {
+            let callee_symbol_id = match c.to {
+                NodeId::Symbol(id) => Some(id),
+                _ => None,
+            };
+            let label = callee_symbol_id
                 .and_then(|id| {
                     self.find_symbol_by_id(query.workspace_id, id)
                         .ok()
                         .flatten()
                 })
                 .map(|s| s.qualified_name)
-                .or(c.callee_qualified_name)
-                .unwrap_or(c.callee_display_name);
+                .unwrap_or(c.reason.clone());
+            let source_file_id = match c.from {
+                NodeId::File(id) => id,
+                NodeId::Symbol(id) => self.find_symbol_by_id(query.workspace_id, id)?.map(|s| s.file_id).unwrap_or(0),
+                _ => 0,
+            };
             callees.push(label.clone());
-            if !c.resolved {
+            let resolved = c.resolution == EdgeResolution::Resolved;
+            if !resolved {
                 unresolved = true;
             }
             evidence.push(entry(
                 EvidenceKind::Call,
-                self.find_file_by_id(query.workspace_id, c.source_file_id)?
+                self.find_file_by_id(query.workspace_id, source_file_id)?
                     .map(|f| f.rel_path)
                     .unwrap_or_else(|| "<unknown>".into()),
                 Some(label),
-                Some(c.span.start_line),
-                Some(c.span.end_line),
+                c.span.as_ref().map(|s| s.start_line),
+                c.span.as_ref().map(|s| s.end_line),
                 None,
                 "callee edge".into(),
                 EvidenceSource::Graph,
-                if c.resolved {
+                if resolved {
                     EvidenceConfidence::Grounded
                 } else {
                     EvidenceConfidence::Partial
@@ -1841,14 +1886,11 @@ fn bounded_snippet(content: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dh_storage::{
-        CallEdgeRepository, ChunkRepository, Database, FileRepository, ImportRepository,
-        ReferenceRepository, SymbolRepository,
-    };
+    use dh_storage::{ChunkRepository, Database, FileRepository, SymbolRepository, GraphEdgeRepository};
     use dh_types::{
-        CallEdge, CallKind, Chunk, ChunkKind, EmbeddingStatus, File, FreshnessReason,
-        FreshnessState, Import, ImportKind, LanguageId, ParseStatus, Reference, ReferenceKind,
-        Span, Symbol, Visibility,
+        Chunk, ChunkKind, EmbeddingStatus, File, FreshnessReason,
+        FreshnessState, LanguageId, ParseStatus,
+        Span, Symbol, SymbolKind, Visibility,
     };
     use tempfile::NamedTempFile;
 
@@ -1966,70 +2008,35 @@ mod tests {
             },
         ])?;
 
-        db.insert_imports(&[Import {
-            id: 100,
-            workspace_id: 1,
-            source_file_id: 1,
-            source_symbol_id: None,
-            raw_specifier: "./util".into(),
-            imported_name: Some("helper".into()),
-            local_name: Some("helper".into()),
-            alias: None,
-            kind: ImportKind::EsmNamed,
-            is_type_only: false,
-            is_reexport: false,
-            resolved_file_id: Some(2),
-            resolved_symbol_id: Some(11),
-            span: Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 1,
-                start_column: 0,
-                end_line: 1,
-                end_column: 1,
+        db.insert_edges(&[
+            dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::Imports,
+                from: dh_types::NodeId::File(1),
+                to: dh_types::NodeId::File(2),
+                resolution: dh_types::EdgeResolution::Resolved,
+                confidence: dh_types::EdgeConfidence::Direct,
+                span: Some(Span { start_byte: 0, end_byte: 1, start_line: 1, start_column: 0, end_line: 1, end_column: 1 }),
+                reason: "import".into(),
             },
-            resolution_error: None,
-        }])?;
-
-        db.insert_references(&[Reference {
-            id: 101,
-            workspace_id: 1,
-            source_file_id: 1,
-            source_symbol_id: Some(10),
-            target_symbol_id: Some(11),
-            target_name: "helper".into(),
-            kind: ReferenceKind::Call,
-            resolved: true,
-            resolution_confidence: 1.0,
-            span: Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 2,
-                start_column: 0,
-                end_line: 2,
-                end_column: 1,
+            dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::References,
+                from: dh_types::NodeId::Symbol(10),
+                to: dh_types::NodeId::Symbol(11),
+                resolution: dh_types::EdgeResolution::Resolved,
+                confidence: dh_types::EdgeConfidence::Direct,
+                span: Some(Span { start_byte: 0, end_byte: 1, start_line: 2, start_column: 0, end_line: 2, end_column: 1 }),
+                reason: "reference".into(),
             },
-        }])?;
-
-        db.insert_call_edges(&[CallEdge {
-            id: 102,
-            workspace_id: 1,
-            source_file_id: 1,
-            caller_symbol_id: Some(10),
-            callee_symbol_id: Some(11),
-            callee_qualified_name: Some("helper".into()),
-            callee_display_name: "helper".into(),
-            kind: CallKind::Direct,
-            resolved: true,
-            span: Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 2,
-                start_column: 0,
-                end_line: 2,
-                end_column: 1,
-            },
-        }])?;
+            dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::Calls,
+                from: dh_types::NodeId::Symbol(10),
+                to: dh_types::NodeId::Symbol(11),
+                resolution: dh_types::EdgeResolution::Resolved,
+                confidence: dh_types::EdgeConfidence::Direct,
+                span: Some(Span { start_byte: 0, end_byte: 1, start_line: 2, start_column: 0, end_line: 2, end_column: 1 }),
+                reason: "call".into(),
+            }
+        ], 1)?;
 
         db.insert_chunks(&[
             Chunk {
@@ -2146,25 +2153,17 @@ mod tests {
         let db = setup_db()?;
         seed(&db)?;
 
-        db.insert_references(&[Reference {
-            id: 777,
-            workspace_id: 1,
-            source_file_id: 1,
-            source_symbol_id: Some(10),
-            target_symbol_id: Some(11),
-            target_name: "helper".into(),
-            kind: ReferenceKind::Call,
-            resolved: false,
-            resolution_confidence: 0.2,
-            span: Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 3,
-                start_column: 0,
-                end_line: 3,
-                end_column: 1,
-            },
-        }])?;
+        db.insert_edges(&[
+            dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::References,
+                from: dh_types::NodeId::Symbol(10),
+                to: dh_types::NodeId::Symbol(11),
+                resolution: dh_types::EdgeResolution::Unresolved,
+                confidence: dh_types::EdgeConfidence::BestEffort,
+                span: Some(Span { start_byte: 0, end_byte: 1, start_line: 3, start_column: 0, end_line: 3, end_column: 1 }),
+                reason: "reference".into(),
+            }
+        ], 1)?;
 
         let refs = db.find_references(FindReferencesQuery {
             workspace_id: 1,
@@ -2191,25 +2190,17 @@ mod tests {
         let db = setup_db()?;
         seed(&db)?;
 
-        db.insert_references(&[Reference {
-            id: 888,
-            workspace_id: 1,
-            source_file_id: 1,
-            source_symbol_id: Some(10),
-            target_symbol_id: Some(11),
-            target_name: "helper".into(),
-            kind: ReferenceKind::Call,
-            resolved: false,
-            resolution_confidence: 0.1,
-            span: Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 4,
-                start_column: 0,
-                end_line: 4,
-                end_column: 1,
-            },
-        }])?;
+        db.insert_edges(&[
+            dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::References,
+                from: dh_types::NodeId::Symbol(10),
+                to: dh_types::NodeId::Symbol(11),
+                resolution: dh_types::EdgeResolution::Unresolved,
+                confidence: dh_types::EdgeConfidence::BestEffort,
+                span: Some(Span { start_byte: 0, end_byte: 1, start_line: 4, start_column: 0, end_line: 4, end_column: 1 }),
+                reason: "reference".into(),
+            }
+        ], 1)?;
 
         let dependents = db.find_dependents(FindDependentsQuery {
             workspace_id: 1,

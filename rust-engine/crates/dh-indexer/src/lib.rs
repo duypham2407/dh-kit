@@ -12,8 +12,8 @@ use dh_parser::{
     ExtractionContext,
 };
 use dh_storage::{
-    CallEdgeRepository, ChunkRepository, Database, FileRepository, GraphRepository,
-    ImportRepository, IndexStateRepository, ReferenceRepository, SymbolRepository,
+    GraphEdgeRepository, ChunkRepository, Database, FileRepository,
+    IndexStateRepository, SymbolRepository,
 };
 use dh_types::{
     File, FileCandidate, FreshnessReason, FreshnessState, IndexRunStatus, IndexState, ParseStatus,
@@ -1467,8 +1467,13 @@ fn apply_dependent_invalidation(
 
     let mut dependent_rel_paths = HashSet::new();
     while let Some(current_file_id) = queue.pop_front() {
-        for reverse in db.find_reverse_imports_by_file(workspace_id, current_file_id, 200_000)? {
-            if let Some(importer) = existing_by_id.get(&reverse.source_file_id) {
+        for reverse in db.find_incoming_edges(workspace_id, "file", current_file_id as i64, 200_000)? {
+            if reverse.kind != dh_types::EdgeKind::Imports { continue; }
+            let source_file_id = match reverse.from {
+                dh_types::NodeId::File(id) => id,
+                _ => continue,
+            };
+            if let Some(importer) = existing_by_id.get(&source_file_id) {
                 if importer.deleted_at_unix_ms.is_some() {
                     continue;
                 }
@@ -1497,10 +1502,10 @@ fn apply_dependent_invalidation(
             continue;
         }
 
-        let imports = db.find_imports_by_file(importer.id)?;
-        if imports.iter().any(|import| {
+        let imports = db.find_edges_by_file(importer.id)?;
+        if imports.iter().filter(|e| e.kind == dh_types::EdgeKind::Imports).any(|import| {
             root_rel_paths.iter().any(|root_rel_path| {
-                import_specifier_matches_rel_path(&import.raw_specifier, root_rel_path)
+                import_specifier_matches_rel_path(&import.reason, root_rel_path)
             })
         }) {
             dependent_rel_paths.insert(importer.rel_path.clone());
@@ -1607,8 +1612,13 @@ fn apply_structural_invalidation(
             continue;
         };
 
-        for reverse in db.find_reverse_imports_by_file(workspace_id, root_file.id, 200_000)? {
-            if let Some(importer) = existing_by_id.get(&reverse.source_file_id) {
+        for reverse in db.find_incoming_edges(workspace_id, "file", root_file.id as i64, 200_000)? {
+            if reverse.kind != dh_types::EdgeKind::Imports { continue; }
+            let source_file_id = match reverse.from {
+                dh_types::NodeId::File(id) => id,
+                _ => continue,
+            };
+            if let Some(importer) = existing_by_id.get(&source_file_id) {
                 if importer.deleted_at_unix_ms.is_none() {
                     direct_structural_rel_paths.insert(importer.rel_path.clone());
                 }
@@ -1728,17 +1738,74 @@ fn write_file_atomically(
             db.insert_symbols(symbols)
                 .with_context(|| format!("insert symbols for {}", file.rel_path))?;
         }
-        if !imports.is_empty() {
-            db.insert_imports(imports)
-                .with_context(|| format!("insert imports for {}", file.rel_path))?;
+
+        let mut graph_edges = Vec::new();
+        
+        for import in imports {
+            graph_edges.push(dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::Imports,
+                from: dh_types::NodeId::File(import.source_file_id),
+                to: if let Some(sym) = import.resolved_symbol_id {
+                    dh_types::NodeId::Symbol(sym)
+                } else if let Some(file_id) = import.resolved_file_id {
+                    dh_types::NodeId::File(file_id)
+                } else {
+                    dh_types::NodeId::Symbol(0)
+                },
+                resolution: if import.resolved_file_id.is_some() || import.resolved_symbol_id.is_some() {
+                    dh_types::EdgeResolution::Resolved
+                } else {
+                    dh_types::EdgeResolution::Unresolved
+                },
+                confidence: dh_types::EdgeConfidence::BestEffort,
+                span: Some(import.span.clone()),
+                reason: import.raw_specifier.clone(),
+            });
         }
-        if !call_edges.is_empty() {
-            db.insert_call_edges(call_edges)
-                .with_context(|| format!("insert call edges for {}", file.rel_path))?;
+        
+        for edge in call_edges {
+            graph_edges.push(dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::Calls,
+                from: edge.caller_symbol_id.map(dh_types::NodeId::Symbol).unwrap_or(dh_types::NodeId::File(edge.source_file_id)),
+                to: if let Some(callee) = edge.callee_symbol_id {
+                    dh_types::NodeId::Symbol(callee)
+                } else {
+                    dh_types::NodeId::Symbol(0)
+                },
+                resolution: if edge.resolved {
+                    dh_types::EdgeResolution::Resolved
+                } else {
+                    dh_types::EdgeResolution::Unresolved
+                },
+                confidence: dh_types::EdgeConfidence::BestEffort,
+                span: Some(edge.span.clone()),
+                reason: edge.callee_qualified_name.clone().unwrap_or_default(),
+            });
         }
-        if !references.is_empty() {
-            db.insert_references(references)
-                .with_context(|| format!("insert references for {}", file.rel_path))?;
+        
+        for ref_edge in references {
+            graph_edges.push(dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::References,
+                from: ref_edge.source_symbol_id.map(dh_types::NodeId::Symbol).unwrap_or(dh_types::NodeId::File(ref_edge.source_file_id)),
+                to: if let Some(target) = ref_edge.target_symbol_id {
+                    dh_types::NodeId::Symbol(target)
+                } else {
+                    dh_types::NodeId::Symbol(0)
+                },
+                resolution: if ref_edge.resolved {
+                    dh_types::EdgeResolution::Resolved
+                } else {
+                    dh_types::EdgeResolution::Unresolved
+                },
+                confidence: dh_types::EdgeConfidence::BestEffort,
+                span: Some(ref_edge.span.clone()),
+                reason: ref_edge.target_name.clone(),
+            });
+        }
+        
+        if !graph_edges.is_empty() {
+            db.insert_edges(&graph_edges, file.id)
+                .with_context(|| format!("insert graph edges for {}", file.rel_path))?;
         }
         if !chunks.is_empty() {
             db.insert_chunks(chunks)

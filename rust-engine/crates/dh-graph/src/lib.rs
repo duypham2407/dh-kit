@@ -1,95 +1,14 @@
 //! Graph projection and bounded traversal over stored facts.
 
-use dh_storage::{Database, FileRepository, GraphRepository, ImportRepository, SymbolRepository};
-use dh_types::{CallKind, ChunkId, FileId, ImportKind, Span, SymbolId, WorkspaceId};
-use serde::{Deserialize, Serialize};
+use dh_storage::{Database, FileRepository, GraphRepository, SymbolRepository, GraphEdgeRepository};
+pub use dh_types::{
+    CallKind, ChunkId, EdgeConfidence, EdgeKind, EdgeResolution, FileId, GraphEdge,
+    GraphNeighborhood, GraphNeighbors, GraphNode, GraphPath, ImportKind, NodeId, NodeKind, Span,
+    SymbolId, WorkspaceId,
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NodeKind {
-    File,
-    Symbol,
-    Chunk,
-}
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
-pub enum NodeId {
-    File(FileId),
-    Symbol(SymbolId),
-    Chunk(ChunkId),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EdgeKind {
-    Contains,
-    Definition,
-    Imports,
-    ReExports,
-    References,
-    Calls,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EdgeResolution {
-    Resolved,
-    Unresolved,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EdgeConfidence {
-    Direct,
-    BestEffort,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphNode {
-    pub id: NodeId,
-    pub kind: NodeKind,
-    pub label: String,
-    pub file_path: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphEdge {
-    pub kind: EdgeKind,
-    pub from: NodeId,
-    pub to: NodeId,
-    pub resolution: EdgeResolution,
-    pub confidence: EdgeConfidence,
-    pub span: Option<Span>,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphNeighbors {
-    pub subject: NodeId,
-    pub outgoing: Vec<GraphEdge>,
-    pub incoming: Vec<GraphEdge>,
-    pub truncated: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphPath {
-    pub start: NodeId,
-    pub end: NodeId,
-    pub edges: Vec<GraphEdge>,
-    pub truncated: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphNeighborhood {
-    pub center: NodeId,
-    pub nodes: Vec<NodeId>,
-    pub edges: Vec<GraphEdge>,
-    pub hops: u32,
-    pub node_limit: usize,
-    pub truncated: bool,
-}
 
 pub trait GraphService {
     fn neighbors(
@@ -320,138 +239,45 @@ impl GraphProjectionRepository for Database {
         limit: usize,
     ) -> anyhow::Result<Vec<GraphEdge>> {
         let mut edges = Vec::new();
-        let files = self.list_files_by_workspace(workspace_id)?;
-        let file_by_id: HashMap<FileId, String> =
-            files.into_iter().map(|f| (f.id, f.rel_path)).collect();
-
-        match from {
-            NodeId::File(file_id) => {
-                for symbol in self.find_symbols_by_file(*file_id)? {
-                    edges.push(GraphEdge {
-                        kind: EdgeKind::Contains,
-                        from: NodeId::File(*file_id),
-                        to: NodeId::Symbol(symbol.id),
-                        resolution: EdgeResolution::Resolved,
-                        confidence: EdgeConfidence::Direct,
-                        span: Some(symbol.span),
-                        reason: format!("file contains symbol {}", symbol.name),
-                    });
-                    if edges.len() >= limit {
-                        return Ok(edges);
-                    }
-                }
-
-                for imp in self.find_imports_by_file(*file_id)? {
-                    let kind = if imp.is_reexport {
-                        EdgeKind::ReExports
-                    } else {
-                        EdgeKind::Imports
-                    };
-                    let (to_node, resolution) = if let Some(target_symbol) = imp.resolved_symbol_id
-                    {
-                        (NodeId::Symbol(target_symbol), EdgeResolution::Resolved)
-                    } else if let Some(target_file) = imp.resolved_file_id {
-                        (NodeId::File(target_file), EdgeResolution::Resolved)
-                    } else {
-                        (NodeId::File(*file_id), EdgeResolution::Unresolved)
-                    };
-
-                    edges.push(GraphEdge {
-                        kind,
-                        from: NodeId::File(*file_id),
-                        to: to_node,
-                        resolution,
-                        confidence: import_confidence(imp.kind),
-                        span: Some(imp.span),
-                        reason: format!(
-                            "{} {}",
-                            if imp.is_reexport {
-                                "re-export"
-                            } else {
-                                "import"
-                            },
-                            imp.raw_specifier
-                        ),
-                    });
-                    if edges.len() >= limit {
-                        return Ok(edges);
-                    }
+        let (node_type, node_id) = match from {
+            NodeId::File(id) => ("file", *id as i64),
+            NodeId::Symbol(id) => ("symbol", *id as i64),
+            NodeId::Chunk(_) => return Ok(vec![]),
+        };
+        
+        let db_edges = self.find_outgoing_edges(workspace_id, node_type, node_id, limit)?;
+        edges.extend(db_edges);
+        
+        if let NodeId::File(file_id) = from {
+            for symbol in self.find_symbols_by_file(*file_id)? {
+                edges.push(GraphEdge {
+                    kind: EdgeKind::Contains,
+                    from: NodeId::File(*file_id),
+                    to: NodeId::Symbol(symbol.id),
+                    resolution: EdgeResolution::Resolved,
+                    confidence: EdgeConfidence::Direct,
+                    span: Some(symbol.span),
+                    reason: format!("file contains symbol {}", symbol.name),
+                });
+                if edges.len() >= limit {
+                    break;
                 }
             }
-            NodeId::Symbol(symbol_id) => {
-                for r in self.find_references_to_symbol(workspace_id, *symbol_id, limit)? {
-                    let source = r
-                        .source_symbol_id
-                        .map(NodeId::Symbol)
-                        .unwrap_or(NodeId::File(r.source_file_id));
-                    edges.push(GraphEdge {
-                        kind: EdgeKind::References,
-                        from: source,
-                        to: NodeId::Symbol(*symbol_id),
-                        resolution: if r.resolved {
-                            EdgeResolution::Resolved
-                        } else {
-                            EdgeResolution::Unresolved
-                        },
-                        confidence: if r.resolved {
-                            EdgeConfidence::Direct
-                        } else {
-                            EdgeConfidence::BestEffort
-                        },
-                        span: Some(r.span),
-                        reason: format!("reference {}", r.target_name),
-                    });
-                    if edges.len() >= limit {
-                        return Ok(edges);
-                    }
-                }
-
-                for call in self.find_calls_from_symbol(workspace_id, *symbol_id, limit)? {
-                    let to = call
-                        .callee_symbol_id
-                        .map(NodeId::Symbol)
-                        .unwrap_or_else(|| NodeId::File(call.source_file_id));
-                    edges.push(GraphEdge {
-                        kind: EdgeKind::Calls,
-                        from: NodeId::Symbol(*symbol_id),
-                        to,
-                        resolution: if call.resolved {
-                            EdgeResolution::Resolved
-                        } else {
-                            EdgeResolution::Unresolved
-                        },
-                        confidence: call_confidence(call.kind),
-                        span: Some(call.span),
-                        reason: format!("calls {}", call.callee_display_name),
-                    });
-                    if edges.len() >= limit {
-                        return Ok(edges);
-                    }
-                }
-
-                if let Some(symbol) =
-                    GraphRepository::find_symbol_by_id(self, workspace_id, *symbol_id)?
-                {
-                    edges.push(GraphEdge {
-                        kind: EdgeKind::Definition,
-                        from: NodeId::Symbol(symbol.id),
-                        to: NodeId::File(symbol.file_id),
-                        resolution: EdgeResolution::Resolved,
-                        confidence: EdgeConfidence::Direct,
-                        span: Some(symbol.span),
-                        reason: format!(
-                            "defined in {}",
-                            file_by_id
-                                .get(&symbol.file_id)
-                                .cloned()
-                                .unwrap_or_else(|| "<unknown>".to_string())
-                        ),
-                    });
-                }
+        } else if let NodeId::Symbol(symbol_id) = from {
+            if let Some(symbol) = GraphRepository::find_symbol_by_id(self, workspace_id, *symbol_id)? {
+                edges.push(GraphEdge {
+                    kind: EdgeKind::Definition,
+                    from: NodeId::Symbol(symbol.id),
+                    to: NodeId::File(symbol.file_id),
+                    resolution: EdgeResolution::Resolved,
+                    confidence: EdgeConfidence::Direct,
+                    span: Some(symbol.span),
+                    reason: format!("defined in file {}", symbol.file_id),
+                });
             }
-            NodeId::Chunk(_) => {}
         }
-
+        
+        edges.truncate(limit);
         Ok(edges)
     }
 
@@ -462,72 +288,46 @@ impl GraphProjectionRepository for Database {
         limit: usize,
     ) -> anyhow::Result<Vec<GraphEdge>> {
         let mut edges = Vec::new();
-        match to {
-            NodeId::File(file_id) => {
-                for imp in self.find_reverse_imports_by_file(workspace_id, *file_id, limit)? {
-                    edges.push(GraphEdge {
-                        kind: if imp.is_reexport {
-                            EdgeKind::ReExports
-                        } else {
-                            EdgeKind::Imports
-                        },
-                        from: NodeId::File(imp.source_file_id),
-                        to: NodeId::File(*file_id),
-                        resolution: EdgeResolution::Resolved,
-                        confidence: import_confidence(imp.kind),
-                        span: Some(imp.span),
-                        reason: format!("imported by {}", imp.source_file_id),
-                    });
-                    if edges.len() >= limit {
-                        break;
-                    }
+        let (node_type, node_id) = match to {
+            NodeId::File(id) => ("file", *id as i64),
+            NodeId::Symbol(id) => ("symbol", *id as i64),
+            NodeId::Chunk(_) => return Ok(vec![]),
+        };
+        
+        let db_edges = self.find_incoming_edges(workspace_id, node_type, node_id, limit)?;
+        edges.extend(db_edges);
+        
+        if let NodeId::File(file_id) = to {
+            for symbol in self.find_symbols_by_file(*file_id)? {
+                edges.push(GraphEdge {
+                    kind: EdgeKind::Definition,
+                    from: NodeId::Symbol(symbol.id),
+                    to: NodeId::File(*file_id),
+                    resolution: EdgeResolution::Resolved,
+                    confidence: EdgeConfidence::Direct,
+                    span: Some(symbol.span),
+                    reason: format!("defined in file {}", file_id),
+                });
+                if edges.len() >= limit {
+                    break;
                 }
             }
-            NodeId::Symbol(symbol_id) => {
-                for r in self.find_references_to_symbol(workspace_id, *symbol_id, limit)? {
-                    edges.push(GraphEdge {
-                        kind: EdgeKind::References,
-                        from: r
-                            .source_symbol_id
-                            .map(NodeId::Symbol)
-                            .unwrap_or(NodeId::File(r.source_file_id)),
-                        to: NodeId::Symbol(*symbol_id),
-                        resolution: if r.resolved {
-                            EdgeResolution::Resolved
-                        } else {
-                            EdgeResolution::Unresolved
-                        },
-                        confidence: if r.resolved {
-                            EdgeConfidence::Direct
-                        } else {
-                            EdgeConfidence::BestEffort
-                        },
-                        span: Some(r.span),
-                        reason: format!("reference {}", r.target_name),
-                    });
-                    if edges.len() >= limit {
-                        break;
-                    }
-                }
+        } else if let NodeId::Symbol(symbol_id) = to {
+            if let Some(symbol) = GraphRepository::find_symbol_by_id(self, workspace_id, *symbol_id)? {
+                edges.push(GraphEdge {
+                    kind: EdgeKind::Contains,
+                    from: NodeId::File(symbol.file_id),
+                    to: NodeId::Symbol(symbol.id),
+                    resolution: EdgeResolution::Resolved,
+                    confidence: EdgeConfidence::Direct,
+                    span: Some(symbol.span),
+                    reason: format!("file contains symbol {}", symbol.name),
+                });
             }
-            NodeId::Chunk(_) => {}
         }
-
+        
+        edges.truncate(limit);
         Ok(edges)
-    }
-}
-
-fn import_confidence(kind: ImportKind) -> EdgeConfidence {
-    match kind {
-        ImportKind::Dynamic | ImportKind::ConditionalRequire => EdgeConfidence::BestEffort,
-        _ => EdgeConfidence::Direct,
-    }
-}
-
-fn call_confidence(kind: CallKind) -> EdgeConfidence {
-    match kind {
-        CallKind::Dynamic => EdgeConfidence::BestEffort,
-        _ => EdgeConfidence::Direct,
     }
 }
 
@@ -535,8 +335,7 @@ fn call_confidence(kind: CallKind) -> EdgeConfidence {
 mod tests {
     use super::{GraphProjectionRepository, GraphService, NodeId};
     use dh_storage::{
-        CallEdgeRepository, ChunkRepository, Database, FileRepository, ImportRepository,
-        ReferenceRepository, SymbolRepository,
+        GraphEdgeRepository, ChunkRepository, Database, FileRepository, SymbolRepository,
     };
     use dh_types::{
         CallEdge, CallKind, Chunk, ChunkKind, EmbeddingStatus, File, FreshnessReason,
@@ -659,70 +458,56 @@ mod tests {
             },
         ])?;
 
-        db.insert_imports(&[Import {
-            id: 100,
-            workspace_id: 1,
-            source_file_id: 1,
-            source_symbol_id: None,
-            raw_specifier: "./b".into(),
-            imported_name: Some("b".into()),
-            local_name: Some("b".into()),
-            alias: None,
-            kind: ImportKind::EsmNamed,
-            is_type_only: false,
-            is_reexport: false,
-            resolved_file_id: Some(2),
-            resolved_symbol_id: Some(20),
-            span: Span {
-                start_byte: 0,
-                end_byte: 10,
-                start_line: 1,
-                start_column: 0,
-                end_line: 1,
-                end_column: 10,
+        db.insert_edges(&[
+            dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::Imports,
+                from: dh_types::NodeId::File(1),
+                to: dh_types::NodeId::Symbol(20),
+                resolution: dh_types::EdgeResolution::Resolved,
+                confidence: dh_types::EdgeConfidence::Direct,
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 10,
+                    start_line: 1,
+                    start_column: 0,
+                    end_line: 1,
+                    end_column: 10,
+                }),
+                reason: "./b".into(),
             },
-            resolution_error: None,
-        }])?;
-
-        db.insert_references(&[Reference {
-            id: 200,
-            workspace_id: 1,
-            source_file_id: 1,
-            source_symbol_id: Some(10),
-            target_symbol_id: Some(20),
-            target_name: "b".into(),
-            kind: ReferenceKind::Call,
-            resolved: true,
-            resolution_confidence: 1.0,
-            span: Span {
-                start_byte: 0,
-                end_byte: 3,
-                start_line: 2,
-                start_column: 2,
-                end_line: 2,
-                end_column: 5,
+            dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::References,
+                from: dh_types::NodeId::Symbol(10),
+                to: dh_types::NodeId::Symbol(20),
+                resolution: dh_types::EdgeResolution::Resolved,
+                confidence: dh_types::EdgeConfidence::Direct,
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 3,
+                    start_line: 2,
+                    start_column: 2,
+                    end_line: 2,
+                    end_column: 5,
+                }),
+                reason: "b".into(),
             },
-        }])?;
-
-        db.insert_call_edges(&[CallEdge {
-            id: 300,
-            workspace_id: 1,
-            source_file_id: 1,
-            caller_symbol_id: Some(10),
-            callee_symbol_id: Some(20),
-            callee_qualified_name: Some("b".into()),
-            callee_display_name: "b".into(),
-            kind: CallKind::Direct,
-            resolved: true,
-            span: Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 2,
-                start_column: 2,
-                end_line: 2,
-                end_column: 3,
-            },
-        }])?;
+            dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::Calls,
+                from: dh_types::NodeId::Symbol(10),
+                to: dh_types::NodeId::Symbol(20),
+                resolution: dh_types::EdgeResolution::Resolved,
+                confidence: dh_types::EdgeConfidence::Direct,
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 2,
+                    start_column: 2,
+                    end_line: 2,
+                    end_column: 3,
+                }),
+                reason: "b".into(),
+            }
+        ], 1)?;
 
         db.insert_chunks(&[Chunk {
             id: 400,

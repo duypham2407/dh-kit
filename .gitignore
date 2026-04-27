@@ -50,3 +50,9 @@ rust-engine/target/
 *.log
 context-engine-combined.log
 context-engine-error.log
+.opencode 
+{cwd}
+qa-*
+release-*
+performance-*
+operator-*

@@ -1468,12 +1468,11 @@ fn push_language(target: &mut Vec<LanguageId>, language: LanguageId) {
 mod tests {
     use super::{handle_request, BridgeRpcRouter, RpcRequest};
     use dh_storage::{
-        CallEdgeRepository, Database, FileRepository, ImportRepository, ReferenceRepository,
-        SymbolRepository,
+        Database, FileRepository, SymbolRepository, GraphEdgeRepository,
     };
     use dh_types::{
-        CallEdge, CallKind, File, FreshnessReason, FreshnessState, Import, ImportKind, LanguageId,
-        ParseStatus, Reference, ReferenceKind, Span, Symbol, SymbolKind, Visibility,
+        File, FreshnessReason, FreshnessState, LanguageId, ParseStatus, Span, Symbol, SymbolKind, Visibility,
+        GraphEdge, EdgeKind, EdgeResolution, EdgeConfidence, NodeId,
     };
     use serde_json::json;
     use serde_json::Value;
@@ -1758,110 +1757,106 @@ mod tests {
             },
         ])?;
 
-        db.insert_imports(&[Import {
-            id: 100,
-            workspace_id: 1,
-            source_file_id: 1,
-            source_symbol_id: None,
-            raw_specifier: "./util".into(),
-            imported_name: Some("helper".into()),
-            local_name: Some("helper".into()),
-            alias: None,
-            kind: ImportKind::EsmNamed,
-            is_type_only: false,
-            is_reexport: false,
-            resolved_file_id: Some(2),
-            resolved_symbol_id: Some(11),
-            span: Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 1,
-                start_column: 0,
-                end_line: 1,
-                end_column: 1,
+        db.insert_edges(&[
+            GraphEdge {
+                from: NodeId::File(1),
+                to: NodeId::File(2),
+                kind: EdgeKind::Imports,
+                resolution: EdgeResolution::Resolved,
+                confidence: EdgeConfidence::Direct,
+                reason: "./util".into(),
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 1,
+                    start_column: 0,
+                    end_line: 1,
+                    end_column: 1,
+                }),
             },
-            resolution_error: None,
-        }])?;
-
-        db.insert_references(&[Reference {
-            id: 101,
-            workspace_id: 1,
-            source_file_id: 1,
-            source_symbol_id: Some(10),
-            target_symbol_id: Some(11),
-            target_name: "helper".into(),
-            kind: ReferenceKind::Call,
-            resolved: true,
-            resolution_confidence: 1.0,
-            span: Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 2,
-                start_column: 0,
-                end_line: 2,
-                end_column: 1,
-            },
-        }])?;
-
-        db.insert_call_edges(&[
-            CallEdge {
-                id: 102,
-                workspace_id: 1,
-                source_file_id: 1,
-                caller_symbol_id: Some(10),
-                callee_symbol_id: Some(11),
-                callee_qualified_name: Some("helper".into()),
-                callee_display_name: "helper".into(),
-                kind: CallKind::Direct,
-                resolved: true,
-                span: Span {
+            GraphEdge {
+                from: NodeId::Symbol(10),
+                to: NodeId::Symbol(11),
+                kind: EdgeKind::References,
+                resolution: EdgeResolution::Resolved,
+                confidence: EdgeConfidence::Direct,
+                reason: "helper".into(),
+                span: Some(Span {
                     start_byte: 0,
                     end_byte: 1,
                     start_line: 2,
                     start_column: 0,
                     end_line: 2,
                     end_column: 1,
-                },
+                }),
             },
-            CallEdge {
-                id: 103,
-                workspace_id: 1,
-                source_file_id: 3,
-                caller_symbol_id: Some(13),
-                callee_symbol_id: Some(12),
-                callee_qualified_name: Some("py_helper".into()),
-                callee_display_name: "py_helper".into(),
-                kind: CallKind::Direct,
-                resolved: true,
-                span: Span {
+            GraphEdge {
+                from: NodeId::Symbol(10),
+                to: NodeId::Symbol(11),
+                kind: EdgeKind::Calls,
+                resolution: EdgeResolution::Resolved,
+                confidence: EdgeConfidence::Direct,
+                reason: "helper".into(),
+                span: Some(Span {
                     start_byte: 0,
                     end_byte: 1,
                     start_line: 2,
                     start_column: 0,
                     end_line: 2,
                     end_column: 1,
-                },
+                }),
             },
-            CallEdge {
-                id: 104,
-                workspace_id: 1,
-                source_file_id: 1,
-                caller_symbol_id: Some(10),
-                callee_symbol_id: Some(14),
-                callee_qualified_name: Some("rust_helper".into()),
-                callee_display_name: "rust_helper".into(),
-                kind: CallKind::Direct,
-                resolved: true,
-                span: Span {
+            GraphEdge {
+                from: NodeId::Symbol(13),
+                to: NodeId::Symbol(12),
+                kind: EdgeKind::Calls,
+                resolution: EdgeResolution::Resolved,
+                confidence: EdgeConfidence::Direct,
+                reason: "py_helper".into(),
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 2,
+                    start_column: 0,
+                    end_line: 2,
+                    end_column: 1,
+                }),
+            },
+            GraphEdge {
+                from: NodeId::Symbol(10),
+                to: NodeId::Symbol(14),
+                kind: EdgeKind::Calls,
+                resolution: EdgeResolution::Resolved,
+                confidence: EdgeConfidence::Direct,
+                reason: "rust_helper".into(),
+                span: Some(Span {
                     start_byte: 0,
                     end_byte: 1,
                     start_line: 3,
                     start_column: 0,
                     end_line: 3,
                     end_column: 1,
-                },
+                }),
             },
-        ])?;
+        ], 1)?;
+        db.insert_edges(&[
+            GraphEdge {
+                from: NodeId::Symbol(13),
+                to: NodeId::Symbol(12),
+                kind: EdgeKind::Calls,
+                resolution: EdgeResolution::Resolved,
+                confidence: EdgeConfidence::Direct,
+                reason: "py_helper".into(),
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 2,
+                    start_column: 0,
+                    end_line: 2,
+                    end_column: 1,
+                }),
+            },
+        ], 3)?;
 
         Ok(())
     }
@@ -2055,25 +2050,22 @@ mod tests {
             .as_str()
             .is_some_and(|value| value.contains("bridge contract v2")));
 
-        db.insert_references(&[Reference {
-            id: 999,
-            workspace_id: 1,
-            source_file_id: 1,
-            source_symbol_id: Some(10),
-            target_symbol_id: Some(11),
-            target_name: "helper".into(),
-            kind: ReferenceKind::Call,
-            resolved: false,
-            resolution_confidence: 0.25,
-            span: Span {
+        db.insert_edges(&[GraphEdge {
+            from: NodeId::Symbol(10),
+            to: NodeId::Symbol(11),
+            kind: EdgeKind::References,
+            resolution: EdgeResolution::Unresolved,
+            confidence: EdgeConfidence::BestEffort,
+            reason: "helper".into(),
+            span: Some(Span {
                 start_byte: 0,
                 end_byte: 1,
                 start_line: 3,
                 start_column: 0,
                 end_line: 3,
                 end_column: 1,
-            },
-        }])?;
+            }),
+        }], 1)?;
 
         let usage_partial = handle_request(
             tmp.path(),

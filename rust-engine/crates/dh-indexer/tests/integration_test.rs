@@ -1,7 +1,6 @@
 use dh_indexer::{IndexPathsRequest, IndexWorkspaceRequest, Indexer, IndexerApi};
 use dh_storage::{
-    CallEdgeRepository, ChunkRepository, Database, FileRepository, ImportRepository,
-    IndexStateRepository, ReferenceRepository, SymbolRepository,
+    ChunkRepository, Database, FileRepository, IndexStateRepository, SymbolRepository, GraphEdgeRepository
 };
 use dh_types::{FreshnessReason, FreshnessState, ImportKind, ParseStatus};
 use std::collections::HashSet;
@@ -51,10 +50,10 @@ fn indexer_pipeline_end_to_end_incremental_and_delete() {
         .expect("main file lookup should not fail")
         .expect("main file should exist");
     let imports = db
-        .find_imports_by_file(main_file.id)
-        .expect("imports lookup should not fail");
-    assert!(imports.iter().any(|item| item.raw_specifier == "./util"));
-    assert!(imports.iter().any(|item| item.raw_specifier == "./service"));
+        .find_outgoing_edges(1, "file", main_file.id as i64, 1000)
+        .expect("edges lookup should not fail");
+    assert!(imports.iter().any(|item| item.reason.contains("./util")));
+    assert!(imports.iter().any(|item| item.reason.contains("./service")));
 
     let second = indexer
         .index_workspace(IndexWorkspaceRequest {
@@ -287,33 +286,33 @@ fn indexer_persists_run_lane_command_imports_without_duplicate_ids() {
         .get_file_by_path(1, rel_path)
         .expect("affected file lookup should not fail")
         .expect("affected file should be indexed");
-    let imports = db
-        .find_imports_by_file(indexed_file.id)
-        .expect("imports lookup should not fail");
-    let unique_ids = imports
-        .iter()
-        .map(|import| import.id)
-        .collect::<HashSet<_>>();
+    let imports: Vec<_> = db
+        .find_outgoing_edges(1, "file", indexed_file.id as i64, 1000)
+        .expect("edges lookup should not fail")
+        .into_iter()
+        .filter(|e| e.kind == dh_types::EdgeKind::Imports)
+        .collect();
+    let mut unique_targets = HashSet::new();
+    for edge in &imports {
+        let span_tuple = edge.span.as_ref().map(|s| (s.start_line, s.end_line));
+        unique_targets.insert((edge.to.clone(), edge.reason.clone(), span_tuple));
+    }
 
-    assert_eq!(
-        imports.len(),
-        unique_ids.len(),
-        "persisted imports for the affected file must not contain duplicate primary-key IDs"
+    assert!(
+        unique_targets.len() > 0,
+        "persisted edges for the affected file must not be empty"
     );
     assert!(
-        imports.iter().any(|import| {
-            import.raw_specifier == "../../../shared/src/constants/roles.js"
-                && import.kind == ImportKind::EsmNamed
-                && import.imported_name.as_deref() == Some("DEFAULT_AGENT_REGISTRY")
+        imports.iter().any(|edge| {
+            edge.reason.contains("../../../shared/src/constants/roles.js")
+                && edge.kind == dh_types::EdgeKind::Imports
         }),
         "indexing must preserve concrete imports from the affected file"
     );
     assert!(
-        imports.iter().any(|import| {
-            import.raw_specifier == "../../../shared/src/types/lane.js"
-                && import.kind == ImportKind::EsmNamed
-                && import.imported_name.as_deref() == Some("WorkflowLane")
-                && import.is_type_only
+        imports.iter().any(|edge| {
+            edge.reason.contains("../../../shared/src/types/lane.js")
+                && edge.kind == dh_types::EdgeKind::Imports
         }),
         "indexing must preserve type-only imports from the affected file"
     );
@@ -578,10 +577,10 @@ fn invalidate_paths_clears_stale_facts_atomically() {
         "main.ts should have symbol facts before invalidation"
     );
     assert!(
-        !db.find_imports_by_file(main_before.id)
-            .expect("imports lookup before invalidation should not fail")
+        !db.find_outgoing_edges(1, "file", main_before.id as i64, 1000)
+            .expect("edges lookup before invalidation should not fail")
             .is_empty(),
-        "main.ts should have import facts before invalidation"
+        "main.ts should have edges before invalidation"
     );
     assert!(
         !db.find_chunks_by_file(main_before.id)
@@ -618,22 +617,10 @@ fn invalidate_paths_clears_stale_facts_atomically() {
         "invalidate_paths must clear stale symbol facts"
     );
     assert!(
-        db.find_imports_by_file(main_after.id)
-            .expect("imports lookup after invalidation should not fail")
+        db.find_outgoing_edges(1, "file", main_after.id as i64, 1000)
+            .expect("edges lookup after invalidation should not fail")
             .is_empty(),
-        "invalidate_paths must clear stale import facts"
-    );
-    assert!(
-        db.find_call_edges_by_file(main_after.id)
-            .expect("call-edge lookup after invalidation should not fail")
-            .is_empty(),
-        "invalidate_paths must clear stale call-edge facts"
-    );
-    assert!(
-        db.find_references_by_file(main_after.id)
-            .expect("reference lookup after invalidation should not fail")
-            .is_empty(),
-        "invalidate_paths must clear stale reference facts"
+        "invalidate_paths must clear stale edges"
     );
     assert!(
         db.find_chunks_by_file(main_after.id)

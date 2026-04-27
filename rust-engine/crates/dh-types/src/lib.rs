@@ -667,3 +667,94 @@ pub struct BenchmarkSuiteArtifact {
     pub summary: BenchmarkSummary,
     pub results: Vec<BenchmarkResult>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeKind {
+    File,
+    Symbol,
+    Chunk,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+pub enum NodeId {
+    File(FileId),
+    Symbol(SymbolId),
+    Chunk(ChunkId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeKind {
+    Contains,
+    Definition,
+    Imports,
+    ReExports,
+    References,
+    Calls,
+    Extends,
+    Implements,
+    TypeReferences,
+    Exports,
+    DefinesChunk,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeResolution {
+    Resolved,
+    Unresolved,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeConfidence {
+    Direct,
+    BestEffort,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: NodeId,
+    pub kind: NodeKind,
+    pub label: String,
+    pub file_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub kind: EdgeKind,
+    pub from: NodeId,
+    pub to: NodeId,
+    pub resolution: EdgeResolution,
+    pub confidence: EdgeConfidence,
+    pub span: Option<Span>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphNeighbors {
+    pub subject: NodeId,
+    pub outgoing: Vec<GraphEdge>,
+    pub incoming: Vec<GraphEdge>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphPath {
+    pub start: NodeId,
+    pub end: NodeId,
+    pub edges: Vec<GraphEdge>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphNeighborhood {
+    pub center: NodeId,
+    pub nodes: Vec<NodeId>,
+    pub edges: Vec<GraphEdge>,
+    pub hops: u32,
+    pub node_limit: usize,
+    pub truncated: bool,
+}

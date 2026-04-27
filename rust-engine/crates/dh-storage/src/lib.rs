@@ -2,9 +2,8 @@
 
 use anyhow::{Context, Result};
 use dh_types::{
-    CallEdge, CallKind, Chunk, ChunkId, EmbeddingStatus, File, FileId, FreshnessReason,
-    FreshnessState, Import, ImportKind, IndexRunStatus, IndexState, LanguageId, ParseStatus,
-    Reference, ReferenceKind, Span, Symbol, SymbolId, SymbolKind, Visibility, WorkspaceId,
+    CallKind, Chunk, ChunkId, EmbeddingStatus, File, FileId, FreshnessReason,
+    FreshnessState, ImportKind, IndexRunStatus, IndexState, LanguageId, ParseStatus, ReferenceKind, Span, Symbol, SymbolId, SymbolKind, Visibility, WorkspaceId,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use thiserror::Error;
@@ -147,57 +146,23 @@ impl Database {
               symbol_hash TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS imports (
+            CREATE TABLE IF NOT EXISTS graph_edges (
               id INTEGER PRIMARY KEY,
               workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
               source_file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-              source_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
-              raw_specifier TEXT NOT NULL,
-              imported_name TEXT,
-              local_name TEXT,
-              alias TEXT,
               kind TEXT NOT NULL,
-              is_type_only INTEGER NOT NULL DEFAULT 0,
-              is_reexport INTEGER NOT NULL DEFAULT 0,
-              resolved_file_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
-              resolved_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
-              start_line INTEGER NOT NULL,
-              start_column INTEGER NOT NULL,
-              end_line INTEGER NOT NULL,
-              end_column INTEGER NOT NULL,
-              resolution_error TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS call_edges (
-              id INTEGER PRIMARY KEY,
-              workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-              source_file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-              caller_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
-              callee_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
-              callee_qualified_name TEXT,
-              callee_display_name TEXT NOT NULL,
-              kind TEXT NOT NULL,
-              resolved INTEGER NOT NULL DEFAULT 0,
-              start_line INTEGER NOT NULL,
-              start_column INTEGER NOT NULL,
-              end_line INTEGER NOT NULL,
-              end_column INTEGER NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS [references] (
-              id INTEGER PRIMARY KEY,
-              workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-              source_file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-              source_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
-              target_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
-              target_name TEXT NOT NULL,
-              kind TEXT NOT NULL,
-              resolved INTEGER NOT NULL DEFAULT 0,
-              resolution_confidence REAL NOT NULL DEFAULT 0.0,
-              start_line INTEGER NOT NULL,
-              start_column INTEGER NOT NULL,
-              end_line INTEGER NOT NULL,
-              end_column INTEGER NOT NULL
+              from_node_kind TEXT NOT NULL,
+              from_node_id INTEGER NOT NULL,
+              to_node_kind TEXT NOT NULL,
+              to_node_id INTEGER,
+              resolution TEXT NOT NULL,
+              confidence TEXT NOT NULL,
+              start_line INTEGER,
+              start_column INTEGER,
+              end_line INTEGER,
+              end_column INTEGER,
+              reason TEXT NOT NULL,
+              payload_json TEXT
             );
 
             CREATE TABLE IF NOT EXISTS chunks (
@@ -288,17 +253,10 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_symbols_parent ON symbols(parent_symbol_id);
             CREATE INDEX IF NOT EXISTS idx_symbols_exported ON symbols(workspace_id, exported, kind);
 
-            CREATE INDEX IF NOT EXISTS idx_imports_source_file ON imports(source_file_id);
-            CREATE INDEX IF NOT EXISTS idx_imports_resolved_file ON imports(resolved_file_id);
-            CREATE INDEX IF NOT EXISTS idx_imports_specifier ON imports(workspace_id, raw_specifier);
-
-            CREATE INDEX IF NOT EXISTS idx_calls_caller ON call_edges(caller_symbol_id);
-            CREATE INDEX IF NOT EXISTS idx_calls_callee ON call_edges(callee_symbol_id);
-            CREATE INDEX IF NOT EXISTS idx_calls_source_file ON call_edges(source_file_id);
-
-            CREATE INDEX IF NOT EXISTS idx_refs_target ON [references](target_symbol_id);
-            CREATE INDEX IF NOT EXISTS idx_refs_source_symbol ON [references](source_symbol_id);
-            CREATE INDEX IF NOT EXISTS idx_refs_target_name ON [references](workspace_id, target_name);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_source_file ON graph_edges(source_file_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_from_node ON graph_edges(from_node_kind, from_node_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_to_node ON graph_edges(to_node_kind, to_node_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_kind ON graph_edges(kind);
 
             CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_id);
             CREATE INDEX IF NOT EXISTS idx_chunks_symbol ON chunks(symbol_id);
@@ -370,20 +328,13 @@ pub trait SymbolRepository {
     fn find_symbols_by_workspace(&self, workspace_id: WorkspaceId) -> Result<Vec<Symbol>>;
 }
 
-pub trait ImportRepository {
-    fn insert_imports(&self, imports: &[Import]) -> Result<()>;
-    fn find_imports_by_file(&self, file_id: FileId) -> Result<Vec<Import>>;
+pub trait GraphEdgeRepository {
+    fn insert_edges(&self, edges: &[dh_types::GraphEdge], source_file_id: FileId) -> Result<()>;
+    fn find_edges_by_file(&self, file_id: FileId) -> Result<Vec<dh_types::GraphEdge>>;
+    fn find_outgoing_edges(&self, workspace_id: WorkspaceId, from_kind: &str, from_id: i64, node_limit: usize) -> Result<Vec<dh_types::GraphEdge>>;
+    fn find_incoming_edges(&self, workspace_id: WorkspaceId, to_kind: &str, to_id: i64, node_limit: usize) -> Result<Vec<dh_types::GraphEdge>>;
 }
 
-pub trait CallEdgeRepository {
-    fn insert_call_edges(&self, edges: &[CallEdge]) -> Result<()>;
-    fn find_call_edges_by_file(&self, file_id: FileId) -> Result<Vec<CallEdge>>;
-}
-
-pub trait ReferenceRepository {
-    fn insert_references(&self, references: &[Reference]) -> Result<()>;
-    fn find_references_by_file(&self, file_id: FileId) -> Result<Vec<Reference>>;
-}
 
 pub trait ChunkRepository {
     fn insert_chunks(&self, chunks: &[Chunk]) -> Result<()>;
@@ -409,42 +360,6 @@ pub trait GraphRepository {
         workspace_id: WorkspaceId,
         chunk_id: ChunkId,
     ) -> Result<Option<Chunk>>;
-    fn find_references_to_symbol(
-        &self,
-        workspace_id: WorkspaceId,
-        symbol_id: SymbolId,
-        limit: usize,
-    ) -> Result<Vec<Reference>>;
-    fn find_references_to_target_name(
-        &self,
-        workspace_id: WorkspaceId,
-        target_name: &str,
-        limit: usize,
-    ) -> Result<Vec<Reference>>;
-    fn find_reverse_imports_by_file(
-        &self,
-        workspace_id: WorkspaceId,
-        file_id: FileId,
-        limit: usize,
-    ) -> Result<Vec<Import>>;
-    fn find_reverse_imports_by_symbol(
-        &self,
-        workspace_id: WorkspaceId,
-        symbol_id: SymbolId,
-        limit: usize,
-    ) -> Result<Vec<Import>>;
-    fn find_calls_from_symbol(
-        &self,
-        workspace_id: WorkspaceId,
-        symbol_id: SymbolId,
-        limit: usize,
-    ) -> Result<Vec<CallEdge>>;
-    fn find_calls_to_symbol(
-        &self,
-        workspace_id: WorkspaceId,
-        symbol_id: SymbolId,
-        limit: usize,
-    ) -> Result<Vec<CallEdge>>;
     fn bounded_file_neighborhood(
         &self,
         workspace_id: WorkspaceId,
@@ -541,15 +456,7 @@ impl FileRepository for Database {
         self.conn
             .execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
         self.conn.execute(
-            "DELETE FROM imports WHERE source_file_id = ?1",
-            params![file_id],
-        )?;
-        self.conn.execute(
-            "DELETE FROM call_edges WHERE source_file_id = ?1",
-            params![file_id],
-        )?;
-        self.conn.execute(
-            "DELETE FROM [references] WHERE source_file_id = ?1",
+            "DELETE FROM graph_edges WHERE source_file_id = ?1",
             params![file_id],
         )?;
 
@@ -714,65 +621,6 @@ impl SymbolRepository for Database {
     }
 }
 
-impl ImportRepository for Database {
-    fn insert_imports(&self, imports: &[Import]) -> Result<()> {
-        let mut stmt = self.conn.prepare(
-            "
-            INSERT INTO imports (
-              id, workspace_id, source_file_id, source_symbol_id, raw_specifier,
-              imported_name, local_name, alias, kind, is_type_only, is_reexport,
-              resolved_file_id, resolved_symbol_id, start_line, start_column,
-              end_line, end_column, resolution_error
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
-            ",
-        )?;
-
-        for import in imports {
-            stmt.execute(params![
-                import.id,
-                import.workspace_id,
-                import.source_file_id,
-                import.source_symbol_id,
-                import.raw_specifier,
-                import.imported_name,
-                import.local_name,
-                import.alias,
-                import_kind_to_str(import.kind),
-                bool_to_int(import.is_type_only),
-                bool_to_int(import.is_reexport),
-                import.resolved_file_id,
-                import.resolved_symbol_id,
-                import.span.start_line as i64,
-                import.span.start_column as i64,
-                import.span.end_line as i64,
-                import.span.end_column as i64,
-                import.resolution_error,
-            ])?;
-        }
-        Ok(())
-    }
-
-    fn find_imports_by_file(&self, file_id: FileId) -> Result<Vec<Import>> {
-        let mut stmt = self.conn.prepare(
-            "
-            SELECT id, workspace_id, source_file_id, source_symbol_id, raw_specifier,
-                   imported_name, local_name, alias, kind, is_type_only, is_reexport,
-                   resolved_file_id, resolved_symbol_id, start_line, start_column,
-                   end_line, end_column, resolution_error
-              FROM imports
-             WHERE source_file_id = ?1
-             ORDER BY id ASC
-            ",
-        )?;
-
-        let rows = stmt.query_map(params![file_id], map_import)?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-}
 
 impl ChunkRepository for Database {
     fn insert_chunks(&self, chunks: &[Chunk]) -> Result<()> {
@@ -873,108 +721,6 @@ impl ChunkRepository for Database {
     }
 }
 
-impl CallEdgeRepository for Database {
-    fn insert_call_edges(&self, edges: &[CallEdge]) -> Result<()> {
-        let mut stmt = self.conn.prepare(
-            "
-            INSERT INTO call_edges (
-              id, workspace_id, source_file_id, caller_symbol_id, callee_symbol_id,
-              callee_qualified_name, callee_display_name, kind, resolved,
-              start_line, start_column, end_line, end_column
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-            ",
-        )?;
-
-        for edge in edges {
-            stmt.execute(params![
-                edge.id,
-                edge.workspace_id,
-                edge.source_file_id,
-                edge.caller_symbol_id,
-                edge.callee_symbol_id,
-                edge.callee_qualified_name,
-                edge.callee_display_name,
-                call_kind_to_str(edge.kind),
-                bool_to_int(edge.resolved),
-                edge.span.start_line as i64,
-                edge.span.start_column as i64,
-                edge.span.end_line as i64,
-                edge.span.end_column as i64,
-            ])?;
-        }
-        Ok(())
-    }
-
-    fn find_call_edges_by_file(&self, file_id: FileId) -> Result<Vec<CallEdge>> {
-        let mut stmt = self.conn.prepare(
-            "
-            SELECT id, workspace_id, source_file_id, caller_symbol_id, callee_symbol_id,
-                   callee_qualified_name, callee_display_name, kind, resolved,
-                   start_line, start_column, end_line, end_column
-              FROM call_edges
-             WHERE source_file_id = ?1
-             ORDER BY id ASC
-            ",
-        )?;
-        let rows = stmt.query_map(params![file_id], map_call_edge)?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-}
-
-impl ReferenceRepository for Database {
-    fn insert_references(&self, references: &[Reference]) -> Result<()> {
-        let mut stmt = self.conn.prepare(
-            "
-            INSERT INTO [references] (
-              id, workspace_id, source_file_id, source_symbol_id, target_symbol_id,
-              target_name, kind, resolved, resolution_confidence,
-              start_line, start_column, end_line, end_column
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-            ",
-        )?;
-        for reference in references {
-            stmt.execute(params![
-                reference.id,
-                reference.workspace_id,
-                reference.source_file_id,
-                reference.source_symbol_id,
-                reference.target_symbol_id,
-                reference.target_name,
-                reference_kind_to_str(reference.kind),
-                bool_to_int(reference.resolved),
-                reference.resolution_confidence,
-                reference.span.start_line as i64,
-                reference.span.start_column as i64,
-                reference.span.end_line as i64,
-                reference.span.end_column as i64,
-            ])?;
-        }
-        Ok(())
-    }
-
-    fn find_references_by_file(&self, file_id: FileId) -> Result<Vec<Reference>> {
-        let mut stmt = self.conn.prepare(
-            "
-            SELECT id, workspace_id, source_file_id, source_symbol_id, target_symbol_id,
-                   target_name, kind, resolved, resolution_confidence,
-                   start_line, start_column, end_line, end_column
-              FROM [references]
-             WHERE source_file_id = ?1
-             ORDER BY id ASC
-            ",
-        )?;
-        let rows = stmt.query_map(params![file_id], map_reference)?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-}
 
 impl IndexStateRepository for Database {
     fn get_state(&self, workspace_id: WorkspaceId) -> Result<Option<IndexState>> {
@@ -1210,170 +956,6 @@ impl GraphRepository for Database {
             .map_err(Into::into)
     }
 
-    fn find_references_to_symbol(
-        &self,
-        workspace_id: WorkspaceId,
-        symbol_id: SymbolId,
-        limit: usize,
-    ) -> Result<Vec<Reference>> {
-        let mut stmt = self.conn.prepare(
-            "
-            SELECT id, workspace_id, source_file_id, source_symbol_id, target_symbol_id,
-                   target_name, kind, resolved, resolution_confidence,
-                   start_line, start_column, end_line, end_column
-              FROM [references]
-             WHERE workspace_id = ?1 AND target_symbol_id = ?2
-             ORDER BY id ASC
-             LIMIT ?3
-            ",
-        )?;
-        let rows = stmt.query_map(
-            params![workspace_id, symbol_id, limit as i64],
-            map_reference,
-        )?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-
-    fn find_references_to_target_name(
-        &self,
-        workspace_id: WorkspaceId,
-        target_name: &str,
-        limit: usize,
-    ) -> Result<Vec<Reference>> {
-        let mut stmt = self.conn.prepare(
-            "
-            SELECT id, workspace_id, source_file_id, source_symbol_id, target_symbol_id,
-                   target_name, kind, resolved, resolution_confidence,
-                   start_line, start_column, end_line, end_column
-              FROM [references]
-             WHERE workspace_id = ?1 AND target_name = ?2
-             ORDER BY id ASC
-             LIMIT ?3
-            ",
-        )?;
-        let rows = stmt.query_map(
-            params![workspace_id, target_name, limit as i64],
-            map_reference,
-        )?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-
-    fn find_reverse_imports_by_file(
-        &self,
-        workspace_id: WorkspaceId,
-        file_id: FileId,
-        limit: usize,
-    ) -> Result<Vec<Import>> {
-        let mut stmt = self.conn.prepare(
-            "
-            SELECT id, workspace_id, source_file_id, source_symbol_id, raw_specifier,
-                   imported_name, local_name, alias, kind, is_type_only, is_reexport,
-                   resolved_file_id, resolved_symbol_id, start_line, start_column,
-                   end_line, end_column, resolution_error
-              FROM imports
-             WHERE workspace_id = ?1 AND resolved_file_id = ?2
-             ORDER BY id ASC
-             LIMIT ?3
-            ",
-        )?;
-        let rows = stmt.query_map(params![workspace_id, file_id, limit as i64], map_import)?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-
-    fn find_reverse_imports_by_symbol(
-        &self,
-        workspace_id: WorkspaceId,
-        symbol_id: SymbolId,
-        limit: usize,
-    ) -> Result<Vec<Import>> {
-        let mut stmt = self.conn.prepare(
-            "
-            SELECT id, workspace_id, source_file_id, source_symbol_id, raw_specifier,
-                   imported_name, local_name, alias, kind, is_type_only, is_reexport,
-                   resolved_file_id, resolved_symbol_id, start_line, start_column,
-                   end_line, end_column, resolution_error
-              FROM imports
-             WHERE workspace_id = ?1 AND resolved_symbol_id = ?2
-             ORDER BY id ASC
-             LIMIT ?3
-            ",
-        )?;
-        let rows = stmt.query_map(params![workspace_id, symbol_id, limit as i64], map_import)?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-
-    fn find_calls_from_symbol(
-        &self,
-        workspace_id: WorkspaceId,
-        symbol_id: SymbolId,
-        limit: usize,
-    ) -> Result<Vec<CallEdge>> {
-        let mut stmt = self.conn.prepare(
-            "
-            SELECT id, workspace_id, source_file_id, caller_symbol_id, callee_symbol_id,
-                   callee_qualified_name, callee_display_name, kind, resolved,
-                   start_line, start_column, end_line, end_column
-              FROM call_edges
-             WHERE workspace_id = ?1 AND caller_symbol_id = ?2
-             ORDER BY id ASC
-             LIMIT ?3
-            ",
-        )?;
-        let rows = stmt.query_map(
-            params![workspace_id, symbol_id, limit as i64],
-            map_call_edge,
-        )?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-
-    fn find_calls_to_symbol(
-        &self,
-        workspace_id: WorkspaceId,
-        symbol_id: SymbolId,
-        limit: usize,
-    ) -> Result<Vec<CallEdge>> {
-        let mut stmt = self.conn.prepare(
-            "
-            SELECT id, workspace_id, source_file_id, caller_symbol_id, callee_symbol_id,
-                   callee_qualified_name, callee_display_name, kind, resolved,
-                   start_line, start_column, end_line, end_column
-              FROM call_edges
-             WHERE workspace_id = ?1 AND callee_symbol_id = ?2
-             ORDER BY id ASC
-             LIMIT ?3
-            ",
-        )?;
-        let rows = stmt.query_map(
-            params![workspace_id, symbol_id, limit as i64],
-            map_call_edge,
-        )?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-
     fn bounded_file_neighborhood(
         &self,
         workspace_id: WorkspaceId,
@@ -1393,16 +975,18 @@ impl GraphRepository for Database {
                 continue;
             }
 
-            for imp in self.find_imports_by_file(current)? {
-                if let Some(next) = imp.resolved_file_id {
+            for edge in self.find_outgoing_edges(workspace_id, "file", current as i64, node_limit)? {
+                if let dh_types::NodeId::File(next) = edge.to {
                     if visited.insert(next) {
                         queue.push_back((next, hop + 1));
                     }
                 }
             }
-            for rev in self.find_reverse_imports_by_file(workspace_id, current, node_limit)? {
-                if visited.insert(rev.source_file_id) {
-                    queue.push_back((rev.source_file_id, hop + 1));
+            for edge in self.find_incoming_edges(workspace_id, "file", current as i64, node_limit)? {
+                if let dh_types::NodeId::File(next) = edge.from {
+                    if visited.insert(next) {
+                        queue.push_back((next, hop + 1));
+                    }
                 }
             }
         }
@@ -1429,24 +1013,16 @@ impl GraphRepository for Database {
                 continue;
             }
 
-            for call in self.find_calls_from_symbol(workspace_id, current, node_limit)? {
-                if let Some(next) = call.callee_symbol_id {
+            for edge in self.find_outgoing_edges(workspace_id, "symbol", current as i64, node_limit)? {
+                if let dh_types::NodeId::Symbol(next) = edge.to {
                     if visited.insert(next) {
                         queue.push_back((next, hop + 1));
                     }
                 }
             }
 
-            for call in self.find_calls_to_symbol(workspace_id, current, node_limit)? {
-                if let Some(next) = call.caller_symbol_id {
-                    if visited.insert(next) {
-                        queue.push_back((next, hop + 1));
-                    }
-                }
-            }
-
-            for r in self.find_references_to_symbol(workspace_id, current, node_limit)? {
-                if let Some(next) = r.source_symbol_id {
+            for edge in self.find_incoming_edges(workspace_id, "symbol", current as i64, node_limit)? {
+                if let dh_types::NodeId::Symbol(next) = edge.from {
                     if visited.insert(next) {
                         queue.push_back((next, hop + 1));
                     }
@@ -1455,6 +1031,118 @@ impl GraphRepository for Database {
         }
 
         Ok(visited.into_iter().collect())
+    }
+}
+
+impl GraphEdgeRepository for Database {
+    fn insert_edges(&self, edges: &[dh_types::GraphEdge], source_file_id: FileId) -> Result<()> {
+        if edges.is_empty() {
+            return Ok(());
+        }
+
+        let workspace_id = self.conn.query_row(
+            "SELECT workspace_id FROM files WHERE id = ?1",
+            params![source_file_id],
+            |row| row.get::<_, u32>(0),
+        )?;
+
+        let mut stmt = self.conn.prepare(
+            "
+            INSERT INTO graph_edges (
+              workspace_id, source_file_id, kind, from_node_kind, from_node_id,
+              to_node_kind, to_node_id, resolution, confidence, start_line, start_column,
+              end_line, end_column, reason, payload_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            ",
+        )?;
+
+        for edge in edges {
+            let (from_k, from_i) = node_id_to_db(&edge.from);
+            let (to_k, to_i) = node_id_to_db(&edge.to);
+            let to_i_opt = Some(to_i);
+
+            let (sl, sc, el, ec) = if let Some(span) = &edge.span {
+                (Some(span.start_line as i64), Some(span.start_column as i64), Some(span.end_line as i64), Some(span.end_column as i64))
+            } else {
+                (None, None, None, None)
+            };
+
+            stmt.execute(params![
+                workspace_id,
+                source_file_id,
+                edge_kind_to_str(edge.kind),
+                from_k,
+                from_i,
+                to_k,
+                to_i_opt,
+                resolution_to_str(edge.resolution),
+                confidence_to_str(edge.confidence),
+                sl,
+                sc,
+                el,
+                ec,
+                edge.reason,
+                rusqlite::types::Null
+            ])?;
+        }
+
+        Ok(())
+    }
+
+    fn find_edges_by_file(&self, file_id: FileId) -> Result<Vec<dh_types::GraphEdge>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, source_file_id, kind, from_node_kind, from_node_id, to_node_kind, to_node_id,
+                   resolution, confidence, start_line, start_column, end_line, end_column, reason, payload_json
+              FROM graph_edges
+             WHERE source_file_id = ?1
+             ORDER BY id ASC
+            ",
+        )?;
+        let rows = stmt.query_map(params![file_id], map_graph_edge)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn find_outgoing_edges(&self, workspace_id: WorkspaceId, from_kind: &str, from_id: i64, node_limit: usize) -> Result<Vec<dh_types::GraphEdge>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, source_file_id, kind, from_node_kind, from_node_id, to_node_kind, to_node_id,
+                   resolution, confidence, start_line, start_column, end_line, end_column, reason, payload_json
+              FROM graph_edges
+             WHERE workspace_id = ?1 AND from_node_kind = ?2 AND from_node_id = ?3
+             ORDER BY id ASC
+             LIMIT ?4
+            ",
+        )?;
+        let rows = stmt.query_map(params![workspace_id, from_kind, from_id, node_limit as i64], map_graph_edge)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn find_incoming_edges(&self, workspace_id: WorkspaceId, to_kind: &str, to_id: i64, node_limit: usize) -> Result<Vec<dh_types::GraphEdge>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, source_file_id, kind, from_node_kind, from_node_id, to_node_kind, to_node_id,
+                   resolution, confidence, start_line, start_column, end_line, end_column, reason, payload_json
+              FROM graph_edges
+             WHERE workspace_id = ?1 AND to_node_kind = ?2 AND to_node_id = ?3
+             ORDER BY id ASC
+             LIMIT ?4
+            ",
+        )?;
+        let rows = stmt.query_map(params![workspace_id, to_kind, to_id, node_limit as i64], map_graph_edge)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
     }
 }
 
@@ -1516,33 +1204,6 @@ fn map_symbol(row: &rusqlite::Row<'_>) -> rusqlite::Result<Symbol> {
     })
 }
 
-fn map_import(row: &rusqlite::Row<'_>) -> rusqlite::Result<Import> {
-    Ok(Import {
-        id: row.get(0)?,
-        workspace_id: row.get(1)?,
-        source_file_id: row.get(2)?,
-        source_symbol_id: row.get(3)?,
-        raw_specifier: row.get(4)?,
-        imported_name: row.get(5)?,
-        local_name: row.get(6)?,
-        alias: row.get(7)?,
-        kind: import_kind_from_str(&row.get::<_, String>(8)?).map_err(to_sqlite_err)?,
-        is_type_only: int_to_bool(row.get(9)?),
-        is_reexport: int_to_bool(row.get(10)?),
-        resolved_file_id: row.get(11)?,
-        resolved_symbol_id: row.get(12)?,
-        span: Span {
-            start_byte: 0,
-            end_byte: 0,
-            start_line: row.get::<_, i64>(13)? as u32,
-            start_column: row.get::<_, i64>(14)? as u32,
-            end_line: row.get::<_, i64>(15)? as u32,
-            end_column: row.get::<_, i64>(16)? as u32,
-        },
-        resolution_error: row.get(17)?,
-    })
-}
-
 fn map_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
     Ok(Chunk {
         id: row.get(0)?,
@@ -1590,48 +1251,115 @@ fn map_index_state(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexState> {
     })
 }
 
-fn map_call_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<CallEdge> {
-    Ok(CallEdge {
-        id: row.get(0)?,
-        workspace_id: row.get(1)?,
-        source_file_id: row.get(2)?,
-        caller_symbol_id: row.get(3)?,
-        callee_symbol_id: row.get(4)?,
-        callee_qualified_name: row.get(5)?,
-        callee_display_name: row.get(6)?,
-        kind: call_kind_from_str(&row.get::<_, String>(7)?).map_err(to_sqlite_err)?,
-        resolved: int_to_bool(row.get(8)?),
-        span: Span {
-            start_byte: 0,
-            end_byte: 0,
-            start_line: row.get::<_, i64>(9)? as u32,
-            start_column: row.get::<_, i64>(10)? as u32,
-            end_line: row.get::<_, i64>(11)? as u32,
-            end_column: row.get::<_, i64>(12)? as u32,
+fn map_graph_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<dh_types::GraphEdge> {
+    Ok(dh_types::GraphEdge {
+        kind: edge_kind_from_str(&row.get::<_, String>(3)?).map_err(to_sqlite_err)?,
+        from: node_id_from_db(&row.get::<_, String>(4)?, row.get::<_, i64>(5)?).map_err(to_sqlite_err)?,
+        to: node_id_from_db_opt(&row.get::<_, String>(6)?, row.get::<_, Option<i64>>(7)?).map_err(to_sqlite_err)?.unwrap_or(dh_types::NodeId::Symbol(0)),
+        resolution: resolution_from_str(&row.get::<_, String>(8)?).map_err(to_sqlite_err)?,
+        confidence: confidence_from_str(&row.get::<_, String>(9)?).map_err(to_sqlite_err)?,
+        span: if let Ok(start_line) = row.get::<_, i64>(10) {
+            Some(Span {
+                start_byte: 0,
+                end_byte: 0,
+                start_line: start_line as u32,
+                start_column: row.get::<_, i64>(11)? as u32,
+                end_line: row.get::<_, i64>(12)? as u32,
+                end_column: row.get::<_, i64>(13)? as u32,
+            })
+        } else {
+            None
         },
+        reason: row.get(14)?,
     })
 }
 
-fn map_reference(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reference> {
-    Ok(Reference {
-        id: row.get(0)?,
-        workspace_id: row.get(1)?,
-        source_file_id: row.get(2)?,
-        source_symbol_id: row.get(3)?,
-        target_symbol_id: row.get(4)?,
-        target_name: row.get(5)?,
-        kind: reference_kind_from_str(&row.get::<_, String>(6)?).map_err(to_sqlite_err)?,
-        resolved: int_to_bool(row.get(7)?),
-        resolution_confidence: row.get(8)?,
-        span: Span {
-            start_byte: 0,
-            end_byte: 0,
-            start_line: row.get::<_, i64>(9)? as u32,
-            start_column: row.get::<_, i64>(10)? as u32,
-            end_line: row.get::<_, i64>(11)? as u32,
-            end_column: row.get::<_, i64>(12)? as u32,
-        },
-    })
+fn node_id_to_db(node: &dh_types::NodeId) -> (&'static str, i64) {
+    match node {
+        dh_types::NodeId::File(id) => ("file", *id),
+        dh_types::NodeId::Symbol(id) => ("symbol", *id),
+        dh_types::NodeId::Chunk(id) => ("chunk", *id),
+    }
+}
+
+fn node_id_from_db(kind: &str, id: i64) -> std::result::Result<dh_types::NodeId, StorageError> {
+    match kind {
+        "file" => Ok(dh_types::NodeId::File(id)),
+        "symbol" => Ok(dh_types::NodeId::Symbol(id)),
+        "chunk" => Ok(dh_types::NodeId::Chunk(id)),
+        _ => Err(StorageError::InvalidEnumValue { field: "node_kind", value: kind.to_string() }),
+    }
+}
+
+fn node_id_from_db_opt(kind: &str, id: Option<i64>) -> std::result::Result<Option<dh_types::NodeId>, StorageError> {
+    if let Some(id) = id {
+        node_id_from_db(kind, id).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+fn edge_kind_to_str(kind: dh_types::EdgeKind) -> &'static str {
+    match kind {
+        dh_types::EdgeKind::Imports => "imports",
+        dh_types::EdgeKind::ReExports => "re_exports",
+        dh_types::EdgeKind::Calls => "calls",
+        dh_types::EdgeKind::References => "references",
+        dh_types::EdgeKind::Contains => "contains",
+        dh_types::EdgeKind::Definition => "definition",
+        dh_types::EdgeKind::DefinesChunk => "defines_chunk",
+        dh_types::EdgeKind::Extends => "extends",
+        dh_types::EdgeKind::Implements => "implements",
+        dh_types::EdgeKind::TypeReferences => "type_references",
+        dh_types::EdgeKind::Exports => "exports",
+    }
+}
+
+fn edge_kind_from_str(value: &str) -> std::result::Result<dh_types::EdgeKind, StorageError> {
+    match value {
+        "imports" => Ok(dh_types::EdgeKind::Imports),
+        "re_exports" => Ok(dh_types::EdgeKind::ReExports),
+        "calls" => Ok(dh_types::EdgeKind::Calls),
+        "references" => Ok(dh_types::EdgeKind::References),
+        "contains" => Ok(dh_types::EdgeKind::Contains),
+        "definition" => Ok(dh_types::EdgeKind::Definition),
+        "defines_chunk" => Ok(dh_types::EdgeKind::DefinesChunk),
+        "extends" => Ok(dh_types::EdgeKind::Extends),
+        "implements" => Ok(dh_types::EdgeKind::Implements),
+        "type_references" => Ok(dh_types::EdgeKind::TypeReferences),
+        "exports" => Ok(dh_types::EdgeKind::Exports),
+        _ => Err(StorageError::InvalidEnumValue { field: "edge_kind", value: value.to_string() }),
+    }
+}
+
+fn resolution_to_str(res: dh_types::EdgeResolution) -> &'static str {
+    match res {
+        dh_types::EdgeResolution::Resolved => "resolved",
+        dh_types::EdgeResolution::Unresolved => "unresolved",
+    }
+}
+
+fn resolution_from_str(value: &str) -> std::result::Result<dh_types::EdgeResolution, StorageError> {
+    match value {
+        "resolved" => Ok(dh_types::EdgeResolution::Resolved),
+        "unresolved" => Ok(dh_types::EdgeResolution::Unresolved),
+        _ => Err(StorageError::InvalidEnumValue { field: "resolution", value: value.to_string() }),
+    }
+}
+
+fn confidence_to_str(conf: dh_types::EdgeConfidence) -> &'static str {
+    match conf {
+        dh_types::EdgeConfidence::Direct => "direct",
+        dh_types::EdgeConfidence::BestEffort => "best_effort",
+    }
+}
+
+fn confidence_from_str(value: &str) -> std::result::Result<dh_types::EdgeConfidence, StorageError> {
+    match value {
+        "direct" => Ok(dh_types::EdgeConfidence::Direct),
+        "best_effort" => Ok(dh_types::EdgeConfidence::BestEffort),
+        _ => Err(StorageError::InvalidEnumValue { field: "confidence", value: value.to_string() }),
+    }
 }
 
 fn to_sqlite_err(err: StorageError) -> rusqlite::Error {
@@ -1836,36 +1564,6 @@ fn visibility_from_str(value: &str) -> std::result::Result<Visibility, StorageEr
     }
 }
 
-fn import_kind_to_str(value: ImportKind) -> &'static str {
-    match value {
-        ImportKind::EsmDefault => "EsmDefault",
-        ImportKind::EsmNamed => "EsmNamed",
-        ImportKind::EsmNamespace => "EsmNamespace",
-        ImportKind::EsmSideEffect => "EsmSideEffect",
-        ImportKind::CommonJsRequire => "CommonJsRequire",
-        ImportKind::Dynamic => "Dynamic",
-        ImportKind::ConditionalRequire => "ConditionalRequire",
-        ImportKind::ReExport => "ReExport",
-    }
-}
-
-fn import_kind_from_str(value: &str) -> std::result::Result<ImportKind, StorageError> {
-    match value {
-        "EsmDefault" => Ok(ImportKind::EsmDefault),
-        "EsmNamed" => Ok(ImportKind::EsmNamed),
-        "EsmNamespace" => Ok(ImportKind::EsmNamespace),
-        "EsmSideEffect" => Ok(ImportKind::EsmSideEffect),
-        "CommonJsRequire" => Ok(ImportKind::CommonJsRequire),
-        "Dynamic" => Ok(ImportKind::Dynamic),
-        "ConditionalRequire" => Ok(ImportKind::ConditionalRequire),
-        "ReExport" => Ok(ImportKind::ReExport),
-        _ => Err(StorageError::InvalidEnumValue {
-            field: "import_kind",
-            value: value.to_string(),
-        }),
-    }
-}
-
 fn chunk_kind_to_str(value: dh_types::ChunkKind) -> &'static str {
     match value {
         dh_types::ChunkKind::FileHeader => "FileHeader",
@@ -1944,59 +1642,7 @@ fn index_run_status_from_str(value: &str) -> std::result::Result<IndexRunStatus,
     }
 }
 
-fn reference_kind_to_str(value: ReferenceKind) -> &'static str {
-    match value {
-        ReferenceKind::Read => "Read",
-        ReferenceKind::Write => "Write",
-        ReferenceKind::Call => "Call",
-        ReferenceKind::Type => "Type",
-        ReferenceKind::Import => "Import",
-        ReferenceKind::Export => "Export",
-        ReferenceKind::Inherit => "Inherit",
-        ReferenceKind::Implement => "Implement",
-    }
-}
 
-fn reference_kind_from_str(value: &str) -> std::result::Result<ReferenceKind, StorageError> {
-    match value {
-        "Read" => Ok(ReferenceKind::Read),
-        "Write" => Ok(ReferenceKind::Write),
-        "Call" => Ok(ReferenceKind::Call),
-        "Type" => Ok(ReferenceKind::Type),
-        "Import" => Ok(ReferenceKind::Import),
-        "Export" => Ok(ReferenceKind::Export),
-        "Inherit" => Ok(ReferenceKind::Inherit),
-        "Implement" => Ok(ReferenceKind::Implement),
-        _ => Err(StorageError::InvalidEnumValue {
-            field: "reference_kind",
-            value: value.to_string(),
-        }),
-    }
-}
-
-fn call_kind_to_str(value: CallKind) -> &'static str {
-    match value {
-        CallKind::Direct => "Direct",
-        CallKind::Method => "Method",
-        CallKind::Constructor => "Constructor",
-        CallKind::MacroLike => "MacroLike",
-        CallKind::Dynamic => "Dynamic",
-    }
-}
-
-fn call_kind_from_str(value: &str) -> std::result::Result<CallKind, StorageError> {
-    match value {
-        "Direct" => Ok(CallKind::Direct),
-        "Method" => Ok(CallKind::Method),
-        "Constructor" => Ok(CallKind::Constructor),
-        "MacroLike" => Ok(CallKind::MacroLike),
-        "Dynamic" => Ok(CallKind::Dynamic),
-        _ => Err(StorageError::InvalidEnumValue {
-            field: "call_kind",
-            value: value.to_string(),
-        }),
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -2023,11 +1669,11 @@ mod tests {
     fn schema_initialization_creates_core_tables() -> Result<()> {
         let db = setup_db()?;
         let count: i64 = db.connection().query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('files','symbols','imports','call_edges','references','chunks','index_state','index_runs')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('files','symbols','graph_edges','chunks','index_state','index_runs')",
             [],
             |row| row.get(0),
         )?;
-        assert_eq!(count, 8);
+        assert_eq!(count, 6);
         Ok(())
     }
 
@@ -2317,81 +1963,73 @@ mod tests {
             },
         ])?;
 
-        db.insert_imports(&[Import {
-            id: 200,
-            workspace_id: 1,
-            source_file_id: 10,
-            source_symbol_id: None,
-            raw_specifier: "./b".to_string(),
-            imported_name: Some("bar".to_string()),
-            local_name: Some("bar".to_string()),
-            alias: None,
-            kind: ImportKind::EsmNamed,
-            is_type_only: false,
-            is_reexport: false,
-            resolved_file_id: Some(11),
-            resolved_symbol_id: Some(101),
-            span: Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 1,
-                start_column: 0,
-                end_line: 1,
-                end_column: 1,
+        db.insert_edges(&[
+            dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::Imports,
+                from: dh_types::NodeId::File(10),
+                to: dh_types::NodeId::File(11),
+                resolution: dh_types::EdgeResolution::Resolved,
+                confidence: dh_types::EdgeConfidence::Direct,
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 1,
+                    start_column: 0,
+                    end_line: 1,
+                    end_column: 1,
+                }),
+                reason: "./b".to_string(),
             },
-            resolution_error: None,
-        }])?;
-
-        db.insert_references(&[Reference {
-            id: 300,
-            workspace_id: 1,
-            source_file_id: 10,
-            source_symbol_id: Some(100),
-            target_symbol_id: Some(101),
-            target_name: "bar".to_string(),
-            kind: ReferenceKind::Call,
-            resolved: true,
-            resolution_confidence: 1.0,
-            span: Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 2,
-                start_column: 0,
-                end_line: 2,
-                end_column: 1,
+            dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::References,
+                from: dh_types::NodeId::Symbol(100),
+                to: dh_types::NodeId::Symbol(101),
+                resolution: dh_types::EdgeResolution::Resolved,
+                confidence: dh_types::EdgeConfidence::Direct,
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 2,
+                    start_column: 0,
+                    end_line: 2,
+                    end_column: 1,
+                }),
+                reason: "bar".to_string(),
             },
-        }])?;
-
-        db.insert_call_edges(&[CallEdge {
-            id: 400,
-            workspace_id: 1,
-            source_file_id: 10,
-            caller_symbol_id: Some(100),
-            callee_symbol_id: Some(101),
-            callee_qualified_name: Some("bar".to_string()),
-            callee_display_name: "bar".to_string(),
-            kind: CallKind::Direct,
-            resolved: true,
-            span: Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 2,
-                start_column: 0,
-                end_line: 2,
-                end_column: 1,
-            },
-        }])?;
+            dh_types::GraphEdge {
+                kind: dh_types::EdgeKind::Calls,
+                from: dh_types::NodeId::Symbol(100),
+                to: dh_types::NodeId::Symbol(101),
+                resolution: dh_types::EdgeResolution::Resolved,
+                confidence: dh_types::EdgeConfidence::Direct,
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 2,
+                    start_column: 0,
+                    end_line: 2,
+                    end_column: 1,
+                }),
+                reason: "bar".to_string(),
+            }
+        ], 10)?;
 
         let defs = db.find_symbol_definitions(1, "foo", 10)?;
         assert_eq!(defs.len(), 1);
         assert!(db.find_symbol_by_id(1, 100)?.is_some());
         assert!(db.find_file_by_id(1, 10)?.is_some());
-        assert_eq!(db.find_reverse_imports_by_file(1, 11, 10)?.len(), 1);
-        assert_eq!(db.find_reverse_imports_by_symbol(1, 101, 10)?.len(), 1);
-        assert_eq!(db.find_references_to_symbol(1, 101, 10)?.len(), 1);
-        assert_eq!(db.find_references_to_target_name(1, "bar", 10)?.len(), 1);
-        assert_eq!(db.find_calls_from_symbol(1, 100, 10)?.len(), 1);
-        assert_eq!(db.find_calls_to_symbol(1, 101, 10)?.len(), 1);
+        
+        let file_outgoing = db.find_outgoing_edges(1, "file", 10, 10)?;
+        assert_eq!(file_outgoing.len(), 1);
+        
+        let file_incoming = db.find_incoming_edges(1, "file", 11, 10)?;
+        assert_eq!(file_incoming.len(), 1);
+        
+        let symbol_outgoing = db.find_outgoing_edges(1, "symbol", 100, 10)?;
+        assert_eq!(symbol_outgoing.len(), 2);
+        
+        let symbol_incoming = db.find_incoming_edges(1, "symbol", 101, 10)?;
+        assert_eq!(symbol_incoming.len(), 2);
         assert!(!db.bounded_file_neighborhood(1, 10, 2, 8)?.is_empty());
         assert!(!db.bounded_symbol_neighborhood(1, 100, 2, 8)?.is_empty());
 

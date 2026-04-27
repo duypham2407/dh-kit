@@ -33,31 +33,16 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-## `dh doctor` báo thiếu embedding key
+## `dh status` báo workspace/index/database chưa sẵn sàng
 
-Nếu bạn muốn semantic provider-backed behavior thật:
+`dh status` hiện kiểm tra trạng thái workspace, index, và database cục bộ của
+project. Nó không phải health-check tổng quát cho install/config/provider.
+
+Nếu status cho thấy chưa có index hoặc dữ liệu index đã cũ, chạy lại:
 
 ```sh
-export OPENAI_API_KEY="sk-..."
+dh index
 ```
-
-Nếu không, bạn vẫn có thể dùng nhiều local flow cơ bản.
-
-## `dh doctor` báo `degraded` / `unsupported` / `misconfigured`
-
-Từ Phase 5, `doctor` phân loại lỗi theo 3 nhóm lifecycle:
-
-- `install/distribution`
-- `runtime/workspace readiness`
-- `capability/tooling`
-
-Cách đọc nhanh:
-
-- `degraded`: chạy được nhưng có rủi ro/thiếu readiness
-- `misconfigured`: cấu hình hoặc state đang sai, cần sửa trước
-- `unsupported`: capability đó hiện không thuộc supported contract
-
-Luôn ưu tiên đọc phần `Recommended actions` trong output của `dh doctor`.
 
 ## Kết quả trả lời yếu hoặc không đúng ý
 
@@ -75,9 +60,7 @@ Chạy lại:
 dh index
 ```
 
-## `doctor` báo lỗi SQLite hoặc DB integrity
-
-Đọc action guidance từ `dh doctor` trước.
+## `status` báo lỗi database cục bộ
 
 Các vấn đề kiểu này thường nằm ở local state trong `.dh/`.
 
@@ -85,7 +68,7 @@ Bạn có thể reset local state của project hiện tại bằng:
 
 ```sh
 dh clean --yes
-dh doctor
+dh status
 dh index
 ```
 

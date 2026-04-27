@@ -40,6 +40,16 @@ describe("runCli help", () => {
     expect(output).toContain("Supported target platforms are Linux and macOS only.");
     expect(output).toContain("No universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, or full workflow-lane parity is claimed.");
     expect(output).toContain("bounded Rust query.buildEvidence when a finite static subject is available");
+    expect(output).toContain("TypeScript CLI setup:");
+    expect(output).toContain("1. dh --help");
+    expect(output).toContain("2. dh index");
+    expect(output).toContain("3. dh ask \"how does auth work?\"");
+    expect(output).toContain("next: run dh index, then dh ask");
+    expect(output).toContain("works: indexing and knowledge commands are available");
+    expect(output).not.toContain("2. dh status");
+    expect(output).not.toContain("next: run dh status");
+    expect(output).not.toContain("next: run dh doctor");
+    expect(output).not.toContain("1. dh doctor");
     expect(output).not.toContain("universal understanding");
     expect(output).not.toContain("runtime tracing is supported");
     expect(output).not.toContain("daemon support");

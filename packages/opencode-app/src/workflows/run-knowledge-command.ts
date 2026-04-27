@@ -337,7 +337,8 @@ export async function runKnowledgeCommand(input: {
       const message = `Knowledge command failed: ${failure.code} (${failure.phase}) — ${failure.message}`;
       guidance.push("Check bridge diagnostics and ensure rust-engine can run locally.");
       guidance.push("Run: cargo test --workspace (from rust-engine) to verify engine health.");
-      guidance.push("Run: dh doctor to check workspace prerequisites.");
+      guidance.push("Run: dh --help to confirm available commands.");
+      guidance.push("Run: dh status to check workspace/index state.");
 
       return {
         exitCode: 1,
@@ -460,7 +461,8 @@ export async function runKnowledgeCommand(input: {
       const message = `Knowledge command failed: ${failure.code} (${failure.phase}) — ${failure.message}`;
       guidance.push("Check bridge diagnostics and ensure rust-engine can run locally.");
       guidance.push("Run: cargo test --workspace (from rust-engine) to verify engine health.");
-      guidance.push("Run: dh doctor to check workspace prerequisites.");
+      guidance.push("Run: dh --help to confirm available commands.");
+      guidance.push("Run: dh status to check workspace/index state.");
 
       return {
         exitCode: 1,

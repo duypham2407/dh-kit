@@ -17,7 +17,7 @@ export async function runIndexCommand(repoRoot: string): Promise<number> {
     process.stdout.write("condition: ready\n");
     process.stdout.write(`why: scanned ${result.filesScanned} files\n`);
     process.stdout.write("works: ask/explain/trace can use refreshed index data\n");
-    process.stdout.write("limited: provider-backed quality may still depend on doctor/config state\n");
+    process.stdout.write("limited: provider-backed quality may still depend on status/config state\n");
     process.stdout.write("next: try dh ask \"how does this project work?\"\n");
   }
 

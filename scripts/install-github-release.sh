@@ -210,13 +210,13 @@ if "$target" --version >/dev/null 2>&1; then
     ROLLBACK_NOTE="fresh install path had no prior binary, so rollback backup was not applicable"
   fi
 
-  append_limited "runtime/workspace readiness is not verified by install lifecycle; run 'dh doctor'"
+  append_limited "runtime/workspace readiness is not verified by install lifecycle; use 'dh --help' for commands and 'dh status' for workspace/index state"
   print_summary "[dh] surface: lifecycle install (install-github-release)"
   print_summary "[dh] condition: completed"
   print_summary "[dh] why: downloaded GitHub asset $asset and verified checksum (status=$CHECKSUM_STATUS: $CHECKSUM_REASON); signature=$SIGNATURE_STATUS ($SIGNATURE_REASON); installed binary at $target; $ROLLBACK_NOTE"
   print_summary "[dh] works: dh binary is installed and executable at $target; Rust-hosted TypeScript worker bundle is installed at $INSTALL_DIR/ts-worker/worker.mjs"
   print_summary "[dh] limited: $LIMITED"
-  print_summary "[dh] next: run '$target --version' then '$target doctor' (or 'dh doctor')"
+  print_summary "[dh] next: run '$target --version', '$target --help', then '$target status'"
 else
   ROLLBACK_RESULT="unavailable"
   ROLLBACK_NOTE="post-install verification failed and no backup was available"
@@ -231,7 +231,7 @@ else
     fi
   fi
 
-  append_limited "runtime/workspace readiness is not verified by install lifecycle; run 'dh doctor'"
+  append_limited "runtime/workspace readiness is not verified by install lifecycle; use 'dh --help' for commands and 'dh status' for workspace/index state"
   print_summary "[dh] surface: lifecycle install (install-github-release)"
   print_summary "[dh] condition: failed"
   print_summary "[dh] why: binary install mutation occurred but post-install verification (--version) failed; rollback=$ROLLBACK_RESULT ($ROLLBACK_NOTE)"
@@ -242,11 +242,11 @@ else
   elif [ "$ROLLBACK_RESULT" = "failed" ]; then
     print_summary "[dh] works: rollback failed and target state requires manual repair"
     print_summary "[dh] limited: $LIMITED"
-    print_summary "[dh] next: restore a known-good binary manually, then run '$target --version' and '$target doctor'"
+    print_summary "[dh] next: restore a known-good binary manually, then run '$target --version', '$target --help', and '$target status'"
   else
     print_summary "[dh] works: no rollback could run because no prior backup existed"
     print_summary "[dh] limited: $LIMITED"
-    print_summary "[dh] next: reinstall a known-good binary and verify with '$target --version' and '$target doctor'"
+    print_summary "[dh] next: reinstall a known-good binary and verify with '$target --version', '$target --help', and '$target status'"
   fi
   exit 1
 fi

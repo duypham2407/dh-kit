@@ -93,6 +93,10 @@ fi
 assert_contains "$INSTALL_OUTPUT" "surface: lifecycle install (install.sh direct-binary)" "install.sh prints lifecycle surface"
 assert_contains "$INSTALL_OUTPUT" "condition: completed" "install.sh reports completed condition"
 assert_contains "$INSTALL_OUTPUT" "release manifest/file-size verification is not performed in direct-binary install paths" "install.sh reports bounded verification limitation"
+assert_contains "$INSTALL_OUTPUT" "dh --help" "install.sh recommends help for first-run command discovery"
+assert_contains "$INSTALL_OUTPUT" "dh status" "install.sh recommends status for workspace/index state"
+assert_not_contains "$INSTALL_OUTPUT" "dh doctor" "install.sh does not recommend unavailable doctor command"
+assert_not_contains "$INSTALL_OUTPUT" "doctor" "install.sh next/limited guidance omits doctor wording"
 
 echo "=== Test: Upgrade creates backup ==="
 INSTALL_DIR2=$(mktemp_dir)
@@ -182,7 +186,11 @@ fi
 assert_contains "$INSTALL_FROM_RELEASE_OUTPUT" "surface: lifecycle install (install-from-release)" "install-from-release emits lifecycle surface"
 assert_contains "$INSTALL_FROM_RELEASE_OUTPUT" "condition: completed" "install-from-release reports completed"
 assert_contains "$INSTALL_FROM_RELEASE_OUTPUT" "tier=release-directory-verified" "install-from-release reports strong verification tier"
-assert_contains "$INSTALL_FROM_RELEASE_OUTPUT" "runtime/workspace readiness is not verified by install lifecycle" "install-from-release keeps doctor boundary explicit"
+assert_contains "$INSTALL_FROM_RELEASE_OUTPUT" "runtime/workspace readiness is not verified by install lifecycle" "install-from-release keeps lifecycle readiness boundary explicit"
+assert_contains "$INSTALL_FROM_RELEASE_OUTPUT" "dh --help" "install-from-release recommends help for first-run command discovery"
+assert_contains "$INSTALL_FROM_RELEASE_OUTPUT" "dh status" "install-from-release recommends status for workspace/index state"
+assert_not_contains "$INSTALL_FROM_RELEASE_OUTPUT" "dh doctor" "install-from-release does not recommend unavailable doctor command"
+assert_not_contains "$INSTALL_FROM_RELEASE_OUTPUT" "doctor" "install-from-release next/limited guidance omits doctor wording"
 
 echo "=== Test: verify-release-artifacts structured output ==="
 VERIFY_JSON=$(sh "$SCRIPT_DIR/verify-release-artifacts.sh" --json "$RELEASE_DIR")
@@ -208,7 +216,11 @@ fi
 assert_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "surface: lifecycle upgrade (upgrade-from-release)" "upgrade-from-release emits lifecycle surface"
 assert_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "condition: completed" "upgrade-from-release reports completed"
 assert_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "rollback=" "upgrade-from-release reports rollback outcome"
-assert_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "runtime/workspace readiness is not verified by upgrade lifecycle" "upgrade-from-release keeps doctor boundary explicit"
+assert_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "runtime/workspace readiness is not verified by upgrade lifecycle" "upgrade-from-release keeps lifecycle readiness boundary explicit"
+assert_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "dh --help" "upgrade-from-release recommends help for first-run command discovery"
+assert_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "dh status" "upgrade-from-release recommends status for workspace/index state"
+assert_not_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "dh doctor" "upgrade-from-release does not recommend unavailable doctor command"
+assert_not_contains "$UPGRADE_FROM_RELEASE_OUTPUT" "doctor" "upgrade-from-release next/limited guidance omits doctor wording"
 
 echo "=== Test: install-from-release fails without manifest ==="
 BAD_RELEASE_DIR=$(mktemp_dir)
@@ -264,6 +276,10 @@ assert_contains "$GITHUB_INSTALL_OUTPUT" "condition: completed" "install-github-
 assert_contains "$GITHUB_INSTALL_OUTPUT" "manifest/file-size verification is not performed in GitHub release install path" "install-github-release reports bounded verification limitation"
 assert_contains "$GITHUB_INSTALL_OUTPUT" "signature verification is not performed in GitHub release install path" "install-github-release reports signature limitation"
 assert_contains "$GITHUB_INSTALL_OUTPUT" "supported release install targets are Linux and macOS; Windows is not a current target platform" "install-github-release reports Linux/macOS target platform boundary"
+assert_contains "$GITHUB_INSTALL_OUTPUT" "dh --help" "install-github-release recommends help for first-run command discovery"
+assert_contains "$GITHUB_INSTALL_OUTPUT" "dh status" "install-github-release recommends status for workspace/index state"
+assert_not_contains "$GITHUB_INSTALL_OUTPUT" "dh doctor" "install-github-release does not recommend unavailable doctor command"
+assert_not_contains "$GITHUB_INSTALL_OUTPUT" "doctor" "install-github-release next/limited guidance omits doctor wording"
 
 echo "=== Test: GitHub upgrade fixture seam ==="
 GITHUB_UPGRADE_OUTPUT=""
@@ -281,6 +297,10 @@ assert_contains "$GITHUB_UPGRADE_OUTPUT" "surface: lifecycle upgrade (upgrade-gi
 assert_contains "$GITHUB_UPGRADE_OUTPUT" "condition: completed" "upgrade-github-release reports completed"
 assert_contains "$GITHUB_UPGRADE_OUTPUT" "manifest/file-size verification is not performed in GitHub release upgrade path" "upgrade-github-release reports bounded verification limitation"
 assert_contains "$GITHUB_UPGRADE_OUTPUT" "supported release upgrade targets are Linux and macOS; Windows is not a current target platform" "upgrade-github-release reports Linux/macOS target platform boundary"
+assert_contains "$GITHUB_UPGRADE_OUTPUT" "dh --help" "upgrade-github-release recommends help for first-run command discovery"
+assert_contains "$GITHUB_UPGRADE_OUTPUT" "dh status" "upgrade-github-release recommends status for workspace/index state"
+assert_not_contains "$GITHUB_UPGRADE_OUTPUT" "dh doctor" "upgrade-github-release does not recommend unavailable doctor command"
+assert_not_contains "$GITHUB_UPGRADE_OUTPUT" "doctor" "upgrade-github-release next/limited guidance omits doctor wording"
 
 echo "=== Test: GitHub install rejects checksum drift ==="
 GITHUB_BAD_FIXTURE=$(mktemp_dir)

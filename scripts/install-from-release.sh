@@ -129,7 +129,7 @@ mkdir -p "$INSTALL_DIR/ts-worker"
 cp "$RELEASE_DIR/ts-worker/worker.mjs" "$INSTALL_DIR/ts-worker/worker.mjs"
 cp "$RELEASE_DIR/ts-worker/manifest.json" "$INSTALL_DIR/ts-worker/manifest.json"
 
-INSTALL_LIMITED="runtime/workspace readiness is not verified by install lifecycle; run 'dh doctor'"
+INSTALL_LIMITED="runtime/workspace readiness is not verified by install lifecycle; use 'dh --help' for commands and 'dh status' for workspace/index state"
 if [ -n "$VERIFICATION_LIMITATIONS" ]; then
   INSTALL_LIMITED="$VERIFICATION_LIMITATIONS; $INSTALL_LIMITED"
 fi
@@ -140,4 +140,4 @@ echo "[dh] condition: completed"
 echo "[dh] why: release artifacts verified at tier=$VERIFICATION_TIER (signature=$SIGNATURE_STATUS: $SIGNATURE_REASON) and binary installed to $INSTALL_DIR/dh"
 echo "[dh] works: dh binary is installed and executable at $INSTALL_DIR/dh; Rust-hosted TypeScript worker bundle is installed at $INSTALL_DIR/ts-worker/worker.mjs"
 echo "[dh] limited: $INSTALL_LIMITED"
-echo "[dh] next: run '$INSTALL_DIR/dh doctor' (or 'dh doctor')"
+echo "[dh] next: run '$INSTALL_DIR/dh --version', '$INSTALL_DIR/dh --help', then '$INSTALL_DIR/dh status'"

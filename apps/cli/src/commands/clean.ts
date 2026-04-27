@@ -28,7 +28,7 @@ export async function runCleanCommand(args: string[], repoRoot: string): Promise
   process.stdout.write([
     `removed local dh state: ${dhDir}`,
     `next steps:`,
-    `  1. dh doctor`,
+    `  1. dh status`,
     `  2. dh index`,
     `  3. dh ask "how does auth work?"`,
   ].join("\n") + "\n");

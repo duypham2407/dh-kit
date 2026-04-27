@@ -16,7 +16,8 @@ scripts/install-from-release.sh dist/releases
 
 ```sh
 cd /path/to/your-project
-dh doctor
+dh --help
+dh status
 dh index
 dh ask "how does this project work?"
 ```

@@ -1588,6 +1588,9 @@ describe("runKnowledgeCommand", () => {
     expect(startupFailure.bridgeEvidence?.failure?.code).toBe("BRIDGE_STARTUP_FAILED");
     expect(startupFailure.bridgeEvidence?.failure?.phase).toBe("startup");
     expect(startupFailure.bridgeEvidence?.startupSucceeded).toBe(false);
+    expect(startupFailure.guidance).toContain("Run: dh --help to confirm available commands.");
+    expect(startupFailure.guidance).toContain("Run: dh status to check workspace/index state.");
+    expect(startupFailure.guidance).not.toContain("Run: dh doctor to check workspace prerequisites.");
 
     const requestFailure = await runKnowledgeCommand({
       kind: "ask",
@@ -1611,6 +1614,9 @@ describe("runKnowledgeCommand", () => {
     expect(requestFailure.bridgeEvidence?.failure?.code).toBe("REQUEST_FAILED");
     expect(requestFailure.bridgeEvidence?.failure?.phase).toBe("request");
     expect(requestFailure.bridgeEvidence?.startupSucceeded).toBe(true);
+    expect(requestFailure.guidance).toContain("Run: dh --help to confirm available commands.");
+    expect(requestFailure.guidance).toContain("Run: dh status to check workspace/index state.");
+    expect(requestFailure.guidance).not.toContain("Run: dh doctor to check workspace prerequisites.");
   });
 
   it("preserves timeout and unreachable-worker failure classifications", async () => {

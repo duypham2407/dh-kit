@@ -251,7 +251,7 @@ if [ "$WITH_RUST_TOOLS" = "1" ] || [ "$CHECK_DEV_PREREQS" = "1" ]; then
   fi
 fi
 
-append_limited "runtime/workspace readiness is not verified by install lifecycle; run 'dh doctor'"
+append_limited "runtime/workspace readiness is not verified by install lifecycle; use 'dh --help' for commands and 'dh status' for workspace/index state"
 append_limited "supported direct-binary install targets are Linux and macOS; Windows is not a current target platform"
 
 if [ "$SUPPRESS_LIFECYCLE_SUMMARY" != "1" ]; then
@@ -262,7 +262,7 @@ if [ "$SUPPRESS_LIFECYCLE_SUMMARY" != "1" ]; then
   fi
 
   if [ -z "$LIMITED" ]; then
-    LIMITED="runtime/workspace readiness is not verified by install lifecycle; run 'dh doctor'"
+    LIMITED="runtime/workspace readiness is not verified by install lifecycle; use 'dh --help' for commands and 'dh status' for workspace/index state"
   fi
 
   echo "[dh] surface: lifecycle install (install.sh direct-binary)"
@@ -270,7 +270,7 @@ if [ "$SUPPRESS_LIFECYCLE_SUMMARY" != "1" ]; then
   echo "[dh] why: installed binary at $TARGET_PATH; checksum=$CHECKSUM_STATUS ($CHECKSUM_REASON); signature=$SIGNATURE_STATUS ($SIGNATURE_REASON); $REPLACEMENT_NOTE"
   echo "[dh] works: dh binary is installed and executable at $TARGET_PATH"
   echo "[dh] limited: $LIMITED"
-  echo "[dh] next: run '$TARGET_PATH --version' then '$TARGET_PATH doctor' (or 'dh doctor')"
+  echo "[dh] next: run '$TARGET_PATH --version', '$TARGET_PATH --help', then '$TARGET_PATH status'"
 fi
 
 write_result "completed" "none"

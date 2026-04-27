@@ -13,7 +13,7 @@ Nó giúp bạn:
 - hiểu codebase bằng `ask`, `explain` (và `trace` hiện trả `unsupported` trong bounded contract hiện tại)
 - index project để có structural + semantic retrieval
 - chạy workflow theo 3 lane: `quick`, `delivery`, `migration`
-- kiểm tra health/config bằng `doctor`
+- xem trạng thái workspace/index bằng `status`
 
 ## Rust Host Lifecycle Authority Boundary
 
@@ -53,7 +53,7 @@ platform for `dh` install or release support.
 
 ### Requirements
 
-- **Node.js v22+** must be installed and available in `PATH` to run `dh` operational commands (`ask`, `explain`, `trace`, `doctor`, `index`, workflow commands, etc.).
+- **Node.js v22+** must be installed and available in `PATH` to run `dh` operational commands (`ask`, `explain`, `trace`, `status`, `index`, workflow commands, etc.).
 - `dh --help` / `dh --version` may work without full runtime setup, but normal product-path usage assumes Node.js is present.
 
   ```sh
@@ -198,11 +198,12 @@ Nếu bạn muốn build/test từ source:
 Sau khi cài `dh`, cách bắt đầu đúng là:
 
 1. mở terminal trong project bạn muốn phân tích
-2. chạy `dh doctor`
-3. chạy `dh index`
-4. bắt đầu dùng `dh ask`, `dh explain` (`dh trace` hiện trả `unsupported` trong bounded contract này)
+2. chạy `dh --help` để xem command set hiện có
+3. chạy `dh status` để xem trạng thái workspace/index
+4. chạy `dh index`
+5. bắt đầu dùng `dh ask`, `dh explain` (`dh trace` hiện trả `unsupported` trong bounded contract này)
 
-Nếu bạn chạy `dh ask`, `dh explain` quá sớm khi chưa index, CLI hiện sẽ gợi ý chạy `dh index` và `dh doctor`.
+Nếu bạn chạy `dh ask`, `dh explain` quá sớm khi chưa index, CLI hiện sẽ gợi ý chạy `dh index` hoặc `dh status`.
 
 ### Step 1: Go to your project
 
@@ -214,39 +215,28 @@ cd ~/Code/my-project
 
 `dh` luôn làm việc theo thư mục hiện tại.
 
-### Step 2: Check runtime health
+### Step 2: Check available commands and workspace status
 
 ```sh
-dh doctor
+dh --help
+dh status
 ```
 
-Nếu muốn output JSON:
+`dh --help` sẽ giúp bạn biết command set hiện có, và `status` chỉ giúp bạn biết trạng thái workspace/index local:
 
-```sh
-dh doctor --json
-```
-
-Nếu muốn dump thêm debug info ra file:
-
-```sh
-dh doctor --debug-dump
-```
-
-`doctor` sẽ giúp bạn biết:
-
-- local state đã sẵn sàng chưa
-- SQLite có ổn không
-- semantic config đã set chưa
-- embedding key có thiếu không
+- workspace state hiện tại
+- index state hiện tại
+- database/index metadata local hiện tại
 - repo đã có index chưa
 
-Doctor boundary (quan trọng):
+Status boundary (quan trọng):
 
-- `dh doctor` chỉ trả lời health của product/install/workspace.
+- `dh status` chỉ trả lời trạng thái workspace/index/database/index ở mức người dùng.
+- `dh status` không phải install readiness, provider config readiness, hay embedding-key readiness check.
 - Nếu bạn cần workflow-state/evidence/policy status, dùng:
   `node .opencode/workflow-state.js status|show|show-policy-status|show-invocations|check-stage-readiness|resume-summary`.
 
-Từ Phase 5, `doctor` phân loại lifecycle rõ ràng theo 3 nhóm để tránh false-OK:
+Các diagnostics nội bộ phân loại lifecycle theo 3 nhóm để tránh false-OK:
 
 - `install/distribution`
 - `runtime/workspace readiness`
@@ -294,7 +284,8 @@ TypeScript-authored packet authority.
 Nếu bạn là user mới, hãy nhớ các lệnh này trước:
 
 ```sh
-dh doctor
+dh --help
+dh status
 dh index
 dh ask "..."
 dh explain "..."
@@ -323,7 +314,7 @@ dh ask "where is session state persisted?"
 
 ```sh
 dh explain "runIndexWorkflow"
-dh explain "packages/runtime/src/diagnostics/doctor.ts"
+dh explain "packages/runtime/src/diagnostics/audit-query-service.ts"
 ```
 
 ### Trace a flow (bounded)
@@ -337,7 +328,7 @@ Output đúng sẽ nói rõ unsupported thay vì fallback thành parser-backed p
 Task nhỏ, hẹp:
 
 ```sh
-dh quick "fix a doctor output bug"
+dh quick "fix an index output bug"
 ```
 
 Feature lớn hơn:
@@ -421,13 +412,13 @@ Nếu cần, cài lại:
 scripts/install-from-release.sh dist/releases
 ```
 
-### `doctor` báo thiếu embedding key
+### Cần semantic provider-backed behavior
 
-Điều này không phải lúc nào cũng là lỗi blocker.
+Embedding key không thuộc boundary của `dh status`.
 
 Nếu bạn chỉ muốn dùng local flow cơ bản, có thể vẫn tiếp tục.
 
-Nếu muốn semantic provider-backed behavior thật:
+Nếu `dh ask` hoặc cấu hình provider-backed behavior cần embedding provider thật, set key tương ứng, ví dụ:
 
 ```sh
 export OPENAI_API_KEY="sk-..."
@@ -460,7 +451,7 @@ dh clean --yes
 Lệnh này sẽ xóa `.dh/` của project hiện tại. Sau đó chạy lại:
 
 ```sh
-dh doctor
+dh status
 dh index
 ```
 
@@ -539,8 +530,9 @@ dh --help
 # 3. Go to your project
 cd ~/Code/my-project
 
-# 4. Check health
-dh doctor
+# 4. Check available commands and workspace status
+dh --help
+dh status
 
 # 5. Build the index
 dh index

@@ -184,9 +184,9 @@ then
     print_summary "[dh] works: upgrade mutation occurred at $TARGET_PATH, but upgrade cannot be reported as completed"
     print_summary "[dh] limited: direct-binary upgrade path may have skipped checksum/signature metadata; release manifest/file-size verification is not performed in direct-binary upgrade paths; supported direct-binary upgrade targets are Linux and macOS; Windows is not a current target platform"
     if [ "$INSTALL_BACKUP_CREATED" = "1" ] && [ -n "$INSTALL_BACKUP_PATH" ]; then
-      print_summary "[dh] next: restore '$INSTALL_BACKUP_PATH' manually if needed, then run '$TARGET_PATH --version' and '$TARGET_PATH doctor'"
+      print_summary "[dh] next: restore '$INSTALL_BACKUP_PATH' manually if needed, then run '$TARGET_PATH --version', '$TARGET_PATH --help', and '$TARGET_PATH status'"
     else
-      print_summary "[dh] next: install a known-good binary (prefer release-directory path) and verify with '$TARGET_PATH --version' and '$TARGET_PATH doctor'"
+      print_summary "[dh] next: install a known-good binary (prefer release-directory path) and verify with '$TARGET_PATH --version', '$TARGET_PATH --help', and '$TARGET_PATH status'"
     fi
 
     write_result "failed" "unavailable" "install stage failed after target mutation (failure_stage=$INSTALL_FAILURE_STAGE); rollback not attempted by install stage" "$INSTALL_BACKUP_PATH" "$INSTALL_TARGET_MUTATED" "$INSTALL_FAILURE_STAGE"
@@ -241,8 +241,8 @@ if [ -x "$TARGET_PATH" ]; then
     print_summary "[dh] condition: completed"
     print_summary "[dh] why: binary replaced at $TARGET_PATH, post-install verification (--version) passed, $BACKUP_NOTE"
     print_summary "[dh] works: upgraded dh binary is active at $TARGET_PATH"
-    print_summary "[dh] limited: release manifest/file-size verification is not performed in direct-binary upgrade paths; runtime/workspace readiness still requires 'dh doctor'; supported direct-binary upgrade targets are Linux and macOS; Windows is not a current target platform"
-    print_summary "[dh] next: run '$TARGET_PATH --version' then '$TARGET_PATH doctor' (or 'dh doctor')"
+    print_summary "[dh] limited: release manifest/file-size verification is not performed in direct-binary upgrade paths; runtime/workspace readiness should be checked with '$TARGET_PATH --help' and '$TARGET_PATH status'; supported direct-binary upgrade targets are Linux and macOS; Windows is not a current target platform"
+    print_summary "[dh] next: run '$TARGET_PATH --version', '$TARGET_PATH --help', then '$TARGET_PATH status'"
     write_result "completed" "not_needed" "post-install verification passed; rollback not required" "$LATEST_BACKUP" "1" "none"
   else
     ROLLBACK_RESULT="unavailable"
@@ -269,11 +269,11 @@ if [ -x "$TARGET_PATH" ]; then
     elif [ "$ROLLBACK_RESULT" = "failed" ]; then
       print_summary "[dh] works: rollback did not complete; target binary state requires manual inspection"
       print_summary "[dh] limited: upgrade failed and rollback failed; direct-binary path remains manifest-unverified; supported direct-binary upgrade targets are Linux and macOS; Windows is not a current target platform"
-      print_summary "[dh] next: restore a known-good binary manually, then run '$TARGET_PATH --version' and '$TARGET_PATH doctor'"
+      print_summary "[dh] next: restore a known-good binary manually, then run '$TARGET_PATH --version', '$TARGET_PATH --help', and '$TARGET_PATH status'"
     else
       print_summary "[dh] works: no rollback could run because no backup existed for this target"
       print_summary "[dh] limited: upgrade failed without rollback protection (fresh target or missing backup); direct-binary path remains manifest-unverified; supported direct-binary upgrade targets are Linux and macOS; Windows is not a current target platform"
-      print_summary "[dh] next: install a known-good binary and run '$TARGET_PATH --version' plus '$TARGET_PATH doctor'"
+      print_summary "[dh] next: install a known-good binary and run '$TARGET_PATH --version', '$TARGET_PATH --help', and '$TARGET_PATH status'"
     fi
 
     write_result "failed" "$ROLLBACK_RESULT" "$ROLLBACK_NOTE" "$LATEST_BACKUP" "1" "post_install_verification"

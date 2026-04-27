@@ -90,6 +90,34 @@ fn host_contract_cli_prints_lifecycle_and_protocol_contracts() {
 }
 
 #[test]
+fn shipped_cli_help_does_not_advertise_doctor_command() {
+    let result = Command::new(engine_bin())
+        .arg("--help")
+        .output()
+        .expect("dh-engine help command should execute");
+
+    let stdout = String::from_utf8_lossy(&result.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&result.stderr).to_string();
+    assert!(
+        result.status.success(),
+        "help command should succeed\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+
+    assert!(stdout.contains("status"), "help should advertise status");
+    assert!(stdout.contains("index"), "help should advertise index");
+    assert!(stdout.contains("ask"), "help should advertise ask");
+    assert!(stdout.contains("explain"), "help should advertise explain");
+    assert!(stdout.contains("trace"), "help should advertise trace");
+    assert!(
+        !stdout.to_lowercase().contains("doctor"),
+        "shipped Rust CLI help must not advertise doctor\nstdout:\n{}",
+        stdout
+    );
+}
+
+#[test]
 fn first_wave_command_without_worker_bundle_is_rust_classified_startup_failure() {
     let result = Command::new(engine_bin())
         .args(["ask", "where is runKnowledgeCommand?", "--json"])

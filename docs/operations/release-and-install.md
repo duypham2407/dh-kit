@@ -133,7 +133,7 @@ Expected lifecycle output contract:
 - `surface: lifecycle upgrade (upgrade-from-release)`
 - `condition: completed` on success
 - explicit rollback fact in `why` (`rollback=...`)
-- explicit `next` guidance to run `dh --version` and `dh doctor`
+- explicit `next` guidance to run `dh --version`, `dh --help`, and `dh status`
 
 If the upgraded binary fails `--version`, it automatically rolls back to the
 backup.
@@ -271,17 +271,17 @@ future product decision changes the target platforms.
 
 ## Diagnostics lifecycle classification
 
-`dh doctor` now surfaces lifecycle/readiness classes explicitly:
+Diagnostics surfaces classify lifecycle/readiness explicitly:
 
 - `install/distribution`
 - `runtime/workspace readiness`
 - `capability/tooling`
 
 Statuses are one of: `healthy`, `degraded`, `unsupported`, `misconfigured`.
-Nightly doctor snapshot checks treat `unsupported` and `misconfigured` lifecycle
+Nightly diagnostics snapshot checks treat `unsupported` and `misconfigured` lifecycle
 states as regressions requiring attention.
 
-For Rust-host lifecycle authority specifically, `dh doctor` reports a bounded
+For Rust-host lifecycle authority specifically, diagnostics report a bounded
 `Rust-hosted knowledge-command lifecycle authority` section. That section must
 stay scoped to the first-wave `ask`/`explain`/`trace` path and must surface
 worker bundle/manifest readiness (`ts-worker/worker.mjs` and
@@ -289,9 +289,9 @@ worker bundle/manifest readiness (`ts-worker/worker.mjs` and
 hosted Rust bridge are labeled as compatibility seams; they are useful for
 diagnostics but do not establish equal lifecycle authority.
 
-Doctor boundary reminder:
+Status boundary reminder:
 
-- `dh doctor` reports product/install/workspace health.
+- `dh status` reports the Rust binary's workspace/index/database state for the current project.
 - For workflow-state, evidence, or policy status, use:
   `node .opencode/workflow-state.js status|show|show-policy-status|show-invocations|check-stage-readiness|resume-summary`.
 

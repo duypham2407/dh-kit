@@ -150,7 +150,7 @@ if [ -f "$UPGRADE_RESULT_FILE" ]; then
   ROLLBACK_NOTE=$(node -e 'const fs=require("node:fs");const f=process.argv[1];const map={};for(const line of fs.readFileSync(f,"utf8").split(/\r?\n/)){if(!line) continue;const idx=line.indexOf("=");if(idx===-1) continue;map[line.slice(0,idx)]=line.slice(idx+1);}process.stdout.write(String(map.rollback_note ?? "post-upgrade verification passed; rollback not required"));' "$UPGRADE_RESULT_FILE")
 fi
 
-UPGRADE_LIMITED="runtime/workspace readiness is not verified by upgrade lifecycle; run 'dh doctor'"
+UPGRADE_LIMITED="runtime/workspace readiness is not verified by upgrade lifecycle; use 'dh --help' for commands and 'dh status' for workspace/index state"
 if [ -n "$VERIFICATION_LIMITATIONS" ]; then
   UPGRADE_LIMITED="$VERIFICATION_LIMITATIONS; $UPGRADE_LIMITED"
 fi
@@ -161,4 +161,4 @@ echo "[dh] condition: completed"
 echo "[dh] why: release artifacts verified at tier=$VERIFICATION_TIER (signature=$SIGNATURE_STATUS: $SIGNATURE_REASON), binary upgraded at $INSTALL_DIR/dh, rollback=$ROLLBACK_RESULT ($ROLLBACK_NOTE)"
 echo "[dh] works: dh binary is upgraded and rollback safety already checked by upgrade flow; Rust-hosted TypeScript worker bundle is installed at $INSTALL_DIR/ts-worker/worker.mjs"
 echo "[dh] limited: $UPGRADE_LIMITED"
-echo "[dh] next: run '$INSTALL_DIR/dh --version' then '$INSTALL_DIR/dh doctor'"
+echo "[dh] next: run '$INSTALL_DIR/dh --version', '$INSTALL_DIR/dh --help', then '$INSTALL_DIR/dh status'"

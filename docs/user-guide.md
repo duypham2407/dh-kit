@@ -50,9 +50,10 @@ Bạn chỉ cần:
 
 1. cài binary `dh`
 2. mở terminal trong repo bạn muốn phân tích
-3. chạy `dh doctor`
-4. chạy `dh index`
-5. dùng `dh ask`, `dh explain` (và `dh trace` hiện đang trả `unsupported` trong bounded contract hiện tại)
+3. chạy `dh --help`
+4. chạy `dh status`
+5. chạy `dh index`
+6. dùng `dh ask`, `dh explain` (và `dh trace` hiện đang trả `unsupported` trong bounded contract hiện tại)
 
 Bạn chỉ cần clone source nếu bạn là developer của chính `dh`.
 
@@ -125,7 +126,8 @@ Ví dụ:
 
 ```sh
 cd ~/Code/my-project
-dh doctor
+dh --help
+dh status
 dh index
 dh ask "how does auth work?"
 ```
@@ -136,18 +138,13 @@ dh ask "how does auth work?"
 
 In ra version hiện tại của binary `dh`.
 
-### `dh doctor`
+### `dh status`
 
-Kiểm tra local runtime, DB, config, semantic readiness.
+Kiểm tra trạng thái workspace/index/database cục bộ để biết repo đã sẵn sàng cho các lệnh knowledge chưa.
 
-`dh doctor` also reports whether the Rust-hosted first-wave knowledge-command
-path has the worker bundle/manifest readiness needed for `ask`, `explain`, and
-`trace`, and labels the older TypeScript-hosted Rust bridge diagnostics as a
-compatibility seam rather than equal lifecycle authority.
-
-`dh doctor --debug-dump` chỉ là secondary summary cho local diagnostics; use
-the feature-specific runbook for maintenance procedures outside this bounded
-Rust-hosted knowledge-command path.
+`dh --help` vẫn là nơi authoritative để khám phá command set hiện có của binary
+đã cài; `dh status` là bước kiểm tra workspace/index/database cục bộ, không phải
+health-check tổng quát cho install/config/provider.
 
 ### `dh index`
 
@@ -166,7 +163,7 @@ Rust `query.buildEvidence` method when the request has a finite static subject.
 The returned Rust packet is the canonical evidence truth for that flow; legacy
 retrieval-local packet helpers remain diagnostics/compatibility only.
 
-Nếu chưa có index hoặc chưa có enough data, command sẽ gợi ý bước tiếp theo như `dh index` hoặc `dh doctor`.
+Nếu chưa có index hoặc chưa có enough data, command sẽ gợi ý bước tiếp theo như `dh index` hoặc `dh status`.
 
 Catalog query classes currently routed by `dh ask` (bounded, first-class):
 
@@ -191,7 +188,7 @@ Internal retrieval/signal blending may still happen under the hood for supported
 
 When diagnostics mention keyword/structural/semantic signals, treat those as implementation diagnostics only, not as additional user-routed ask classes.
 
-Lifecycle/process diagnostics are currently surfaced via `dh doctor` and internal diagnostics surfaces, not as a stable ask/explain/trace result envelope in this bounded contract.
+Lifecycle/process diagnostics are currently surfaced through status and internal diagnostics surfaces, not as a stable ask/explain/trace result envelope in this bounded contract.
 
 ### `dh explain`
 
@@ -233,9 +230,9 @@ Không có key thì app vẫn dùng được, nhưng semantic provider-backed be
 ## Khuyến nghị sử dụng hằng ngày
 
 1. vào đúng repo
-2. chạy `dh doctor` nếu lâu rồi chưa dùng
+2. chạy `dh status` nếu lâu rồi chưa dùng
 3. chạy `dh index` sau khi repo thay đổi nhiều
-4. dùng `ask`, `explain`; với bounded contract hiện tại, `trace` trả `unsupported`
+4. dùng `dh ask`, `dh explain`; với bounded contract hiện tại, `dh trace` trả `unsupported`
 
 ## Lệnh mẫu
 
@@ -243,7 +240,7 @@ Không có key thì app vẫn dùng được, nhưng semantic provider-backed be
 dh ask "where is session state stored?"
 dh explain "runIndexWorkflow"
 dh trace "authentication flow"  # expected: unsupported in bounded mode
-dh quick "fix a failing doctor message"
+dh quick "fix a failing status message"
 ```
 
 ## Xem thêm

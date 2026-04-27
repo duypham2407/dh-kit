@@ -1,6 +1,7 @@
 //! Indexer crate for workspace scanning and incremental indexing orchestration.
 
 pub mod dirty;
+pub mod embedding;
 pub mod hasher;
 pub mod parity;
 pub mod scanner;

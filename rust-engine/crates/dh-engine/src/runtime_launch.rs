@@ -28,6 +28,7 @@ pub struct RuntimeLaunchRequest {
     pub expected_protocol_version: String,
 }
 
+#[allow(dead_code)]
 impl RuntimeLaunchRequest {
     pub fn new(runtime_path: impl Into<PathBuf>, worker_entry_path: impl Into<PathBuf>) -> Self {
         Self {

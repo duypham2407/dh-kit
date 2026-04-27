@@ -36,6 +36,7 @@ pub struct WorkerSupervisorConfig {
     pub max_replay_safe_restarts: u8,
 }
 
+#[allow(dead_code)]
 impl WorkerSupervisorConfig {
     pub fn new(launch: RuntimeLaunchRequest, workspace_root: impl Into<PathBuf>) -> Self {
         Self {
@@ -71,6 +72,7 @@ impl WorkerSupervisorConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ReplaySafety {
     ReplaySafeReadOnly,
     ReplayUnsafe,
@@ -144,6 +146,7 @@ pub struct WorkerSupervisor {
     ready_seen: bool,
 }
 
+#[allow(dead_code)]
 impl WorkerSupervisor {
     pub fn new(config: WorkerSupervisorConfig) -> Self {
         let platform = config.launch.platform.clone();
@@ -1001,6 +1004,7 @@ fn worker_protocol_matches(result: &Value, expected_protocol_version: &str) -> b
         .unwrap_or(false)
 }
 
+#[allow(dead_code)]
 fn parse_worker_state(value: &str) -> Option<WorkerState> {
     match value {
         "not_running" => Some(WorkerState::NotRunning),
@@ -1014,6 +1018,7 @@ fn parse_worker_state(value: &str) -> Option<WorkerState> {
     }
 }
 
+#[allow(dead_code)]
 fn parse_health_state(value: &str) -> Option<HealthState> {
     match value {
         "unknown" => Some(HealthState::Unknown),

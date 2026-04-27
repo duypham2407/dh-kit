@@ -2,10 +2,10 @@
 
 use anyhow::Result;
 use dh_graph::{EdgeResolution, GraphService, NodeId};
-use dh_storage::{ChunkRepository, Database, FileRepository, GraphRepository, SymbolRepository, GraphEdgeRepository};
+use dh_storage::{ChunkRepository, Database, EmbeddingRepository, FileRepository, GraphRepository, GraphEdgeRepository};
 use dh_types::{
     AnswerState, EvidenceBounds, EvidenceConfidence, EvidenceEntry, EvidenceKind, EvidencePacket,
-    EvidenceSource, FreshnessState, LanguageCapability, LanguageCapabilityEntry,
+    EvidenceSource, FileId, FreshnessState, LanguageCapability, LanguageCapabilityEntry,
     LanguageCapabilityLanguageSummary, LanguageCapabilityState, LanguageCapabilitySummary,
     LanguageId, ParseStatus, QuestionClass, SymbolId, SymbolKind, WorkspaceId,
 };
@@ -61,6 +61,15 @@ pub struct CallHierarchyQuery {
     pub workspace_id: WorkspaceId,
     pub symbol: String,
     pub limit: usize,
+    pub max_depth: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntryPointsQuery {
+    pub workspace_id: WorkspaceId,
+    pub symbol: String,
+    pub limit: usize,
+    pub max_depth: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +98,7 @@ pub struct BuildEvidenceQuery {
     pub max_symbols: usize,
     pub max_snippets: usize,
     pub freshness: Option<String>,
+    pub semantic_vector: Option<Vec<f32>>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +110,23 @@ pub struct SymbolMatch {
     pub line_start: u32,
     pub line_end: u32,
     pub evidence: EvidencePacket,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SeedSource {
+    SymbolMatch,
+    FtsMatch,
+    SemanticMatch,
+    EntryPoint,
+}
+
+#[derive(Debug, Clone)]
+pub struct EvidenceSeed {
+    pub file_id: FileId,
+    pub chunk_id: Option<dh_types::ChunkId>,
+    pub symbol_id: Option<SymbolId>,
+    pub source: SeedSource,
+    pub relevance: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -140,22 +167,55 @@ pub struct DependencyTraversalResult {
 #[derive(Debug, Clone)]
 pub struct CallHierarchyResult {
     pub answer_state: AnswerState,
-    pub callers: Vec<String>,
-    pub callees: Vec<String>,
+    pub callers: Vec<dh_types::CallHierarchyNode>,
+    pub callees: Vec<dh_types::CallHierarchyNode>,
+    pub evidence: EvidencePacket,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntryPointsResult {
+    pub answer_state: AnswerState,
+    pub entry_points: Vec<dh_types::CallHierarchyNode>,
     pub evidence: EvidencePacket,
 }
 
 #[derive(Debug, Clone)]
 pub struct TraceFlowResult {
     pub answer_state: AnswerState,
+    /// Legacy label list kept for backward-compat display.
     pub path: Vec<String>,
+    /// Rich per-hop nodes with edge metadata and confidence.
+    pub hops: Vec<dh_types::TraceFlowHop>,
     pub evidence: EvidencePacket,
 }
 
 #[derive(Debug, Clone)]
 pub struct ImpactAnalysisResult {
     pub answer_state: AnswerState,
+    /// Legacy flat list for backward-compat.
     pub impacted: Vec<String>,
+    /// Rich categorised impact nodes.
+    pub impact_nodes: Vec<dh_types::ImpactNode>,
+    pub evidence: EvidencePacket,
+}
+
+#[derive(Debug, Clone)]
+pub struct SemanticSearchQuery {
+    pub workspace_id: WorkspaceId,
+    /// The embedding model to query against (must match stored model name).
+    pub model: String,
+    /// Query vector produced by the same model — dimensions must match.
+    pub query_vector: Vec<f32>,
+    /// Maximum results to return.
+    pub limit: usize,
+    /// Minimum cosine similarity score to include (0.0–1.0).
+    pub min_score: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct SemanticSearchResult {
+    pub answer_state: AnswerState,
+    pub matches: Vec<dh_types::SemanticMatch>,
     pub evidence: EvidencePacket,
 }
 
@@ -517,8 +577,10 @@ pub trait QueryEngine {
     fn find_dependents(&self, query: FindDependentsQuery) -> Result<DependencyTraversalResult>;
     fn find_dependencies(&self, query: FindDependenciesQuery) -> Result<DependencyTraversalResult>;
     fn call_hierarchy(&self, query: CallHierarchyQuery) -> Result<CallHierarchyResult>;
+    fn entry_points(&self, query: EntryPointsQuery) -> Result<EntryPointsResult>;
     fn trace_flow(&self, query: TraceFlowQuery) -> Result<TraceFlowResult>;
     fn impact_analysis(&self, query: ImpactAnalysisQuery) -> Result<ImpactAnalysisResult>;
+    fn semantic_search(&self, query: SemanticSearchQuery) -> Result<SemanticSearchResult>;
 }
 
 impl QueryEngine for Database {
@@ -803,6 +865,113 @@ impl QueryEngine for Database {
                         format!("semantic chunk for symbol '{}'", symbol.name),
                         EvidenceSource::Storage,
                         EvidenceConfidence::Grounded,
+                    ));
+                }
+            }
+
+            // FTS Match
+            if let Ok(fts_matches) = self.search_chunks_fts(query.workspace_id, target, query.max_snippets.max(1)) {
+                for (chunk, score) in fts_matches {
+                    let file_path = self.find_file_by_id(query.workspace_id, chunk.file_id)
+                        .ok()
+                        .flatten()
+                        .map(|f| f.rel_path.clone())
+                        .unwrap_or_else(|| "<unknown>".into());
+                    
+                    let chunk_key = format!(
+                        "fts:{}:{}:{}",
+                        file_path, chunk.span.start_line, chunk.span.end_line
+                    );
+                    if !seen.insert(chunk_key) {
+                        continue;
+                    }
+                    if evidence_rows.len() >= max_evidence_rows {
+                        limited = true;
+                        break 'targets;
+                    }
+
+                    let snippet = bounded_snippet(&chunk.content, 240);
+                    evidence_rows.push(entry(
+                        EvidenceKind::Chunk,
+                        file_path.clone(),
+                        None,
+                        Some(chunk.span.start_line),
+                        Some(chunk.span.end_line),
+                        Some(snippet),
+                        format!("full-text search match (score: {:.2})", score),
+                        EvidenceSource::Storage,
+                        EvidenceConfidence::Partial,
+                    ));
+                }
+            }
+
+            // Entry Points
+            if let Ok(ep_res) = self.entry_points(EntryPointsQuery {
+                workspace_id: query.workspace_id,
+                symbol: target.clone(),
+                limit: 5,
+                max_depth: 3,
+            }) {
+                for ep in ep_res.entry_points {
+                    let file_path = ep.node.file_path.unwrap_or_else(|| "<unknown>".into());
+                    let ep_key = format!("entry_point:{}:{}", file_path, ep.node.label);
+                    
+                    if !seen.insert(ep_key) {
+                        continue;
+                    }
+                    if evidence_rows.len() >= max_evidence_rows {
+                        limited = true;
+                        break 'targets;
+                    }
+
+                    evidence_rows.push(entry(
+                        EvidenceKind::Dependency,
+                        file_path.clone(),
+                        Some(ep.node.label.clone()),
+                        None,
+                        None,
+                        None,
+                        format!("entry point detected (depth: {})", ep.call_depth),
+                        EvidenceSource::Graph,
+                        EvidenceConfidence::Grounded,
+                    ));
+                }
+            }
+        }
+
+        // Semantic Match
+        if let Some(ref vector) = query.semantic_vector {
+            if let Ok(semantic_res) = self.semantic_search(SemanticSearchQuery {
+                workspace_id: query.workspace_id,
+                model: "default".to_string(), // Adjust if we need dynamic model selection
+                query_vector: vector.clone(),
+                limit: query.max_snippets.max(1),
+                min_score: 0.80, // A bit lower threshold for evidence gathering
+            }) {
+                for m in semantic_res.matches {
+                    let chunk_key = format!(
+                        "semantic:{}:{}:{}",
+                        m.file_path, m.span.start_line, m.span.end_line
+                    );
+                    if !seen.insert(chunk_key) {
+                        continue;
+                    }
+                    if evidence_rows.len() >= max_evidence_rows {
+                        limited = true;
+                        break;
+                    }
+
+                    let snippet = bounded_snippet(&m.content, 240);
+                    evidence_rows.push(entry(
+                        EvidenceKind::Chunk,
+                        m.file_path.clone(),
+                        None,
+                        Some(m.span.start_line),
+                        Some(m.span.end_line),
+                        Some(snippet),
+                        format!("semantic search match (score: {:.2})", m.score),
+                        EvidenceSource::Semantic,
+                        if m.score > 0.85 { EvidenceConfidence::Grounded } else { EvidenceConfidence::Partial },
                     ));
                 }
             }
@@ -1317,123 +1486,132 @@ impl QueryEngine for Database {
             });
         };
 
-        let mut callers = Vec::new();
-        let mut callees = Vec::new();
-        let mut evidence = Vec::new();
-        let mut unresolved = false;
+        let node_id = NodeId::Symbol(subject.id as i64);
 
-        for c in self.find_incoming_edges(query.workspace_id, "symbol", subject.id as i64, query.limit)?.into_iter().filter(|e| matches!(e.kind, dh_types::EdgeKind::Calls)) {
-            let caller_symbol_id = match c.from {
-                NodeId::Symbol(id) => Some(id),
-                _ => None,
-            };
-            let source_file_id = match c.from {
-                NodeId::File(id) => id,
-                NodeId::Symbol(id) => self.find_symbol_by_id(query.workspace_id, id)?.map(|s| s.file_id).unwrap_or(0),
-                _ => 0,
-            };
-            let label = caller_symbol_id
-                .and_then(|id| {
-                    self.find_symbol_by_id(query.workspace_id, id)
-                        .ok()
-                        .flatten()
-                })
-                .map(|s| s.qualified_name)
-                .unwrap_or_else(|| format!("file:{}", source_file_id));
-            callers.push(label.clone());
-            let resolved = c.resolution == EdgeResolution::Resolved;
-            if !resolved {
-                unresolved = true;
-            }
+        let callers = self.find_callers(query.workspace_id, &node_id, query.max_depth).unwrap_or_default();
+        let callees = self.find_callees(query.workspace_id, &node_id, query.max_depth).unwrap_or_default();
+
+        let mut evidence = Vec::new();
+        for caller in &callers {
             evidence.push(entry(
                 EvidenceKind::Call,
-                self.find_file_by_id(query.workspace_id, source_file_id)?
-                    .map(|f| f.rel_path)
-                    .unwrap_or_else(|| "<unknown>".into()),
-                Some(label),
-                c.span.as_ref().map(|s| s.start_line),
-                c.span.as_ref().map(|s| s.end_line),
+                caller.node.file_path.clone().unwrap_or_else(|| "<unknown>".into()),
+                Some(caller.node.label.clone()),
                 None,
-                "caller edge".into(),
+                None,
+                None,
+                format!("caller edge (depth {})", caller.call_depth),
                 EvidenceSource::Graph,
-                if resolved {
-                    EvidenceConfidence::Grounded
-                } else {
-                    EvidenceConfidence::Partial
-                },
+                EvidenceConfidence::Grounded,
             ));
         }
 
-        for c in self.find_outgoing_edges(query.workspace_id, "symbol", subject.id as i64, query.limit)?.into_iter().filter(|e| matches!(e.kind, dh_types::EdgeKind::Calls)) {
-            let callee_symbol_id = match c.to {
-                NodeId::Symbol(id) => Some(id),
-                _ => None,
-            };
-            let label = callee_symbol_id
-                .and_then(|id| {
-                    self.find_symbol_by_id(query.workspace_id, id)
-                        .ok()
-                        .flatten()
-                })
-                .map(|s| s.qualified_name)
-                .unwrap_or(c.reason.clone());
-            let source_file_id = match c.from {
-                NodeId::File(id) => id,
-                NodeId::Symbol(id) => self.find_symbol_by_id(query.workspace_id, id)?.map(|s| s.file_id).unwrap_or(0),
-                _ => 0,
-            };
-            callees.push(label.clone());
-            let resolved = c.resolution == EdgeResolution::Resolved;
-            if !resolved {
-                unresolved = true;
-            }
+        for callee in &callees {
             evidence.push(entry(
                 EvidenceKind::Call,
-                self.find_file_by_id(query.workspace_id, source_file_id)?
-                    .map(|f| f.rel_path)
-                    .unwrap_or_else(|| "<unknown>".into()),
-                Some(label),
-                c.span.as_ref().map(|s| s.start_line),
-                c.span.as_ref().map(|s| s.end_line),
+                callee.node.file_path.clone().unwrap_or_else(|| "<unknown>".into()),
+                Some(callee.node.label.clone()),
                 None,
-                "callee edge".into(),
+                None,
+                None,
+                format!("callee edge (depth {})", callee.call_depth),
                 EvidenceSource::Graph,
-                if resolved {
-                    EvidenceConfidence::Grounded
-                } else {
-                    EvidenceConfidence::Partial
-                },
+                EvidenceConfidence::Grounded,
             ));
         }
 
         let state = if callers.is_empty() && callees.is_empty() {
             AnswerState::Insufficient
-        } else if unresolved {
-            AnswerState::Partial
         } else {
             AnswerState::Grounded
         };
 
         Ok(CallHierarchyResult {
             answer_state: state,
-            callers: dedupe(callers),
-            callees: dedupe(callees),
+            callers,
+            callees,
             evidence: packet(
                 state,
                 QuestionClass::CallHierarchy,
                 query.symbol,
                 "Call hierarchy".into(),
-                "Bounded caller/callee edges".into(),
+                "Multi-hop caller/callee edges via CTE".into(),
                 evidence,
-                if state == AnswerState::Partial {
-                    vec!["unresolved/dynamic calls present".into()]
-                } else {
-                    Vec::new()
-                },
+                vec![],
                 EvidenceBounds {
-                    hop_count: Some(1),
+                    hop_count: Some(query.max_depth),
                     node_limit: Some(query.limit),
                     traversal_scope: Some("call_hierarchy".into()),
+                    stop_reason: None,
+                },
+            ),
+        })
+    }
+
+    fn entry_points(&self, query: EntryPointsQuery) -> Result<EntryPointsResult> {
+        let symbols = self.find_symbol_definitions(query.workspace_id, &query.symbol, 1)?;
+        let Some(subject) = symbols.first() else {
+            return Ok(EntryPointsResult {
+                answer_state: AnswerState::Insufficient,
+                entry_points: Vec::new(),
+                evidence: packet(
+                    AnswerState::Insufficient,
+                    QuestionClass::CallHierarchy,
+                    query.symbol,
+                    "Entry points".into(),
+                    "target symbol not indexed".into(),
+                    Vec::new(),
+                    vec!["missing target symbol".into()],
+                    EvidenceBounds {
+                        hop_count: Some(0),
+                        node_limit: Some(query.limit),
+                        traversal_scope: Some("entry_points".into()),
+                        stop_reason: Some("missing_target".into()),
+                    },
+                ),
+            });
+        };
+
+        let node_id = NodeId::Symbol(subject.id as i64);
+
+        let entry_points = self.find_entry_points(query.workspace_id, &node_id, query.max_depth).unwrap_or_default();
+
+        let mut evidence = Vec::new();
+        for ep in &entry_points {
+            evidence.push(entry(
+                EvidenceKind::Call,
+                ep.node.file_path.clone().unwrap_or_else(|| "<unknown>".into()),
+                Some(ep.node.label.clone()),
+                None,
+                None,
+                None,
+                format!("entry point (depth {})", ep.call_depth),
+                EvidenceSource::Graph,
+                EvidenceConfidence::Grounded,
+            ));
+        }
+
+        let state = if entry_points.is_empty() {
+            AnswerState::Insufficient
+        } else {
+            AnswerState::Grounded
+        };
+
+        Ok(EntryPointsResult {
+            answer_state: state,
+            entry_points,
+            evidence: packet(
+                state,
+                QuestionClass::CallHierarchy,
+                query.symbol,
+                "Entry points".into(),
+                "Entry points via CTE".into(),
+                evidence,
+                vec![],
+                EvidenceBounds {
+                    hop_count: Some(query.max_depth),
+                    node_limit: Some(query.limit),
+                    traversal_scope: Some("entry_points".into()),
                     stop_reason: None,
                 },
             ),
@@ -1454,6 +1632,7 @@ impl QueryEngine for Database {
             return Ok(TraceFlowResult {
                 answer_state: AnswerState::Insufficient,
                 path: Vec::new(),
+                hops: Vec::new(),
                 evidence: packet(
                     AnswerState::Insufficient,
                     QuestionClass::TraceFlow,
@@ -1483,6 +1662,7 @@ impl QueryEngine for Database {
             return Ok(TraceFlowResult {
                 answer_state: AnswerState::Insufficient,
                 path: Vec::new(),
+                hops: Vec::new(),
                 evidence: packet(
                     AnswerState::Insufficient,
                     QuestionClass::TraceFlow,
@@ -1502,19 +1682,33 @@ impl QueryEngine for Database {
         };
 
         let mut labels = Vec::new();
+        let mut hops: Vec<dh_types::TraceFlowHop> = Vec::new();
         let mut evidence = Vec::new();
         let mut unresolved = false;
-        for edge in &path.edges {
+        for (idx, edge) in path.edges.iter().enumerate() {
             let from_label = node_label(self, query.workspace_id, &edge.from)?;
             let to_label = node_label(self, query.workspace_id, &edge.to)?;
+            let from_file = node_file_path(self, query.workspace_id, &edge.from)?;
+            let to_file = node_file_path(self, query.workspace_id, &edge.to)?;
             labels.push(format!("{} -> {} ({:?})", from_label, to_label, edge.kind));
             if matches!(edge.resolution, EdgeResolution::Unresolved) {
                 unresolved = true;
             }
+            hops.push(dh_types::TraceFlowHop {
+                from_label: from_label.clone(),
+                to_label: to_label.clone(),
+                from_file: from_file.clone(),
+                to_file: to_file.clone(),
+                edge_kind: edge.kind.clone(),
+                confidence: edge.confidence.clone(),
+                resolution: edge.resolution.clone(),
+                span: edge.span,
+                reason: edge.reason.clone(),
+                hop_index: idx as u32,
+            });
             evidence.push(entry(
                 EvidenceKind::TraceStep,
-                node_file_path(self, query.workspace_id, &edge.from)?
-                    .unwrap_or_else(|| "<unknown>".into()),
+                from_file.unwrap_or_else(|| "<unknown>".into()),
                 Some(format!("{} -> {}", from_label, to_label)),
                 edge.span.map(|s| s.start_line),
                 edge.span.map(|s| s.end_line),
@@ -1538,6 +1732,7 @@ impl QueryEngine for Database {
         Ok(TraceFlowResult {
             answer_state: state,
             path: labels,
+            hops,
             evidence: packet(
                 state,
                 QuestionClass::TraceFlow,
@@ -1575,15 +1770,33 @@ impl QueryEngine for Database {
                 query.node_limit,
             )?;
 
-            let impacted: Vec<String> = ids
-                .iter()
-                .filter_map(|id| {
-                    files
-                        .iter()
-                        .find(|f| f.id == *id)
-                        .map(|f| f.rel_path.clone())
-                })
-                .collect();
+            // `bounded_file_neighborhood` returns ids in BFS order; index 0 = direct neighbours.
+            // We don't have per-hop distances here, so we categorize based on list position
+            // relative to the direct neighbourhood count (first expansion = Direct).
+            let direct_ids: Vec<FileId> = self
+                .bounded_file_neighborhood(query.workspace_id, file.id, 1, query.node_limit)
+                .unwrap_or_default();
+            let direct_set: std::collections::HashSet<FileId> =
+                direct_ids.iter().copied().collect();
+
+            let mut impacted: Vec<String> = Vec::new();
+            let mut impact_nodes: Vec<dh_types::ImpactNode> = Vec::new();
+            for id in &ids {
+                if let Some(f) = files.iter().find(|f| f.id == *id) {
+                    let category = if direct_set.contains(id) {
+                        dh_types::ImpactCategory::Direct
+                    } else {
+                        dh_types::ImpactCategory::Transitive
+                    };
+                    impacted.push(f.rel_path.clone());
+                    impact_nodes.push(dh_types::ImpactNode {
+                        qualified_name: f.rel_path.clone(),
+                        file_path: Some(f.rel_path.clone()),
+                        category,
+                        hop_distance: if direct_set.contains(id) { 1 } else { 2 },
+                    });
+                }
+            }
 
             let state = if impacted.is_empty() {
                 AnswerState::Insufficient
@@ -1593,6 +1806,7 @@ impl QueryEngine for Database {
             return Ok(ImpactAnalysisResult {
                 answer_state: state,
                 impacted: dedupe(impacted),
+                impact_nodes,
                 evidence: packet(
                     state,
                     QuestionClass::Impact,
@@ -1629,10 +1843,31 @@ impl QueryEngine for Database {
                 query.hop_limit,
                 query.node_limit,
             )?;
-            let mut impacted = Vec::new();
+            let direct_ids: Vec<SymbolId> = self
+                .bounded_symbol_neighborhood(query.workspace_id, symbol.id, 1, query.node_limit)
+                .unwrap_or_default();
+            let direct_set: std::collections::HashSet<SymbolId> =
+                direct_ids.iter().copied().collect();
+
+            let mut impacted: Vec<String> = Vec::new();
+            let mut impact_nodes: Vec<dh_types::ImpactNode> = Vec::new();
             for symbol_id in ids {
                 if let Some(s) = self.find_symbol_by_id(query.workspace_id, symbol_id)? {
-                    impacted.push(s.qualified_name);
+                    let category = if direct_set.contains(&symbol_id) {
+                        dh_types::ImpactCategory::Direct
+                    } else {
+                        dh_types::ImpactCategory::Transitive
+                    };
+                    let file_path = self
+                        .find_file_by_id(query.workspace_id, s.file_id)?
+                        .map(|f| f.rel_path);
+                    impacted.push(s.qualified_name.clone());
+                    impact_nodes.push(dh_types::ImpactNode {
+                        qualified_name: s.qualified_name.clone(),
+                        file_path,
+                        category,
+                        hop_distance: if direct_set.contains(&symbol_id) { 1 } else { 2 },
+                    });
                 }
             }
 
@@ -1644,6 +1879,7 @@ impl QueryEngine for Database {
             return Ok(ImpactAnalysisResult {
                 answer_state: state,
                 impacted: dedupe(impacted),
+                impact_nodes,
                 evidence: packet(
                     state,
                     QuestionClass::Impact,
@@ -1677,6 +1913,7 @@ impl QueryEngine for Database {
         Ok(ImpactAnalysisResult {
             answer_state: AnswerState::Unsupported,
             impacted: Vec::new(),
+            impact_nodes: Vec::new(),
             evidence: packet(
                 AnswerState::Unsupported,
                 QuestionClass::Impact,
@@ -1694,6 +1931,96 @@ impl QueryEngine for Database {
             ),
         })
     }
+
+    fn semantic_search(&self, query: SemanticSearchQuery) -> Result<SemanticSearchResult> {
+        let records = self.load_embeddings_for_model(&query.model)?;
+
+        let mut matches: Vec<(dh_types::ChunkId, f32)> = records
+            .iter()
+            .map(|r| (r.chunk_id, cosine_similarity(&query.query_vector, &r.vector)))
+            .filter(|&(_, score)| score >= query.min_score)
+            .collect();
+
+        matches.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        matches.truncate(query.limit);
+
+        let mut result_matches = Vec::new();
+        for (chunk_id, score) in matches {
+            if let Ok(Some(chunk)) = self.find_chunk_by_id(query.workspace_id, chunk_id) {
+                let file_path = self.find_file_by_id(query.workspace_id, chunk.file_id)
+                    .ok()
+                    .flatten()
+                    .map(|f| f.rel_path.clone())
+                    .unwrap_or_else(|| "unknown".into());
+
+                result_matches.push(dh_types::SemanticMatch {
+                    chunk_id,
+                    file_path,
+                    title: chunk.title.clone(),
+                    content: chunk.content.clone(),
+                    score,
+                    span: chunk.span.clone(),
+                });
+            }
+        }
+
+        let mut evidence_entries = Vec::new();
+        for m in &result_matches {
+            evidence_entries.push(EvidenceEntry {
+                kind: EvidenceKind::Chunk,
+                file_path: m.file_path.clone(),
+                symbol: None,
+                line_start: Some(m.span.start_line),
+                line_end: Some(m.span.end_line),
+                snippet: None,
+                reason: format!("Semantic match score: {:.3}", m.score),
+                source: EvidenceSource::Semantic,
+                confidence: if m.score > 0.85 { EvidenceConfidence::Grounded } else { EvidenceConfidence::Partial },
+            });
+        }
+
+        let answer_state = if result_matches.is_empty() { AnswerState::Insufficient } else { AnswerState::Grounded };
+        let entry_count = evidence_entries.len();
+
+        Ok(SemanticSearchResult {
+            answer_state,
+            matches: result_matches,
+            evidence: packet(
+                answer_state,
+                QuestionClass::SemanticSearch,
+                "Semantic Search".into(),
+                format!("Found {} relevant code snippets.", entry_count),
+                "".into(),
+                evidence_entries,
+                Vec::new(),
+                EvidenceBounds {
+                    hop_count: None,
+                    node_limit: Some(query.limit),
+                    traversal_scope: Some("semantic_similarity".into()),
+                    stop_reason: None,
+                },
+            ),
+        })
+    }
+}
+
+#[inline]
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0;
+    let mut norm_a = 0.0;
+    let mut norm_b = 0.0;
+    for (va, vb) in a.iter().zip(b.iter()) {
+        dot += va * vb;
+        norm_a += va * va;
+        norm_b += vb * vb;
+    }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot / (norm_a.sqrt() * norm_b.sqrt())
 }
 
 fn packet(

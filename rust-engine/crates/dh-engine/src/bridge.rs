@@ -13,7 +13,8 @@ use dh_query::{
     classify_search_support, infer_language_from_path, infer_query_languages_from_paths,
     language_capability_matrix, language_id_to_wire, summarize_language_capability,
     BuildEvidenceQuery, FindDependenciesQuery, FindDependentsQuery, FindReferencesQuery,
-    FindSymbolQuery, GotoDefinitionQuery, QueryEngine,
+    FindSymbolQuery, GotoDefinitionQuery, CallHierarchyQuery, EntryPointsQuery,
+    TraceFlowQuery, ImpactAnalysisQuery, SemanticSearchQuery, QueryEngine,
 };
 use dh_storage::{Database, FileRepository, GraphRepository};
 use dh_types::{
@@ -35,6 +36,7 @@ pub struct BridgeRpcError {
     message: String,
 }
 
+#[allow(dead_code)]
 impl BridgeRpcError {
     pub fn invalid_request(message: impl Into<String>) -> Self {
         Self {
@@ -235,12 +237,12 @@ struct WireEvidencePacket {
 }
 
 #[derive(Debug, Serialize)]
-struct BridgeResult {
+struct BridgeResult<T: serde::Serialize = SearchItem> {
     #[serde(rename = "answerState")]
     answer_state: String,
     #[serde(rename = "questionClass")]
     question_class: String,
-    items: Vec<SearchItem>,
+    items: Vec<T>,
     evidence: Option<WireEvidencePacket>,
     #[serde(
         rename = "languageCapabilitySummary",
@@ -605,7 +607,7 @@ fn handle_request(workspace: &Path, db: &Database, request: RpcRequest) -> Value
                         BridgeResult {
                             answer_state: "insufficient".into(),
                             question_class: "definition".into(),
-                            items: Vec::new(),
+                            items: Vec::<SearchItem>::new(),
                             evidence: Some(to_wire_evidence_packet(definition_evidence, None)),
                             language_capability_summary: Some(to_wire_language_capability_summary(
                                 {
@@ -865,6 +867,15 @@ fn handle_request(workspace: &Path, db: &Database, request: RpcRequest) -> Value
                 int_param(&budget, "maxSnippets", BUILD_EVIDENCE_DEFAULT_MAX_SNIPPETS)
                     .min(BUILD_EVIDENCE_HARD_MAX_SNIPPETS);
             let freshness = str_param_opt(&request.params, "freshness");
+            let semantic_vector = request
+                .params
+                .get("semanticVector")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|n| n.as_f64().map(|f| f as f32))
+                        .collect::<Vec<f32>>()
+                });
 
             match db.build_evidence(BuildEvidenceQuery {
                 workspace_id,
@@ -875,6 +886,7 @@ fn handle_request(workspace: &Path, db: &Database, request: RpcRequest) -> Value
                 max_symbols,
                 max_snippets,
                 freshness,
+                semantic_vector,
             }) {
                 Ok(result) => {
                     let items = build_evidence_preview_items(&result.evidence);
@@ -894,6 +906,270 @@ fn handle_request(workspace: &Path, db: &Database, request: RpcRequest) -> Value
                 }
             }
         }
+        "query.callHierarchy" => {
+            let symbol = str_param(&request.params, "symbol").unwrap_or_default();
+            if symbol.is_empty() {
+                return invalid_params(
+                    request.id,
+                    "query.callHierarchy requires a 'symbol' parameter",
+                );
+            }
+            let workspace_id = int_param(&request.params, "workspaceId", 1) as i64;
+            let limit = int_param(&request.params, "limit", 100);
+            let max_depth = int_param(&request.params, "maxDepth", 3) as u32;
+
+            match db.call_hierarchy(CallHierarchyQuery {
+                workspace_id,
+                symbol,
+                limit,
+                max_depth,
+            }) {
+                Ok(result) => {
+                    let mut json_callers = Vec::new();
+                    for node in result.callers {
+                        json_callers.push(json!({
+                            "symbolId": match node.node.id { dh_types::NodeId::Symbol(id) => id, _ => 0 },
+                            "qualifiedName": node.node.label,
+                            "filePath": node.node.file_path.unwrap_or_default(),
+                            "depth": node.call_depth,
+                            "entryPoint": node.entry_point.map(|e| format!("{:?}", e)),
+                        }));
+                    }
+                    let mut json_callees = Vec::new();
+                    for node in result.callees {
+                        json_callees.push(json!({
+                            "symbolId": match node.node.id { dh_types::NodeId::Symbol(id) => id, _ => 0 },
+                            "qualifiedName": node.node.label,
+                            "filePath": node.node.file_path.unwrap_or_default(),
+                            "depth": node.call_depth,
+                            "entryPoint": node.entry_point.map(|e| format!("{:?}", e)),
+                        }));
+                    }
+
+                    ok_result(
+                        request.id,
+                        BridgeResult::<serde_json::Value> {
+                            answer_state: answer_state_str(result.answer_state).into(),
+                            question_class: "call_hierarchy".into(),
+                            items: vec![json!({
+                                "callers": json_callers,
+                                "callees": json_callees,
+                            })],
+                            evidence: Some(to_wire_evidence_packet(result.evidence, None)),
+                            language_capability_summary: None,
+                        },
+                    )
+                }
+                Err(err) => internal_error(request.id, format!("query.callHierarchy failed: {err}")),
+            }
+        }
+        "query.entryPoints" => {
+            let symbol = str_param(&request.params, "symbol").unwrap_or_default();
+            if symbol.is_empty() {
+                return invalid_params(
+                    request.id,
+                    "query.entryPoints requires a 'symbol' parameter",
+                );
+            }
+            let workspace_id = int_param(&request.params, "workspaceId", 1) as i64;
+            let limit = int_param(&request.params, "limit", 100);
+            let max_depth = int_param(&request.params, "maxDepth", 3) as u32;
+
+            match db.entry_points(EntryPointsQuery {
+                workspace_id,
+                symbol,
+                limit,
+                max_depth,
+            }) {
+                Ok(result) => {
+                    let mut json_entry_points = Vec::new();
+                    for node in result.entry_points {
+                        json_entry_points.push(json!({
+                            "symbolId": match node.node.id { dh_types::NodeId::Symbol(id) => id, _ => 0 },
+                            "qualifiedName": node.node.label,
+                            "filePath": node.node.file_path.unwrap_or_default(),
+                            "depth": node.call_depth,
+                            "entryPoint": node.entry_point.map(|e| format!("{:?}", e)),
+                        }));
+                    }
+
+                    ok_result(
+                        request.id,
+                        BridgeResult::<serde_json::Value> {
+                            answer_state: answer_state_str(result.answer_state).into(),
+                            question_class: "entry_points".into(),
+                            items: vec![json!({
+                                "entryPoints": json_entry_points,
+                            })],
+                            evidence: Some(to_wire_evidence_packet(result.evidence, None)),
+                            language_capability_summary: None,
+                        },
+                    )
+                }
+                Err(err) => internal_error(request.id, format!("query.entryPoints failed: {err}")),
+            }
+        }
+        "query.traceFlow" => {
+            let from_symbol = str_param(&request.params, "fromSymbol").unwrap_or_default();
+            let to_symbol = str_param(&request.params, "toSymbol").unwrap_or_default();
+            if from_symbol.is_empty() || to_symbol.is_empty() {
+                return invalid_params(
+                    request.id,
+                    "query.traceFlow requires 'fromSymbol' and 'toSymbol' parameters",
+                );
+            }
+            let workspace_id = int_param(&request.params, "workspaceId", 1) as i64;
+            let max_hops = int_param(&request.params, "maxHops", 10) as u32;
+
+            match db.trace_flow(TraceFlowQuery {
+                workspace_id,
+                from_symbol,
+                to_symbol,
+                max_hops,
+            }) {
+                Ok(result) => {
+                    let json_hops: Vec<serde_json::Value> = result
+                        .hops
+                        .iter()
+                        .map(|h| {
+                            json!({
+                                "fromLabel": h.from_label,
+                                "toLabel": h.to_label,
+                                "fromFile": h.from_file,
+                                "toFile": h.to_file,
+                                "edgeKind": format!("{:?}", h.edge_kind),
+                                "confidence": format!("{:?}", h.confidence),
+                                "resolution": format!("{:?}", h.resolution),
+                                "hopIndex": h.hop_index,
+                                "reason": h.reason,
+                            })
+                        })
+                        .collect();
+
+                    ok_result(
+                        request.id,
+                        BridgeResult::<serde_json::Value> {
+                            answer_state: answer_state_str(result.answer_state).into(),
+                            question_class: "trace_flow".into(),
+                            items: vec![json!({
+                                "path": result.path,
+                                "hops": json_hops,
+                            })],
+                            evidence: Some(to_wire_evidence_packet(result.evidence, None)),
+                            language_capability_summary: None,
+                        },
+                    )
+                }
+                Err(err) => internal_error(request.id, format!("query.traceFlow failed: {err}")),
+            }
+        }
+        "query.impactAnalysis" => {
+            let target = str_param(&request.params, "target").unwrap_or_default();
+            if target.is_empty() {
+                return invalid_params(
+                    request.id,
+                    "query.impactAnalysis requires a 'target' parameter",
+                );
+            }
+            let workspace_id = int_param(&request.params, "workspaceId", 1) as i64;
+            let hop_limit = int_param(&request.params, "hopLimit", 3) as u32;
+            let node_limit = int_param(&request.params, "nodeLimit", 100);
+
+            match db.impact_analysis(ImpactAnalysisQuery {
+                workspace_id,
+                target,
+                hop_limit,
+                node_limit,
+            }) {
+                Ok(result) => {
+                    let json_nodes: Vec<serde_json::Value> = result
+                        .impact_nodes
+                        .iter()
+                        .map(|n| {
+                            json!({
+                                "qualifiedName": n.qualified_name,
+                                "filePath": n.file_path,
+                                "category": format!("{:?}", n.category),
+                                "hopDistance": n.hop_distance,
+                            })
+                        })
+                        .collect();
+
+                    ok_result(
+                        request.id,
+                        BridgeResult::<serde_json::Value> {
+                            answer_state: answer_state_str(result.answer_state).into(),
+                            question_class: "impact_analysis".into(),
+                            items: vec![json!({
+                                "impacted": result.impacted,
+                                "impactNodes": json_nodes,
+                            })],
+                            evidence: Some(to_wire_evidence_packet(result.evidence, None)),
+                            language_capability_summary: None,
+                        },
+                    )
+                }
+                Err(err) => internal_error(request.id, format!("query.impactAnalysis failed: {err}")),
+            }
+        }
+        "query.semanticSearch" => {
+            let model = str_param(&request.params, "model").unwrap_or_else(|| "text-embedding-3-small".to_string());
+                
+            let query_vector_json = request.params["queryVector"].as_array();
+            if query_vector_json.is_none() {
+                return invalid_params(request.id, "query.semanticSearch requires queryVector");
+            }
+            
+            let query_vector: Vec<f32> = query_vector_json
+                .unwrap()
+                .iter()
+                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                .collect();
+                
+            let limit = int_param(&request.params, "limit", 20);
+            let min_score = request.params["minScore"].as_f64().unwrap_or(0.0) as f32;
+            let workspace_id = int_param(&request.params, "workspaceId", 1) as i64;
+
+            match db.semantic_search(SemanticSearchQuery {
+                workspace_id,
+                model,
+                query_vector,
+                limit,
+                min_score,
+            }) {
+                Ok(result) => {
+                    let json_matches: Vec<serde_json::Value> = result.matches.into_iter().map(|m| {
+                        json!({
+                            "chunkId": m.chunk_id,
+                            "filePath": m.file_path,
+                            "title": m.title,
+                            "content": m.content,
+                            "score": m.score,
+                            "span": {
+                                "startLine": m.span.start_line,
+                                "startColumn": m.span.start_column,
+                                "endLine": m.span.end_line,
+                                "endColumn": m.span.end_column
+                            }
+                        })
+                    }).collect();
+                    
+                    ok_result(
+                        request.id,
+                        BridgeResult::<serde_json::Value> {
+                            answer_state: answer_state_str(result.answer_state).into(),
+                            question_class: "semantic_search".into(),
+                            items: vec![json!({
+                                "matches": json_matches,
+                            })],
+                            evidence: Some(to_wire_evidence_packet(result.evidence, None)),
+                            language_capability_summary: None,
+                        },
+                    )
+                }
+                Err(err) => internal_error(request.id, format!("query.semanticSearch failed: {err}")),
+            }
+        }
         _ => method_not_supported(
             request.id,
             &format!(
@@ -908,7 +1184,7 @@ fn unsupported_build_evidence_intent_result(query: String, intent: &str) -> Brid
     BridgeResult {
         answer_state: "unsupported".into(),
         question_class: "build_evidence".into(),
-        items: Vec::new(),
+        items: Vec::<SearchItem>::new(),
         evidence: Some(WireEvidencePacket {
             answer_state: "unsupported".into(),
             question_class: "build_evidence".into(),
@@ -1055,6 +1331,7 @@ fn question_class_str(class: QuestionClass) -> &'static str {
         QuestionClass::CallHierarchy => "call_hierarchy",
         QuestionClass::TraceFlow => "trace_flow",
         QuestionClass::Impact => "impact",
+        QuestionClass::SemanticSearch => "semantic_search",
     }
 }
 
@@ -1277,6 +1554,7 @@ fn evidence_source_str(source: EvidenceSource) -> &'static str {
         EvidenceSource::Graph => "graph",
         EvidenceSource::Query => "query",
         EvidenceSource::Storage => "storage",
+        EvidenceSource::Semantic => "semantic",
     }
 }
 
@@ -1406,7 +1684,7 @@ fn unsupported_relationship_result(
     BridgeResult {
         answer_state: "unsupported".into(),
         question_class: question_class.into(),
-        items: Vec::new(),
+        items: Vec::<SearchItem>::new(),
         evidence: Some(evidence),
         language_capability_summary: Some(summary),
     }
@@ -2452,8 +2730,6 @@ mod tests {
         for method in [
             "tool.execute",
             "query.trace",
-            "query.impactAnalysis",
-            "query.callHierarchy",
             "arbitrary.forward",
         ] {
             let response = router.route_worker_query(RpcRequest {
@@ -2480,7 +2756,7 @@ mod tests {
     ) -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
 
-        for method in ["query.trace", "query.impactAnalysis", "query.callHierarchy"] {
+        for method in ["query.trace"] {
             let response = handle_request(
                 tmp.path(),
                 &db,

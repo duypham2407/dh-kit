@@ -2,13 +2,15 @@
 
 use anyhow::{Context, Result};
 use dh_types::{
-    CallKind, Chunk, ChunkId, EmbeddingStatus, File, FileId, FreshnessReason,
-    FreshnessState, ImportKind, IndexRunStatus, IndexState, LanguageId, ParseStatus, ReferenceKind, Span, Symbol, SymbolId, SymbolKind, Visibility, WorkspaceId,
+    Chunk, ChunkId, EmbeddingRecord, EmbeddingStatus, File, FileId, FreshnessReason,
+    FreshnessState, IndexRunStatus, IndexState, LanguageId, ParseStatus, Span, Symbol, SymbolId, SymbolKind, Visibility, WorkspaceId,
 };
+
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use thiserror::Error;
 use tracing::info;
 
+#[allow(dead_code)]
 const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Error)]
@@ -257,6 +259,8 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_graph_edges_from_node ON graph_edges(from_node_kind, from_node_id);
             CREATE INDEX IF NOT EXISTS idx_graph_edges_to_node ON graph_edges(to_node_kind, to_node_id);
             CREATE INDEX IF NOT EXISTS idx_graph_edges_kind ON graph_edges(kind);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_workspace_from ON graph_edges(workspace_id, from_node_kind, from_node_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_workspace_to ON graph_edges(workspace_id, to_node_kind, to_node_id);
 
             CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_id);
             CREATE INDEX IF NOT EXISTS idx_chunks_symbol ON chunks(symbol_id);
@@ -340,6 +344,7 @@ pub trait ChunkRepository {
     fn insert_chunks(&self, chunks: &[Chunk]) -> Result<()>;
     fn find_chunks_by_file(&self, file_id: FileId) -> Result<Vec<Chunk>>;
     fn find_chunks_by_workspace(&self, workspace_id: WorkspaceId) -> Result<Vec<Chunk>>;
+    fn search_chunks_fts(&self, workspace_id: WorkspaceId, query: &str, limit: usize) -> Result<Vec<(Chunk, f32)>>;
 }
 
 pub trait GraphRepository {
@@ -374,6 +379,34 @@ pub trait GraphRepository {
         hop_limit: u32,
         node_limit: usize,
     ) -> Result<Vec<SymbolId>>;
+    fn cte_shortest_path(
+        &self,
+        workspace_id: WorkspaceId,
+        from_kind: &str,
+        from_id: i64,
+        to_kind: &str,
+        to_id: i64,
+        max_hops: u32,
+    ) -> Result<Option<Vec<dh_types::GraphEdge>>>;
+    fn weighted_neighborhood(
+        &self,
+        workspace_id: WorkspaceId,
+        seed_kind: &str,
+        seed_id: i64,
+        max_hops: u32,
+        node_limit: usize,
+        edge_kind_filter: Option<&[&str]>,
+    ) -> Result<Vec<(dh_types::NodeId, u32)>>;
+    fn directional_neighborhood(
+        &self,
+        workspace_id: WorkspaceId,
+        seed_kind: &str,
+        seed_id: i64,
+        direction: &str,
+        max_hops: u32,
+        node_limit: usize,
+        edge_kind_filter: Option<&[&str]>,
+    ) -> Result<Vec<(dh_types::NodeId, u32)>>;
 }
 
 pub trait IndexStateRepository {
@@ -392,6 +425,101 @@ pub trait IndexStateRepository {
         message: Option<&str>,
     ) -> Result<()>;
 }
+
+/// Trait for storing and retrieving embedding vectors.
+pub trait EmbeddingRepository {
+    /// Upsert a vector for a chunk. If a record already exists for the same
+    /// (chunk_id, model, content_hash) triple the call is a no-op.
+    fn upsert_embedding(
+        &self,
+        chunk_id: ChunkId,
+        model: &str,
+        dimensions: usize,
+        content_hash: &str,
+        vector: &[f32],
+    ) -> Result<()>;
+
+    /// Load all stored embeddings for a specific model. Used for in-process
+    /// cosine similarity search in the query layer.
+    fn load_embeddings_for_model(
+        &self,
+        model: &str,
+    ) -> Result<Vec<EmbeddingRecord>>;
+
+    /// Delete the embedding for a chunk (e.g. when the chunk is re-indexed).
+    fn delete_embedding(&self, chunk_id: ChunkId) -> Result<()>;
+}
+
+impl EmbeddingRepository for Database {
+    fn upsert_embedding(
+        &self,
+        chunk_id: ChunkId,
+        model: &str,
+        dimensions: usize,
+        content_hash: &str,
+        vector: &[f32],
+    ) -> Result<()> {
+        let blob: Vec<u8> = vector
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        self.conn.execute(
+            "INSERT INTO embeddings (chunk_id, model, dimensions, content_hash, vector, created_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(chunk_id) DO UPDATE SET
+               model = excluded.model,
+               dimensions = excluded.dimensions,
+               content_hash = excluded.content_hash,
+               vector = excluded.vector,
+               created_at_unix_ms = excluded.created_at_unix_ms",
+            params![chunk_id, model, dimensions as i64, content_hash, blob, now],
+        )?;
+        Ok(())
+    }
+
+    fn load_embeddings_for_model(&self, model: &str) -> Result<Vec<EmbeddingRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT chunk_id, model, dimensions, content_hash, vector, created_at_unix_ms
+             FROM embeddings WHERE model = ?1",
+        )?;
+        let records = stmt.query_map(params![model], |row| {
+            let blob: Vec<u8> = row.get(4)?;
+            Ok((row.get::<_, ChunkId>(0)?, row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?, row.get::<_, String>(3)?,
+                blob, row.get::<_, i64>(5)?))
+        })?
+        .filter_map(|r| r.ok())
+        .map(|(chunk_id, model, dimensions, content_hash, blob, created_at_unix_ms)| {
+            let vector: Vec<f32> = blob
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+            EmbeddingRecord {
+                chunk_id,
+                model,
+                dimensions: dimensions as usize,
+                content_hash,
+                vector,
+                created_at_unix_ms,
+            }
+        })
+        .collect();
+        Ok(records)
+    }
+
+    fn delete_embedding(&self, chunk_id: ChunkId) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM embeddings WHERE chunk_id = ?1",
+            params![chunk_id],
+        )?;
+        Ok(())
+    }
+}
+
 
 impl FileRepository for Database {
     fn upsert_file(&self, file: &File) -> Result<FileId> {
@@ -635,7 +763,7 @@ impl ChunkRepository for Database {
         )?;
 
         let mut fts_stmt = self.conn.prepare(
-            "INSERT INTO chunk_fts(title, content, rel_path, language) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO chunk_fts(rowid, title, content, rel_path, language) VALUES (?1, ?2, ?3, ?4, ?5)",
         )?;
 
         for chunk in chunks {
@@ -670,6 +798,7 @@ impl ChunkRepository for Database {
                 .optional()?;
 
             fts_stmt.execute(params![
+                chunk.id,
                 chunk.title,
                 chunk.content,
                 rel_path.unwrap_or_default(),
@@ -713,6 +842,35 @@ impl ChunkRepository for Database {
         )?;
 
         let rows = stmt.query_map(params![workspace_id], map_chunk)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn search_chunks_fts(&self, workspace_id: WorkspaceId, query: &str, limit: usize) -> Result<Vec<(Chunk, f32)>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT c.id, c.workspace_id, c.file_id, c.symbol_id, c.parent_symbol_id, c.kind, c.language,
+                   c.title, c.content, c.content_hash, c.token_estimate, c.start_line, c.start_column,
+                   c.end_line, c.end_column, c.prev_chunk_id, c.next_chunk_id, c.embedding_status,
+                   bm25(chunk_fts) as score
+              FROM chunk_fts f
+              JOIN chunks c ON c.id = f.rowid
+             WHERE chunk_fts MATCH ?1 AND c.workspace_id = ?2
+             ORDER BY score ASC
+             LIMIT ?3
+            ",
+        )?;
+
+        let rows = stmt.query_map(params![query, workspace_id, limit], |row| {
+            let chunk = map_chunk(row)?;
+            let score: f64 = row.get(18)?; 
+            // bm25 is more negative for better matches, we'll return its absolute value so higher is better
+            Ok((chunk, score.abs() as f32))
+        })?;
+
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -963,35 +1121,34 @@ impl GraphRepository for Database {
         hop_limit: u32,
         node_limit: usize,
     ) -> Result<Vec<FileId>> {
-        use std::collections::{HashSet, VecDeque};
-        let mut visited = HashSet::new();
-        let mut queue = VecDeque::new();
+        let mut stmt = self.conn.prepare_cached(
+            r#"
+            WITH RECURSIVE reachable(node_kind, node_id, depth) AS (
+                SELECT 'file', ?1, 0
+                UNION ALL
+                SELECT e.to_node_kind, e.to_node_id, r.depth + 1
+                FROM graph_edges e
+                JOIN reachable r ON e.from_node_kind = r.node_kind AND e.from_node_id = r.node_id
+                WHERE r.depth < ?2 AND e.workspace_id = ?3
+                UNION ALL
+                SELECT e.from_node_kind, e.from_node_id, r.depth + 1
+                FROM graph_edges e
+                JOIN reachable r ON e.to_node_kind = r.node_kind AND e.to_node_id = r.node_id
+                WHERE r.depth < ?2 AND e.workspace_id = ?3
+            )
+            SELECT DISTINCT node_id FROM reachable
+            WHERE node_kind = 'file'
+            LIMIT ?4
+            "#,
+        )?;
 
-        visited.insert(file_id);
-        queue.push_back((file_id, 0_u32));
-
-        while let Some((current, hop)) = queue.pop_front() {
-            if visited.len() >= node_limit || hop >= hop_limit {
-                continue;
-            }
-
-            for edge in self.find_outgoing_edges(workspace_id, "file", current as i64, node_limit)? {
-                if let dh_types::NodeId::File(next) = edge.to {
-                    if visited.insert(next) {
-                        queue.push_back((next, hop + 1));
-                    }
-                }
-            }
-            for edge in self.find_incoming_edges(workspace_id, "file", current as i64, node_limit)? {
-                if let dh_types::NodeId::File(next) = edge.from {
-                    if visited.insert(next) {
-                        queue.push_back((next, hop + 1));
-                    }
-                }
-            }
+        let mut rows = stmt.query(params![file_id as i64, hop_limit, workspace_id as i64, node_limit as i64])?;
+        let mut result = Vec::new();
+        while let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            result.push(id as FileId);
         }
-
-        Ok(visited.into_iter().collect())
+        Ok(result)
     }
 
     fn bounded_symbol_neighborhood(
@@ -1001,36 +1158,246 @@ impl GraphRepository for Database {
         hop_limit: u32,
         node_limit: usize,
     ) -> Result<Vec<SymbolId>> {
-        use std::collections::{HashSet, VecDeque};
-        let mut visited = HashSet::new();
-        let mut queue = VecDeque::new();
+        let mut stmt = self.conn.prepare_cached(
+            r#"
+            WITH RECURSIVE reachable(node_kind, node_id, depth) AS (
+                SELECT 'symbol', ?1, 0
+                UNION ALL
+                SELECT e.to_node_kind, e.to_node_id, r.depth + 1
+                FROM graph_edges e
+                JOIN reachable r ON e.from_node_kind = r.node_kind AND e.from_node_id = r.node_id
+                WHERE r.depth < ?2 AND e.workspace_id = ?3
+                UNION ALL
+                SELECT e.from_node_kind, e.from_node_id, r.depth + 1
+                FROM graph_edges e
+                JOIN reachable r ON e.to_node_kind = r.node_kind AND e.to_node_id = r.node_id
+                WHERE r.depth < ?2 AND e.workspace_id = ?3
+            )
+            SELECT DISTINCT node_id FROM reachable
+            WHERE node_kind = 'symbol'
+            LIMIT ?4
+            "#,
+        )?;
 
-        visited.insert(symbol_id);
-        queue.push_back((symbol_id, 0_u32));
+        let mut rows = stmt.query(params![symbol_id as i64, hop_limit, workspace_id as i64, node_limit as i64])?;
+        let mut result = Vec::new();
+        while let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            result.push(id as SymbolId);
+        }
+        Ok(result)
+    }
 
-        while let Some((current, hop)) = queue.pop_front() {
-            if visited.len() >= node_limit || hop >= hop_limit {
-                continue;
-            }
+    fn cte_shortest_path(
+        &self,
+        workspace_id: WorkspaceId,
+        from_kind: &str,
+        from_id: i64,
+        to_kind: &str,
+        to_id: i64,
+        max_hops: u32,
+    ) -> Result<Option<Vec<dh_types::GraphEdge>>> {
+        let mut stmt = self.conn.prepare_cached(
+            r#"
+            WITH RECURSIVE path_search(node_kind, node_id, depth, node_path, edge_path) AS (
+                SELECT ?1, ?2, 0, ',' || CAST(?2 AS TEXT) || ',', CAST('' AS TEXT)
+                UNION ALL
+                SELECT e.to_node_kind, e.to_node_id, ps.depth + 1,
+                       ps.node_path || CAST(e.to_node_id AS TEXT) || ',',
+                       ps.edge_path || CAST(e.id AS TEXT) || ','
+                FROM graph_edges e
+                JOIN path_search ps ON e.from_node_kind = ps.node_kind AND e.from_node_id = ps.node_id
+                WHERE e.workspace_id = ?5 AND ps.depth < ?6
+                  AND instr(ps.node_path, ',' || CAST(e.to_node_id AS TEXT) || ',') = 0
+            )
+            SELECT edge_path FROM path_search
+            WHERE node_kind = ?3 AND node_id = ?4
+            ORDER BY depth ASC LIMIT 1
+            "#,
+        )?;
 
-            for edge in self.find_outgoing_edges(workspace_id, "symbol", current as i64, node_limit)? {
-                if let dh_types::NodeId::Symbol(next) = edge.to {
-                    if visited.insert(next) {
-                        queue.push_back((next, hop + 1));
-                    }
-                }
-            }
+        let edge_path_str: Option<String> = stmt.query_row(
+            params![from_kind, from_id, to_kind, to_id, workspace_id as i64, max_hops],
+            |row| row.get(0),
+        ).optional()?;
 
-            for edge in self.find_incoming_edges(workspace_id, "symbol", current as i64, node_limit)? {
-                if let dh_types::NodeId::Symbol(next) = edge.from {
-                    if visited.insert(next) {
-                        queue.push_back((next, hop + 1));
-                    }
-                }
-            }
+        let edge_path_str = match edge_path_str {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        let edge_ids: Vec<i64> = edge_path_str
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse::<i64>().unwrap())
+            .collect();
+
+        if edge_ids.is_empty() {
+            return Ok(Some(Vec::new()));
         }
 
-        Ok(visited.into_iter().collect())
+        let placeholders = edge_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "SELECT id, workspace_id, source_file_id, kind, from_node_kind, from_node_id, to_node_kind, to_node_id, resolution, confidence, start_line, start_column, end_line, end_column, reason, payload_json FROM graph_edges WHERE id IN ({})",
+            placeholders
+        );
+
+        let mut edge_stmt = self.conn.prepare(&query)?;
+        let rows = edge_stmt.query_map(rusqlite::params_from_iter(edge_ids.iter()), |row| {
+            let id: i64 = row.get(0)?;
+            let edge = map_graph_edge(row)?;
+            Ok((id, edge))
+        })?;
+        let mut edges_with_id = Vec::new();
+        for row in rows {
+            edges_with_id.push(row?);
+        }
+
+        edges_with_id.sort_by_key(|(id, _)| edge_ids.iter().position(|eid| eid == id).unwrap_or(usize::MAX));
+
+        Ok(Some(edges_with_id.into_iter().map(|(_, e)| e).collect()))
+    }
+
+    fn weighted_neighborhood(
+        &self,
+        workspace_id: WorkspaceId,
+        seed_kind: &str,
+        seed_id: i64,
+        max_hops: u32,
+        node_limit: usize,
+        edge_kind_filter: Option<&[&str]>,
+    ) -> Result<Vec<(dh_types::NodeId, u32)>> {
+        let filter_clause = if let Some(kinds) = edge_kind_filter {
+            if kinds.is_empty() {
+                "AND 1=0".to_string()
+            } else {
+                let quoted = kinds.iter().map(|k| format!("'{}'", k)).collect::<Vec<_>>().join(",");
+                format!("AND e.kind IN ({})", quoted)
+            }
+        } else {
+            "".to_string()
+        };
+
+        let query = format!(
+            r#"
+            WITH RECURSIVE reachable(node_kind, node_id, depth) AS (
+                SELECT ?1, ?2, 0
+                UNION ALL
+                SELECT e.to_node_kind, e.to_node_id, r.depth + 1
+                FROM graph_edges e
+                JOIN reachable r ON e.from_node_kind = r.node_kind AND e.from_node_id = r.node_id
+                WHERE r.depth < ?3 AND e.workspace_id = ?4 {0}
+                UNION ALL
+                SELECT e.from_node_kind, e.from_node_id, r.depth + 1
+                FROM graph_edges e
+                JOIN reachable r ON e.to_node_kind = r.node_kind AND e.to_node_id = r.node_id
+                WHERE r.depth < ?3 AND e.workspace_id = ?4 {0}
+            )
+            SELECT node_kind, node_id, MIN(depth) as min_depth
+            FROM reachable
+            GROUP BY node_kind, node_id
+            ORDER BY min_depth ASC
+            LIMIT ?5
+            "#,
+            filter_clause
+        );
+
+        let mut stmt = self.conn.prepare_cached(&query)?;
+        let mut rows = stmt.query(params![seed_kind, seed_id, max_hops, workspace_id as i64, node_limit as i64])?;
+        
+        let mut result = Vec::new();
+        while let Some(row) = rows.next()? {
+            let kind: String = row.get(0)?;
+            let id: i64 = row.get(1)?;
+            let depth: u32 = row.get(2)?;
+            
+            let node_id = match kind.as_str() {
+                "file" => dh_types::NodeId::File(id as _),
+                "symbol" => dh_types::NodeId::Symbol(id as _),
+                "chunk" => dh_types::NodeId::Chunk(id as _),
+                _ => continue,
+            };
+            result.push((node_id, depth));
+        }
+        
+        Ok(result)
+    }
+
+    fn directional_neighborhood(
+        &self,
+        workspace_id: WorkspaceId,
+        seed_kind: &str,
+        seed_id: i64,
+        direction: &str,
+        max_hops: u32,
+        node_limit: usize,
+        edge_kind_filter: Option<&[&str]>,
+    ) -> Result<Vec<(dh_types::NodeId, u32)>> {
+        let filter_clause = if let Some(kinds) = edge_kind_filter {
+            if kinds.is_empty() {
+                "AND 1=0".to_string()
+            } else {
+                let quoted = kinds.iter().map(|k| format!("'{}'", k)).collect::<Vec<_>>().join(",");
+                format!("AND e.kind IN ({})", quoted)
+            }
+        } else {
+            "".to_string()
+        };
+
+        let recursive_step = if direction == "outgoing" {
+            format!(r#"
+                SELECT e.to_node_kind, e.to_node_id, r.depth + 1
+                FROM graph_edges e
+                JOIN reachable r ON e.from_node_kind = r.node_kind AND e.from_node_id = r.node_id
+                WHERE r.depth < ?3 AND e.workspace_id = ?4 {}
+            "#, filter_clause)
+        } else if direction == "incoming" {
+            format!(r#"
+                SELECT e.from_node_kind, e.from_node_id, r.depth + 1
+                FROM graph_edges e
+                JOIN reachable r ON e.to_node_kind = r.node_kind AND e.to_node_id = r.node_id
+                WHERE r.depth < ?3 AND e.workspace_id = ?4 {}
+            "#, filter_clause)
+        } else {
+            // Fallback just in case, though it shouldn't happen.
+            return Ok(Vec::new());
+        };
+
+        let query = format!(
+            r#"
+            WITH RECURSIVE reachable(node_kind, node_id, depth) AS (
+                SELECT ?1, ?2, 0
+                UNION ALL
+                {}
+            )
+            SELECT node_kind, node_id, MIN(depth) as min_depth
+            FROM reachable
+            GROUP BY node_kind, node_id
+            ORDER BY min_depth ASC
+            LIMIT ?5
+            "#,
+            recursive_step
+        );
+
+        let mut stmt = self.conn.prepare_cached(&query)?;
+        let mut rows = stmt.query(params![seed_kind, seed_id, max_hops, workspace_id as i64, node_limit as i64])?;
+        
+        let mut result = Vec::new();
+        while let Some(row) = rows.next()? {
+            let kind: String = row.get(0)?;
+            let id: i64 = row.get(1)?;
+            let depth: u32 = row.get(2)?;
+            
+            let node_id = match kind.as_str() {
+                "file" => dh_types::NodeId::File(id as _),
+                "symbol" => dh_types::NodeId::Symbol(id as _),
+                "chunk" => dh_types::NodeId::Chunk(id as _),
+                _ => continue,
+            };
+            result.push((node_id, depth));
+        }
+        
+        Ok(result)
     }
 }
 

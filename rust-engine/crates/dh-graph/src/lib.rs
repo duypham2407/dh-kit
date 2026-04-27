@@ -6,7 +6,7 @@ pub use dh_types::{
     GraphNeighborhood, GraphNeighbors, GraphNode, GraphPath, ImportKind, NodeId, NodeKind, Span,
     SymbolId, WorkspaceId,
 };
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 
 
@@ -32,6 +32,32 @@ pub trait GraphService {
         node_limit: usize,
     ) -> anyhow::Result<GraphNeighborhood>;
     fn node(&self, workspace_id: WorkspaceId, node: &NodeId) -> anyhow::Result<Option<GraphNode>>;
+    fn weighted_neighborhood(
+        &self,
+        workspace_id: WorkspaceId,
+        seed: &NodeId,
+        max_hops: u32,
+        node_limit: usize,
+        edge_kind_filter: Option<&[&str]>,
+    ) -> anyhow::Result<Vec<(NodeId, u32)>>;
+    fn find_callers(
+        &self,
+        workspace_id: WorkspaceId,
+        callee: &NodeId,
+        max_depth: u32,
+    ) -> anyhow::Result<Vec<dh_types::CallHierarchyNode>>;
+    fn find_callees(
+        &self,
+        workspace_id: WorkspaceId,
+        caller: &NodeId,
+        max_depth: u32,
+    ) -> anyhow::Result<Vec<dh_types::CallHierarchyNode>>;
+    fn find_entry_points(
+        &self,
+        workspace_id: WorkspaceId,
+        node: &NodeId,
+        max_depth: u32,
+    ) -> anyhow::Result<Vec<dh_types::CallHierarchyNode>>;
 }
 
 impl GraphService for Database {
@@ -67,41 +93,37 @@ impl GraphService for Database {
             }));
         }
 
-        let mut visited: HashSet<NodeId> = HashSet::new();
-        let mut queue: VecDeque<(NodeId, Vec<GraphEdge>)> = VecDeque::new();
+        let from_kind = match start {
+            NodeId::File(_) => "file",
+            NodeId::Symbol(_) => "symbol",
+            NodeId::Chunk(_) => "chunk",
+        };
+        let from_id = match start {
+            NodeId::File(id) => *id as i64,
+            NodeId::Symbol(id) => *id as i64,
+            NodeId::Chunk(id) => *id as i64,
+        };
+        let to_kind = match end {
+            NodeId::File(_) => "file",
+            NodeId::Symbol(_) => "symbol",
+            NodeId::Chunk(_) => "chunk",
+        };
+        let to_id = match end {
+            NodeId::File(id) => *id as i64,
+            NodeId::Symbol(id) => *id as i64,
+            NodeId::Chunk(id) => *id as i64,
+        };
 
-        visited.insert(start.clone());
-        queue.push_back((start.clone(), Vec::new()));
-
-        while let Some((current, path)) = queue.pop_front() {
-            if path.len() as u32 >= max_hops {
-                continue;
-            }
-
-            for edge in self.graph_outgoing_edges(workspace_id, &current, 256)? {
-                let next = edge.to.clone();
-                if visited.contains(&next) {
-                    continue;
-                }
-
-                let mut next_path = path.clone();
-                next_path.push(edge.clone());
-
-                if &next == end {
-                    return Ok(Some(GraphPath {
-                        start: start.clone(),
-                        end: end.clone(),
-                        edges: next_path,
-                        truncated: false,
-                    }));
-                }
-
-                visited.insert(next.clone());
-                queue.push_back((next, next_path));
-            }
+        if let Some(edges) = self.cte_shortest_path(workspace_id, from_kind, from_id, to_kind, to_id, max_hops)? {
+            Ok(Some(GraphPath {
+                start: start.clone(),
+                end: end.clone(),
+                edges,
+                truncated: false,
+            }))
+        } else {
+            Ok(None)
         }
-
-        Ok(None)
     }
 
     fn neighborhood(
@@ -213,6 +235,145 @@ impl GraphService for Database {
                 }
             }
         }
+    }
+
+    fn weighted_neighborhood(
+        &self,
+        workspace_id: WorkspaceId,
+        seed: &NodeId,
+        max_hops: u32,
+        node_limit: usize,
+        edge_kind_filter: Option<&[&str]>,
+    ) -> anyhow::Result<Vec<(NodeId, u32)>> {
+        let seed_kind = match seed {
+            NodeId::File(_) => "file",
+            NodeId::Symbol(_) => "symbol",
+            NodeId::Chunk(_) => "chunk",
+        };
+        let seed_id = match seed {
+            NodeId::File(id) => *id as i64,
+            NodeId::Symbol(id) => *id as i64,
+            NodeId::Chunk(id) => *id as i64,
+        };
+        let result = GraphRepository::weighted_neighborhood(
+            self,
+            workspace_id,
+            seed_kind,
+            seed_id,
+            max_hops,
+            node_limit,
+            edge_kind_filter,
+        )?;
+        Ok(result)
+    }
+
+    fn find_callers(
+        &self,
+        workspace_id: WorkspaceId,
+        callee: &NodeId,
+        max_depth: u32,
+    ) -> anyhow::Result<Vec<dh_types::CallHierarchyNode>> {
+        let seed_kind = match callee {
+            NodeId::File(_) => "file",
+            NodeId::Symbol(_) => "symbol",
+            NodeId::Chunk(_) => "chunk",
+        };
+        let seed_id = match callee {
+            NodeId::File(id) => *id as i64,
+            NodeId::Symbol(id) => *id as i64,
+            NodeId::Chunk(id) => *id as i64,
+        };
+        let nodes = dh_storage::GraphRepository::directional_neighborhood(
+            self,
+            workspace_id,
+            seed_kind,
+            seed_id,
+            "incoming",
+            max_depth,
+            1000,
+            Some(&["call"]),
+        )?;
+        
+        let mut hierarchy = Vec::new();
+        for (node_id, depth) in nodes {
+            if let Some(graph_node) = self.node(workspace_id, &node_id)? {
+                hierarchy.push(dh_types::CallHierarchyNode {
+                    node: graph_node,
+                    call_depth: depth,
+                    entry_point: None,
+                });
+            }
+        }
+        Ok(hierarchy)
+    }
+
+    fn find_callees(
+        &self,
+        workspace_id: WorkspaceId,
+        caller: &NodeId,
+        max_depth: u32,
+    ) -> anyhow::Result<Vec<dh_types::CallHierarchyNode>> {
+        let seed_kind = match caller {
+            NodeId::File(_) => "file",
+            NodeId::Symbol(_) => "symbol",
+            NodeId::Chunk(_) => "chunk",
+        };
+        let seed_id = match caller {
+            NodeId::File(id) => *id as i64,
+            NodeId::Symbol(id) => *id as i64,
+            NodeId::Chunk(id) => *id as i64,
+        };
+        let nodes = dh_storage::GraphRepository::directional_neighborhood(
+            self,
+            workspace_id,
+            seed_kind,
+            seed_id,
+            "outgoing",
+            max_depth,
+            1000,
+            Some(&["call"]),
+        )?;
+        
+        let mut hierarchy = Vec::new();
+        for (node_id, depth) in nodes {
+            if let Some(graph_node) = self.node(workspace_id, &node_id)? {
+                hierarchy.push(dh_types::CallHierarchyNode {
+                    node: graph_node,
+                    call_depth: depth,
+                    entry_point: None,
+                });
+            }
+        }
+        Ok(hierarchy)
+    }
+
+    fn find_entry_points(
+        &self,
+        workspace_id: WorkspaceId,
+        node: &NodeId,
+        max_depth: u32,
+    ) -> anyhow::Result<Vec<dh_types::CallHierarchyNode>> {
+        let callers = self.find_callers(workspace_id, node, max_depth)?;
+        
+        let mut entry_points = Vec::new();
+        for mut caller in callers {
+            let is_api = caller.node.file_path.as_ref().map_or(false, |p: &String| p.contains("api/") || p.contains("routes/"));
+            let is_cli = caller.node.label.starts_with("cli_") || caller.node.label.ends_with("_cmd");
+            let is_handler = caller.node.label.ends_with("_handler");
+            
+            if is_api {
+                caller.entry_point = Some(dh_types::EntryPointKind::ApiRoute);
+                entry_points.push(caller);
+            } else if is_cli {
+                caller.entry_point = Some(dh_types::EntryPointKind::CliCommand);
+                entry_points.push(caller);
+            } else if is_handler {
+                caller.entry_point = Some(dh_types::EntryPointKind::EventHandler);
+                entry_points.push(caller);
+            }
+        }
+        
+        Ok(entry_points)
     }
 }
 

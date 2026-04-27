@@ -396,6 +396,7 @@ pub enum QuestionClass {
     CallHierarchy,
     TraceFlow,
     Impact,
+    SemanticSearch,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -469,6 +470,7 @@ pub enum EvidenceSource {
     Graph,
     Query,
     Storage,
+    Semantic,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -749,6 +751,22 @@ pub struct GraphPath {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum EntryPointKind {
+    ApiRoute,
+    CronJob,
+    CliCommand,
+    EventHandler,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallHierarchyNode {
+    pub node: GraphNode,
+    pub call_depth: u32,
+    pub entry_point: Option<EntryPointKind>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphNeighborhood {
     pub center: NodeId,
@@ -758,3 +776,97 @@ pub struct GraphNeighborhood {
     pub node_limit: usize,
     pub truncated: bool,
 }
+
+/// A single hop in a trace-flow path, carrying rich metadata for each edge.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceFlowHop {
+    pub from_label: String,
+    pub to_label: String,
+    pub from_file: Option<String>,
+    pub to_file: Option<String>,
+    pub edge_kind: EdgeKind,
+    pub confidence: EdgeConfidence,
+    pub resolution: EdgeResolution,
+    pub span: Option<Span>,
+    pub reason: String,
+    pub hop_index: u32,
+}
+
+/// Categorises an impacted node for weighted impact analysis.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ImpactCategory {
+    Direct,
+    Transitive,
+    TypeOnly,
+    Unknown,
+}
+
+/// An individual node surfaced by impact analysis, together with its category and depth.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImpactNode {
+    pub qualified_name: String,
+    pub file_path: Option<String>,
+    pub category: ImpactCategory,
+    pub hop_distance: u32,
+}
+
+// ─── Embedding Pipeline ───────────────────────────────────────────────────────
+
+/// The embedding provider/model backend to use.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum EmbeddingProvider {
+    /// Local no-op stub — always returns zero vectors. Used in tests and offline mode.
+    Stub,
+    /// OpenAI text-embedding-3-small (1536-dim) or text-embedding-3-large (3072-dim).
+    OpenAI,
+    /// Generic ONNX-backed local model (e.g. all-MiniLM-L6-v2 at 384-dim).
+    LocalOnnx,
+}
+
+/// Configuration for embedding generation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingConfig {
+    pub provider: EmbeddingProvider,
+    /// Model identifier string (e.g. "text-embedding-3-small").
+    pub model: String,
+    /// Expected vector dimensions.
+    pub dimensions: usize,
+    /// Maximum tokens to embed per chunk (hard-cap for providers with token limits).
+    pub max_tokens: usize,
+}
+
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            provider: EmbeddingProvider::Stub,
+            model: "stub-zero".into(),
+            dimensions: 384,
+            max_tokens: 512,
+        }
+    }
+}
+
+/// A stored embedding record retrieved from the `embeddings` table.
+#[derive(Debug, Clone)]
+pub struct EmbeddingRecord {
+    pub chunk_id: ChunkId,
+    /// The model that produced this embedding.
+    pub model: String,
+    pub dimensions: usize,
+    pub content_hash: String,
+    /// Raw f32 vector stored as little-endian bytes in SQLite BLOB.
+    pub vector: Vec<f32>,
+    pub created_at_unix_ms: i64,
+}
+
+/// A single hit returned by semantic search.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticMatch {
+    pub chunk_id: ChunkId,
+    pub file_path: String,
+    pub title: String,
+    pub content: String,
+    pub score: f32,
+    pub span: Span,
+}
+

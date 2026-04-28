@@ -977,6 +977,14 @@ impl QueryEngine for Database {
             }
         }
 
+        // Hybrid ranking: re-order evidence_rows to surface the most reliable entries first.
+        // Weights: Graph/Definition (0.40), Storage/FTS (0.35), Semantic (0.25).
+        // Within each tier, Grounded > Partial confidence.
+        evidence_rows.sort_by(|a, b| {
+            hybrid_evidence_score(b).partial_cmp(&hybrid_evidence_score(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
         if evidence_rows.len() > max_evidence_rows {
             evidence_rows.truncate(max_evidence_rows);
             limited = true;
@@ -2209,6 +2217,29 @@ fn bounded_snippet(content: &str, max_chars: usize) -> String {
     }
     normalized.chars().take(max_chars).collect::<String>()
 }
+
+/// Computes a hybrid ranking score for a single evidence entry.
+///
+/// Weights reflect the reliability hierarchy:
+/// - Graph/Definition evidence (most precise, structurally verified): 0.40
+/// - Storage/FTS evidence (full-text indexed, broad recall):          0.35
+/// - Semantic evidence (vector similarity, approximate):              0.25
+///
+/// Grounded confidence gets a +0.1 bonus over Partial.
+fn hybrid_evidence_score(entry: &EvidenceEntry) -> f32 {
+    let source_weight = match entry.source {
+        EvidenceSource::Graph  => 0.40,
+        EvidenceSource::Query  => 0.40, // treat Query the same as Graph (structural)
+        EvidenceSource::Storage => 0.35,
+        EvidenceSource::Semantic => 0.25,
+    };
+    let confidence_bonus = match entry.confidence {
+        EvidenceConfidence::Grounded => 0.10,
+        EvidenceConfidence::Partial  => 0.0,
+    };
+    source_weight + confidence_bonus
+}
+
 
 #[cfg(test)]
 mod tests {

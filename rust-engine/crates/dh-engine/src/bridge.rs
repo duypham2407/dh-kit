@@ -18,6 +18,7 @@ use dh_query::{
 };
 use crate::hooks::{HookContext, HookDispatcher};
 use dh_types::HookName;
+use dh_indexer;
 use dh_storage::{Database, FileRepository, GraphRepository, HookLogRepository};
 use dh_types::{
     AnswerState, EvidenceBounds, EvidenceConfidence, EvidenceEntry, EvidenceKind, EvidencePacket,
@@ -947,15 +948,33 @@ fn handle_request(
                 int_param(&budget, "maxSnippets", BUILD_EVIDENCE_DEFAULT_MAX_SNIPPETS)
                     .min(BUILD_EVIDENCE_HARD_MAX_SNIPPETS);
             let freshness = str_param_opt(&request.params, "freshness");
-            let semantic_vector = request
+
+            // Use precomputed semanticVector from TS worker if provided; otherwise
+            // auto-embed the query on-demand using the configured provider.
+            let semantic_vector: Option<Vec<f32>> = if let Some(arr) = request
                 .params
                 .get("semanticVector")
                 .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|n| n.as_f64().map(|f| f as f32))
-                        .collect::<Vec<f32>>()
-                });
+            {
+                // TS worker already sent a vector — use it directly.
+                Some(arr.iter().filter_map(|n| n.as_f64().map(|f| f as f32)).collect())
+            } else {
+                // No precomputed vector: embed on-demand via env-configured client.
+                let embed_client = dh_indexer::embedding::build_embedding_client_from_env();
+                if embed_client.is_real() {
+                    match embed_client.embed_query(&query) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            eprintln!(
+                                "[warn] query.buildEvidence: on-demand embedding failed for query '{query}': {e:#}"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None // Stub provider: skip semantic search entirely.
+                }
+            };
 
             match db.build_evidence(BuildEvidenceQuery {
                 workspace_id,

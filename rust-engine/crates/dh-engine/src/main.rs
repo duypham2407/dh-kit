@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use dh_indexer::{IndexWorkspaceRequest, Indexer, IndexerApi};
+use dh_indexer::{embedding::build_embedding_client_from_env, IndexWorkspaceRequest, Indexer, IndexerApi};
 use dh_storage::{Database, IndexStateRepository};
 use dh_types::{BenchmarkClass, IndexRunStatus, IndexState, WorkflowLane};
 use std::path::PathBuf;
@@ -327,6 +327,20 @@ fn main() -> Result<()> {
                 include_embeddings: false,
             })?;
 
+            // Embed chunks if a real provider is configured.
+            let embed_client = build_embedding_client_from_env();
+            let embedded_count = if embed_client.is_real() {
+                match indexer.embed_chunks_batch(1, embed_client.as_ref()) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("[warn] Embedding batch failed (non-fatal): {e:#}");
+                        0
+                    }
+                }
+            } else {
+                0
+            };
+
             println!("index complete");
             println!("workspace: {}", workspace.display());
             println!("database: {}", db_path.display());
@@ -336,6 +350,8 @@ fn main() -> Result<()> {
             println!("reindexed_files: {}", report.reindexed_files);
             println!("deleted_files: {}", report.deleted_files);
             println!("queued_embeddings: {}", report.queued_embeddings);
+            println!("embedded_chunks: {}", embedded_count);
+            println!("embedding_provider: {}", if embed_client.is_real() { embed_client.config().model.as_str() } else { "stub (set OPENAI_API_KEY to enable)" });
             println!("duration_ms: {}", report.duration_ms);
             if report.warnings.is_empty() {
                 println!("warnings: <none>");
@@ -541,6 +557,27 @@ fn main() -> Result<()> {
                     }
                     Err(_) => println!("{}: NOT SET", key),
                 }
+            }
+
+            // 5. Embedding Health Check
+            println!("\n[5] Embedding Provider");
+            let embed_client = build_embedding_client_from_env();
+            let embed_config = embed_client.config();
+            if embed_client.is_real() {
+                println!("provider: openai (real vectors)");
+                println!("model: {}", embed_config.model);
+                println!("dimensions: {}", embed_config.dimensions);
+                if let Some(base_url) = &embed_config.base_url {
+                    println!("base_url: {}", base_url);
+                }
+                match embed_client.health_check() {
+                    Ok(()) => println!("status: ok"),
+                    Err(e) => println!("status: ERROR — {e:#}"),
+                }
+            } else {
+                println!("provider: stub (zero-vectors)");
+                println!("status: ok (no API key required)");
+                println!("note: set OPENAI_API_KEY to enable real semantic search");
             }
             println!("\nDoctor check complete.");
         }

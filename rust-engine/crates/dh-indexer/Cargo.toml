@@ -12,6 +12,7 @@ dh-parser = { path = "../dh-parser" }
 dh-storage = { path = "../dh-storage" }
 dh-types = { path = "../dh-types" }
 ignore = "0.4"
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

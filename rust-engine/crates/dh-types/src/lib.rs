@@ -833,6 +833,8 @@ pub struct EmbeddingConfig {
     pub dimensions: usize,
     /// Maximum tokens to embed per chunk (hard-cap for providers with token limits).
     pub max_tokens: usize,
+    /// Optional custom base URL for OpenAI-compatible endpoints (Ollama, LM Studio, etc.).
+    pub base_url: Option<String>,
 }
 
 impl Default for EmbeddingConfig {
@@ -842,6 +844,7 @@ impl Default for EmbeddingConfig {
             model: "stub-zero".into(),
             dimensions: 384,
             max_tokens: 512,
+            base_url: None,
         }
     }
 }

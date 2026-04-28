@@ -436,6 +436,77 @@ impl Indexer {
 
         Ok(())
     }
+
+    /// Embed all chunks that have not yet been embedded for the given workspace.
+    ///
+    /// Loads chunks from the DB, calls the embedding client in batches, and upserts vectors.
+    /// Returns the number of chunks successfully embedded.
+    pub fn embed_chunks_batch(
+        &self,
+        workspace_id: WorkspaceId,
+        client: &dyn crate::embedding::EmbeddingClient,
+    ) -> Result<u64> {
+        use dh_storage::{ChunkRepository, EmbeddingRepository};
+
+        if !client.is_real() {
+            tracing::debug!("Skipping embed_chunks_batch — stub client active");
+            return Ok(0);
+        }
+
+        let db = self.open_db()?;
+        let chunks = db.find_chunks_by_workspace(workspace_id)?;
+        if chunks.is_empty() {
+            return Ok(0);
+        }
+
+        let model = client.config().model.clone();
+        let dim = client.config().dimensions;
+
+        // Only embed chunks without a stored vector for this model.
+        let existing_vectors: std::collections::HashSet<_> = db
+            .load_embeddings_for_model(&model)?
+            .into_iter()
+            .map(|r| r.chunk_id)
+            .collect();
+
+        let pending: Vec<_> = chunks
+            .iter()
+            .filter(|c| !existing_vectors.contains(&c.id))
+            .collect();
+
+        if pending.is_empty() {
+            tracing::info!(
+                workspace_id,
+                model = %model,
+                "All chunks already embedded — nothing to do"
+            );
+            return Ok(0);
+        }
+
+        tracing::info!(
+            workspace_id,
+            model = %model,
+            pending = pending.len(),
+            "Embedding pending chunks"
+        );
+
+        let texts: Vec<String> = pending.iter().map(|c| c.content.clone()).collect();
+        let vectors = client.embed_batch(&texts)?;
+
+        let mut embedded = 0_u64;
+        for (chunk, vector) in pending.into_iter().zip(vectors) {
+            db.upsert_embedding(chunk.id, &model, dim, &chunk.content_hash, &vector)?;
+            embedded += 1;
+        }
+
+        tracing::info!(
+            workspace_id,
+            embedded,
+            model = %model,
+            "Embedding batch complete"
+        );
+        Ok(embedded)
+    }
 }
 
 #[derive(Debug, Clone)]

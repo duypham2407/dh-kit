@@ -2551,7 +2551,7 @@ mod tests {
     #[test]
     fn bridge_rpc_router_reuses_query_handlers_without_stdio_server() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
+        let _dispatcher = HookDispatcher::new();
         seed(&db)?;
         let dispatcher = HookDispatcher::new();
         let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
@@ -2574,7 +2574,7 @@ mod tests {
     fn bridge_rpc_router_routes_named_build_evidence_without_generic_passthrough(
     ) -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
+        let _dispatcher = HookDispatcher::new();
         seed(&db)?;
         let dispatcher = HookDispatcher::new();
         let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
@@ -2619,7 +2619,7 @@ mod tests {
     #[test]
     fn bridge_build_evidence_rejects_non_explain_intents_without_grounding() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
+        let _dispatcher = HookDispatcher::new();
         seed(&db)?;
         let dispatcher = HookDispatcher::new();
         let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
@@ -2663,7 +2663,7 @@ mod tests {
     #[test]
     fn bridge_build_evidence_preserves_unsupported_language_packet_state() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
+        let _dispatcher = HookDispatcher::new();
         seed(&db)?;
         let dispatcher = HookDispatcher::new();
         let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
@@ -2704,7 +2704,7 @@ mod tests {
     fn bridge_build_evidence_preserves_partial_and_insufficient_packet_states() -> anyhow::Result<()>
     {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
+        let _dispatcher = HookDispatcher::new();
         seed(&db)?;
         let dispatcher = HookDispatcher::new();
         let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
@@ -2799,7 +2799,7 @@ mod tests {
     #[test]
     fn bridge_rpc_router_rejects_methods_outside_worker_query_contract() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
-        let dispatcher = HookDispatcher::new();
+        let _dispatcher = HookDispatcher::new();
         let dispatcher = HookDispatcher::new();
         let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
 

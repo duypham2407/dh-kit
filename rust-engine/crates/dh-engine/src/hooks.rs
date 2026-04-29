@@ -20,6 +20,7 @@ pub struct HookContext {
     pub session: SessionState,
     pub agent_id: String,
     pub role: AgentRole,
+    #[allow(dead_code)] // Intended for future hooks
     pub stage: String,
     pub lane: WorkflowLane,
 }
@@ -322,6 +323,7 @@ impl HookDispatcher {
 
     /// Convenience: dispatch all hooks that match a pipeline stage.
     /// Returns all logs and the aggregated decision (first `Block` wins).
+    #[allow(dead_code)] // Intended for future pipeline dispatches
     pub fn dispatch_pipeline(
         &self,
         hook_names: &[HookName],

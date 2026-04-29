@@ -68,13 +68,22 @@ export type TesterOutputState = {
   nextAction: "complete" | "implementer" | "coordinator";
 };
 
+export type QuickOutputState = {
+  status: "DONE" | "DONE_WITH_CONCERNS" | "BLOCKED";
+  summary: string;
+  actionsTaken: string[];
+  verification: string[];
+  nextRole: "complete" | "coordinator";
+};
+
 export type RoleOutputPayload =
   | CoordinatorOutputState
   | AnalystOutputState
   | ArchitectOutputState
   | ImplementerOutputState
   | ReviewerOutputState
-  | TesterOutputState;
+  | TesterOutputState
+  | QuickOutputState;
 
 export type RoleOutputRecord = {
   id: string;

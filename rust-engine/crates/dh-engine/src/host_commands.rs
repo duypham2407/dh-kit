@@ -49,6 +49,19 @@ pub struct HostKnowledgeCommandRequest {
     pub resume_session_id: Option<String>,
 }
 
+/// Request to run a full workflow lane (quick / delivery / migration) via `session.runLane`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostLaneCommandRequest {
+    pub lane: dh_types::WorkflowLane,
+    pub objective: String,
+    pub workspace_root: PathBuf,
+    pub node_runtime: PathBuf,
+    pub worker_entry: PathBuf,
+    pub worker_manifest: Option<PathBuf>,
+    pub resume_session_id: Option<String>,
+    pub output_json: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RustHostedKnowledgeReport {
@@ -60,6 +73,7 @@ pub struct RustHostedKnowledgeReport {
     pub worker_result: Option<Value>,
     pub rust_host_notes: Vec<String>,
 }
+
 
 pub fn run_hosted_knowledge_command(
     request: HostKnowledgeCommandRequest,
@@ -419,6 +433,88 @@ fn send_session_run_command(
         |worker_message| route_worker_to_host_message(worker_message, router),
     )
 }
+
+/// Run a workflow lane (quick / delivery / migration) by sending `session.runLane` to the TS worker.
+pub fn run_hosted_lane_command(
+    request: HostLaneCommandRequest,
+) -> Result<RustHostedKnowledgeReport> {
+    let workspace = request
+        .workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| request.workspace_root.clone());
+    let db_path = workspace.join(DEFAULT_DB_NAME);
+    let db = Database::new(&db_path).with_context(|| format!("open db: {}", db_path.display()))?;
+    db.initialize()?;
+
+    let mut launch = RuntimeLaunchRequest::new(&request.node_runtime, &request.worker_entry);
+    if let Some(manifest) = &request.worker_manifest {
+        launch = launch.with_manifest(manifest);
+    }
+    let config = WorkerSupervisorConfig::new(launch, workspace.clone());
+    let mut supervisor = WorkerSupervisor::new(config);
+
+    match supervisor.launch() {
+        Ok(report) => report,
+        Err(error) => {
+            // Use Ask as a sentinel command for lane-level failures (no knowledge kind equivalent).
+            return Ok(report_from_supervisor_error(
+                HostKnowledgeCommandKind::Ask,
+                error,
+                "Rust host could not launch the TS worker for lane workflow.",
+            ));
+        }
+    };
+
+    let dispatcher = crate::hooks::HookDispatcher::new();
+    let router = BridgeRpcRouter::new(&workspace, &db, &dispatcher, &db);
+    let lane_params = session_run_lane_params(&request, &workspace);
+
+    let worker_outcome = supervisor.send_worker_request_with_host_handler(
+        "session.runLane",
+        lane_params,
+        |worker_message| route_worker_to_host_message(worker_message, &router),
+    );
+
+    match worker_outcome {
+        Ok(outcome) => {
+            let shutdown = supervisor.shutdown();
+            Ok(report_from_worker_success(
+                HostKnowledgeCommandKind::Ask,
+                outcome,
+                shutdown,
+                None,
+            ))
+        }
+        Err(error) => {
+            let shutdown = supervisor.shutdown();
+            let mut report = report_from_supervisor_error(
+                HostKnowledgeCommandKind::Ask,
+                error,
+                "Rust host: session.runLane failed.",
+            );
+            report.rust_lifecycle = merge_shutdown(report.rust_lifecycle, shutdown);
+            Ok(report)
+        }
+    }
+}
+
+fn session_run_lane_params(request: &HostLaneCommandRequest, workspace: &Path) -> Value {
+    let lane_str = match request.lane {
+        dh_types::WorkflowLane::Quick => "quick",
+        dh_types::WorkflowLane::Delivery => "delivery",
+        dh_types::WorkflowLane::Migration => "migration",
+    };
+    let mut params = json!({
+        "lane": lane_str,
+        "objective": request.objective,
+        "repoRoot": workspace,
+    });
+    if let Some(resume_id) = &request.resume_session_id {
+        params["resumeSessionId"] = Value::String(resume_id.clone());
+    }
+    params
+}
+
 
 fn route_worker_to_host_message(message: &Value, router: &BridgeRpcRouter<'_>) -> Option<Value> {
     let id = jsonrpc_message_id(message)?;

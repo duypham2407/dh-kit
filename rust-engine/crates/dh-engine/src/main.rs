@@ -65,6 +65,12 @@ enum Commands {
     Ask(KnowledgeCommandArgs),
     Explain(KnowledgeCommandArgs),
     Trace(KnowledgeCommandArgs),
+    /// Run a Quick-lane workflow.
+    Quick(LaneCommandArgs),
+    /// Run a Delivery-lane workflow.
+    Delivery(LaneCommandArgs),
+    /// Run a Migration-lane workflow.
+    Migrate(LaneCommandArgs),
     Serve {
         #[arg(long, default_value = ".")]
         workspace: PathBuf,
@@ -146,6 +152,26 @@ struct KnowledgeCommandArgs {
     #[arg(long, default_value_t = false)]
     json: bool,
 }
+
+/// Arguments shared by `dh quick`, `dh delivery`, and `dh migrate`.
+#[derive(Debug, Args)]
+struct LaneCommandArgs {
+    /// The workflow objective (what to accomplish).
+    objective: String,
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
+    #[arg(long = "node-runtime", default_value = "node")]
+    node_runtime: PathBuf,
+    #[arg(long = "worker-entry")]
+    worker_entry: Option<PathBuf>,
+    #[arg(long = "worker-manifest")]
+    worker_manifest: Option<PathBuf>,
+    #[arg(long = "resume-session")]
+    resume_session_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum BenchmarkClassArg {
@@ -462,6 +488,15 @@ fn main() -> Result<()> {
         Commands::Trace(args) => {
             run_knowledge_command(host_commands::HostKnowledgeCommandKind::Trace, args)?
         }
+        Commands::Quick(args) => {
+            run_lane_command(WorkflowLane::Quick, args)?
+        }
+        Commands::Delivery(args) => {
+            run_lane_command(WorkflowLane::Delivery, args)?
+        }
+        Commands::Migrate(args) => {
+            run_lane_command(WorkflowLane::Migration, args)?
+        }
         Commands::Serve { workspace } => {
             let workspace = workspace.canonicalize()?;
             bridge::run_bridge_server(workspace)?;
@@ -720,6 +755,87 @@ fn run_knowledge_command(
             resume_session_id: args.resume_session_id,
             lane: args.lane.into(),
         })?;
+    let exit_code = report.rust_lifecycle.final_exit_code;
+
+    if args.json {
+        println!("{}", host_commands::render_hosted_knowledge_json(&report)?);
+    } else {
+        println!("{}", host_commands::render_hosted_knowledge_text(&report));
+    }
+
+    std::process::exit(exit_code);
+}
+
+fn run_lane_command(
+    lane: WorkflowLane,
+    args: LaneCommandArgs,
+) -> Result<()> {
+    let worker_bundle = runtime_launch::resolve_worker_bundle_paths(
+        args.worker_entry,
+        args.worker_manifest,
+        &knowledge_command_bundle_search_roots(&args.workspace),
+    );
+
+    let platform = runtime_launch::current_platform();
+    let platform_supported = host_lifecycle::classify_platform(&platform).supported;
+    if !platform_supported || !worker_bundle.worker_entry_path.exists() {
+        let launchability_issue = if platform_supported {
+            host_lifecycle::LaunchabilityIssue::BundleMissing
+        } else {
+            host_lifecycle::LaunchabilityIssue::UnsupportedPlatform
+        };
+        let report = host_lifecycle::classify_launchability_failure(platform, launchability_issue);
+        let launch_note = if platform_supported {
+            "Rust-hosted first-wave lane command path requires a TypeScript worker bundle."
+        } else {
+            "Rust-hosted first-wave lane command path currently supports Linux and macOS only."
+        };
+        let payload = serde_json::json!({
+            "command": "lane",
+            "topology": host_lifecycle::TOPOLOGY_RUST_HOST_TS_WORKER,
+            "supportBoundary": host_lifecycle::SUPPORT_BOUNDARY_FIRST_WAVE,
+            "legacyPathLabel": "legacy_ts_host_bridge_compatibility_only",
+            "rustLifecycle": report,
+            "workerResult": null,
+            "rustHostNotes": [
+                launch_note,
+                "No legacy TypeScript-host fallback was used; legacy bridge remains compatibility-only outside this supported path."
+            ]
+        });
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        } else {
+            println!("command: lane ({:?})", lane);
+            println!("topology: {}", host_lifecycle::TOPOLOGY_RUST_HOST_TS_WORKER);
+            println!(
+                "support boundary: {}",
+                host_lifecycle::SUPPORT_BOUNDARY_FIRST_WAVE
+            );
+            println!("lifecycle authority: rust");
+            println!("legacy path label: legacy_ts_host_bridge_compatibility_only");
+            println!("rust host lifecycle:");
+            println!("  failure phase: Startup");
+            println!("  final status: StartupFailed");
+            println!("  final exit code: {}", report.final_exit_code);
+            println!("  launchability issue: {:?}", launchability_issue);
+            println!();
+            println!("rust host notes:");
+            println!("  - {launch_note}");
+            println!("  - No legacy TypeScript-host fallback was used; legacy bridge remains compatibility-only outside this supported path.");
+        }
+        std::process::exit(report.final_exit_code);
+    }
+
+    let report = host_commands::run_hosted_lane_command(host_commands::HostLaneCommandRequest {
+        lane,
+        objective: args.objective,
+        workspace_root: args.workspace,
+        node_runtime: args.node_runtime,
+        worker_entry: worker_bundle.worker_entry_path,
+        worker_manifest: worker_bundle.manifest_path,
+        resume_session_id: args.resume_session_id,
+        output_json: args.json,
+    })?;
     let exit_code = report.rust_lifecycle.final_exit_code;
 
     if args.json {

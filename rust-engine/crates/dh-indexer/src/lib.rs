@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{info, warn};
 use uuid::Uuid;
+use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::dirty::{
     confirmed_delta, is_resolution_scope_path, ConfirmedDelta, DirtyPlannerInput,
@@ -642,6 +643,14 @@ impl IndexerApi for Indexer {
             let mut invalidation_refresh_queue = VecDeque::new();
             let mut queued_rel_paths = HashSet::new();
 
+            let pb = ProgressBar::new(dirty_set.to_index.len() as u64);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) Parsing")
+                    .unwrap()
+                    .progress_chars("#>-"),
+            );
+
             for planned in &dirty_set.to_index {
                 let Some(content_hash) = content_hashes.get(&planned.candidate.rel_path) else {
                     continue;
@@ -669,7 +678,10 @@ impl IndexerApi for Indexer {
                 confirmed_delta_by_path.insert(planned.candidate.rel_path.clone(), outcome.delta);
                 indexed_rel_paths.insert(planned.candidate.rel_path.clone());
                 reindexed_files += 1;
+                pb.inc(1);
             }
+            pb.finish_and_clear();
+
 
             let initial_indexed_rel_paths = indexed_rel_paths.clone();
 

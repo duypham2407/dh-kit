@@ -32,7 +32,7 @@ describe("retrying-chat-provider", () => {
     };
 
     const sleep = vi.fn(async () => {});
-    const wrapped = createRetryingChatProvider(base, { sleep, maxRetries: 3 });
+    const wrapped = createRetryingChatProvider(base, { sleep, maxRetries: 3 })!;
     const response = await wrapped.chat({ messages: [{ role: "user", content: "hi" }], model: "mock" });
 
     expect(response.content).toBe("ok");
@@ -55,7 +55,7 @@ describe("retrying-chat-provider", () => {
     };
 
     const sleep = vi.fn(async () => {});
-    const wrapped = createRetryingChatProvider(base, { sleep, maxRetries: 3 });
+    const wrapped = createRetryingChatProvider(base, { sleep, maxRetries: 3 })!;
     await expect(wrapped.chat({ messages: [{ role: "user", content: "hi" }], model: "mock" })).rejects.toThrow("context overflow");
     expect(sleep).not.toHaveBeenCalled();
   });
@@ -94,7 +94,7 @@ describe("retrying-chat-provider", () => {
       sleep: vi.fn(async () => {}),
       maxRetries: 2,
       audit: { onRetryAttempt, onRetryGiveUp },
-    });
+    })!;
 
     await expect(wrapped.chat({ messages: [{ role: "user", content: "hi" }], model: "mock" })).resolves.toMatchObject({ content: "ok" });
     expect(wrapped.providerId).toBe("audited-provider:retry");
@@ -126,7 +126,7 @@ describe("retrying-chat-provider", () => {
       sleep: vi.fn(async () => {}),
       maxRetries: 1,
       audit: { onRetryAttempt, onRetryGiveUp },
-    });
+    })!;
 
     await expect(wrapped.chat({ messages: [{ role: "user", content: "hi" }], model: "mock" })).rejects.toThrow("still unavailable");
     expect(onRetryAttempt).toHaveBeenCalledTimes(1);

@@ -92,7 +92,7 @@ describe("createChatProvider", () => {
     };
 
     const sleep = vi.fn(async () => {});
-    const wrapped = createRetryingChatProvider(flaky, { sleep, maxRetries: 2 });
+    const wrapped = createRetryingChatProvider(flaky, { sleep, maxRetries: 2 })!;
     const result = await wrapped.chat({
       messages: [{ role: "user", content: "hello" }],
       model: "mock",

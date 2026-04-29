@@ -61,6 +61,7 @@ fn initial_stage(lane: WorkflowLane) -> &'static str {
 }
 
 /// Checks if `next_stage` is a valid successor to `current_stage` in the given lane.
+#[allow(dead_code)]
 fn is_valid_transition(lane: WorkflowLane, current_stage: &str, next_stage: &str) -> bool {
     let chain = stage_chain_for(lane);
     let current_idx = chain.iter().position(|s| *s == current_stage);
@@ -164,6 +165,7 @@ impl<'a> SessionManager<'a> {
     /// 2. Lane lock matches
     /// 3. Stage transition is valid per the lane's stage chain
     /// 4. Current stage's gate has passed
+    #[allow(dead_code)]
     pub fn transition_stage(
         &self,
         session_id: &str,
@@ -228,6 +230,7 @@ impl<'a> SessionManager<'a> {
     }
 
     /// Pass the gate on the current stage (prerequisite for transitioning).
+    #[allow(dead_code)]
     pub fn pass_gate(&self, session_id: &str) -> Result<()> {
         let session = self.db.get_session(session_id)?
             .context("session not found")?;
@@ -245,6 +248,7 @@ impl<'a> SessionManager<'a> {
     }
 
     /// Waive the gate on the current stage (bypass gate check).
+    #[allow(dead_code)]
     pub fn waive_gate(&self, session_id: &str) -> Result<()> {
         let session = self.db.get_session(session_id)?
             .context("session not found")?;
@@ -294,6 +298,7 @@ impl<'a> SessionManager<'a> {
     }
 
     /// Fail a session (set status to Failed).
+    #[allow(dead_code)]
     pub fn fail_session(&self, session_id: &str, _reason: &str) -> Result<()> {
         let session = self.db.get_session(session_id)?
             .context("session not found")?;
@@ -316,6 +321,7 @@ impl<'a> SessionManager<'a> {
     }
 
     /// Create an execution envelope for a role dispatch within a session.
+    #[allow(dead_code)]
     pub fn create_envelope(
         &self,
         session_id: &str,

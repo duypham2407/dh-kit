@@ -51,15 +51,17 @@ export const layer = Layer.effect(
         return Effect.succeed(model as unknown as Model);
       },
       getLanguage: (model: Model) => Effect.gen(function* () {
-        const npm = model.api.npm || "@ai-sdk/openai-compatible";
+        const api = (model as any).api as { npm?: string; url?: string; id?: string } | undefined;
+        const npm = api?.npm || "@ai-sdk/openai-compatible";
         const loader = BUNDLED_PROVIDERS[npm];
         if (!loader) yield* Effect.fail(new Error("Unsupported provider SDK: " + npm));
-        
+
         const sdkCreator = yield* Effect.promise(() => loader());
-        const sdk = sdkCreator({ baseURL: model.api.url });
-        
-        return sdk.languageModel(model.api.id);
+        const sdk = sdkCreator({ baseURL: api?.url });
+
+        return sdk.languageModel(api?.id ?? model.id ?? "default");
       })
+
     };
   })
 );

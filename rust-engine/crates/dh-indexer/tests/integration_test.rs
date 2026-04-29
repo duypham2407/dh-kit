@@ -2,7 +2,7 @@ use dh_indexer::{IndexPathsRequest, IndexWorkspaceRequest, Indexer, IndexerApi};
 use dh_storage::{
     ChunkRepository, Database, FileRepository, IndexStateRepository, SymbolRepository, GraphEdgeRepository
 };
-use dh_types::{FreshnessReason, FreshnessState, ImportKind, ParseStatus};
+use dh_types::{FreshnessReason, FreshnessState, ParseStatus};
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;

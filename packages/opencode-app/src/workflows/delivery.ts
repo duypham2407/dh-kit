@@ -91,6 +91,9 @@ export async function runDeliveryWorkflow(input: {
         verificationGate,
       });
 
+      audit.recordGateDecision(input.envelope, reviewGate);
+      audit.recordGateDecision(input.envelope, verificationGate);
+
       audit.recordRoleOutput(input.envelope, implementer);
       audit.recordRoleOutput(input.envelope, reviewer);
       audit.recordRoleOutput(input.envelope, tester);

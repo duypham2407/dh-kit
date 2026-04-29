@@ -1,4 +1,5 @@
 use blake3::Hasher;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::HashMap;
 use std::fs;
 use tracing::warn;
@@ -15,6 +16,14 @@ pub fn hash_candidates(candidates: &[FileCandidate]) -> HashCandidatesResult {
     let mut hashes = HashMap::new();
     let mut hash_failures = HashMap::new();
     let mut warnings = Vec::new();
+
+    let pb = ProgressBar::new(candidates.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) Hashing")
+            .unwrap()
+            .progress_chars("#>-"),
+    );
 
     for candidate in candidates {
         match fs::read(&candidate.abs_path) {
@@ -34,7 +43,10 @@ pub fn hash_candidates(candidates: &[FileCandidate]) -> HashCandidatesResult {
                 warnings.push(message);
             }
         }
+        pb.inc(1);
     }
+
+    pb.finish_and_clear();
 
     HashCandidatesResult {
         hashes,

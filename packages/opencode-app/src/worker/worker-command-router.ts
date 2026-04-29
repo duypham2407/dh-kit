@@ -1,7 +1,20 @@
 import { runKnowledgeCommand, type KnowledgeCommandReport } from "../workflows/run-knowledge-command.js";
+import { runLaneWorkflow, type LaneWorkflowReport } from "../workflows/run-lane-command.js";
+import type { WorkflowLane } from "../../../shared/src/types/lane.js";
 import type { BridgeClient } from "../bridge/dh-jsonrpc-stdio-client.js";
 
 export type WorkerCommandKind = "ask" | "explain" | "trace";
+
+export type WorkerRunLaneParams = {
+  lane: WorkflowLane;
+  objective: string;
+  repoRoot?: string;
+  resumeSessionId?: string;
+};
+
+export type WorkerRunLaneResult = {
+  report: LaneWorkflowReport;
+};
 
 export type WorkerRunCommandParams = {
   command?: WorkerCommandKind;
@@ -67,6 +80,32 @@ export class WorkerCommandRouter {
       bridgeClientFactory: () => this.bridgeClient,
     });
 
+    return { report };
+  }
+
+  async runLane(params: WorkerRunLaneParams): Promise<WorkerRunLaneResult> {
+    if (this.cancelled) {
+      return {
+        report: {
+          exitCode: 130,
+          lane: params.lane,
+          sessionId: "",
+          stage: "",
+          agent: "",
+          model: "",
+          objective: params.objective,
+          workflowSummary: ["Lane workflow was cancelled by the Rust host."],
+        },
+      };
+    }
+
+    const repoRoot = params.repoRoot ?? this.defaultRepoRoot;
+    const report = await runLaneWorkflow({
+      lane: params.lane,
+      objective: params.objective,
+      repoRoot,
+      resumeSessionId: params.resumeSessionId,
+    });
     return { report };
   }
 }

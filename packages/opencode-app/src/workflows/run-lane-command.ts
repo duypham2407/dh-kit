@@ -126,7 +126,8 @@ export async function runLaneWorkflow(input: {
   const checkpointsRepo = new SessionCheckpointsRepo(input.repoRoot);
   const sessionsRepo = new SessionsRepo(input.repoRoot);
 
-  const baseProvider = input.provider ?? await createChatProvider(input.repoRoot, envelope.resolvedModel);
+  const baseProvider = input.provider ?? await tryCreateChatProvider(input.repoRoot, envelope.resolvedModel);
+
   const provider = createRetryingChatProvider(baseProvider, {
     audit: {
       onRetryAttempt: async (attempt) => {
@@ -342,4 +343,21 @@ export async function runLaneWorkflow(input: {
     objective: input.objective,
     workflowSummary,
   };
+}
+
+/**
+ * Attempt to create a real ChatProvider from the repo config.
+ * Returns undefined if config is missing, the model is unavailable,
+ * or any other setup error occurs — callers fall back to offline mode
+ * (each team agent has its own fallback path when provider is undefined).
+ */
+async function tryCreateChatProvider(
+  repoRoot: string,
+  selection: import("../../../shared/src/types/model.js").ResolvedModelSelection,
+): Promise<ChatProvider | undefined> {
+  try {
+    return await createChatProvider(repoRoot, selection);
+  } catch {
+    return undefined;
+  }
 }

@@ -16,13 +16,15 @@ export type RetryAuditSink = {
 };
 
 export function createRetryingChatProvider(
-  base: ChatProvider,
+  base: ChatProvider | undefined,
   options?: {
     maxRetries?: number;
     sleep?: (ms: number) => Promise<void>;
     audit?: RetryAuditSink;
   },
-): ChatProvider {
+): ChatProvider | undefined {
+  if (!base) return undefined;
+
   const maxRetries = options?.maxRetries ?? defaultMaxRetries();
   const sleep = options?.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 

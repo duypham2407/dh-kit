@@ -199,6 +199,7 @@ export type BridgeClient = {
   runAskQuery: (input: BridgeAskRequest) => Promise<BridgeAskResult>;
   runSessionCommand?: (input: BridgeSessionRunCommandRequest) => Promise<BridgeAskResult>;
   getInitializeSnapshot?: () => Promise<BridgeInitializeSnapshot>;
+  getRuntimePing?: () => Promise<{ ok: boolean; workerState: string; healthState: string; phase: string; }>;
   close: () => Promise<void>;
 };
 
@@ -249,7 +250,7 @@ type JsonRpcResponse = JsonRpcSuccess | JsonRpcFailure;
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const V2_PROTOCOL_VERSION = "1";
-const V2_METHODS = ["dh.initialize", "query.search", "query.definition", "query.relationship", "query.buildEvidence"] as const;
+const V2_METHODS = ["dh.initialize", "query.search", "query.definition", "query.relationship", "query.buildEvidence", "runtime.ping"] as const;
 const V2_RELATIONS = ["usage", "dependencies", "dependents"] as const;
 
 export function createDhJsonRpcStdioClient(
@@ -452,6 +453,32 @@ class DhJsonRpcStdioClient implements BridgeClient {
       engineVersion: this.engineVersion,
       protocolVersion: this.protocolVersion,
       capabilities: this.capabilities,
+    };
+  }
+
+  async getRuntimePing(): Promise<{ ok: boolean; workerState: string; healthState: string; phase: string; }> {
+    await this.ensureInitialized(this.repoRoot);
+
+    const response = await this.request(
+      {
+        jsonrpc: "2.0",
+        id: this.nextRequestId++,
+        method: "runtime.ping",
+      },
+      "request",
+      this.requestTimeoutMs,
+    );
+
+    if ("error" in response) {
+      throw this.mapRpcError(response.error.code, response.error.message, "request", response.error.data);
+    }
+
+    const resultObj = asRecord(response.result);
+    return {
+      ok: Boolean(resultObj.ok),
+      workerState: String(resultObj.workerState ?? "unknown"),
+      healthState: String(resultObj.healthState ?? "unknown"),
+      phase: String(resultObj.phase ?? "unknown"),
     };
   }
 

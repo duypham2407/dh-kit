@@ -1,4 +1,4 @@
-import { runCoordinator } from "../team/coordinator.js";
+import { runQuickAgent } from "../team/quick-agent.js";
 import { evaluateGate } from "../../../runtime/src/workflow/gate-evaluator.js";
 import { runBrowserVerification } from "../browser/verification.js";
 import { buildWorkflowQualityGateReport } from "../../../runtime/src/workflow/quality-gates-runtime.js";
@@ -35,7 +35,7 @@ export async function runQuickWorkflow(input: {
       verificationEvidencePresent: true,
     },
   });
-  const coordinator = await runCoordinator({ lane: "quick", stage: input.stage, objective: input.objective, provider: input.provider });
+  const agentOutput = await runQuickAgent({ lane: "quick", stage: input.stage, objective: input.objective, provider: input.provider });
   const qualityGates = buildWorkflowQualityGateReport({
     repoRoot: input.repoRoot,
     lane: "quick",
@@ -45,14 +45,15 @@ export async function runQuickWorkflow(input: {
     },
     localVerification: {
       pass: true,
-      reason: "Quick workflow produced coordinator output and gate assessment.",
-      evidence: [coordinator.summary],
+      reason: "Quick workflow produced agent output and gate assessment.",
+      evidence: [agentOutput.summary],
       limitations: [],
     },
     browserVerification: browser,
   });
 
-  audit.recordRoleOutput(input.envelope, coordinator);
+  audit.recordGateDecision(input.envelope, gate);
+  audit.recordRoleOutput(input.envelope, agentOutput);
   audit.recordRequiredTool(input.envelope, "workflow.quick", "quick_workflow", "called");
   for (const result of qualityGates.results) {
     audit.recordQualityGate(input.envelope, {
@@ -86,8 +87,8 @@ export async function runQuickWorkflow(input: {
     },
   });
   return {
-    summary: `${coordinator.summary} Gate: ${gate.reason}`,
-    nextStep: coordinator.nextRole,
+    summary: `${agentOutput.summary} Gate: ${gate.reason}`,
+    nextStep: agentOutput.nextRole,
   };
 }
 

@@ -119,6 +119,20 @@ export class WorkflowAuditService {
     });
   }
 
+  recordGateDecision(
+    envelope: ExecutionEnvelopeState,
+    decision: { gate: string; pass: boolean; reason: string }
+  ): void {
+    this.recordQualityGate(envelope, {
+      gateId: "workflow_gate",
+      availability: "available",
+      result: decision.pass ? "pass" : "fail",
+      reason: `[Gate: ${decision.gate}] ${decision.reason}`,
+      evidence: [],
+      limitations: [],
+    });
+  }
+
   recordHookDecision(input: {
     envelope: ExecutionEnvelopeState;
     hookName: HookName;

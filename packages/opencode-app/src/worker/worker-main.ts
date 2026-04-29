@@ -3,7 +3,7 @@ import {
   HOST_BACKED_BRIDGE_PROTOCOL_VERSION,
   createHostBridgeClient,
 } from "./host-bridge-client.js";
-import { WorkerCommandRouter, type WorkerRunCommandParams } from "./worker-command-router.js";
+import { WorkerCommandRouter, type WorkerRunCommandParams, type WorkerRunLaneParams } from "./worker-command-router.js";
 import { JsonRpcResponseError, WorkerJsonRpcPeer } from "./worker-jsonrpc-stdio.js";
 import { z } from "zod";
 
@@ -133,6 +133,20 @@ export function createWorkerRuntime(input: {
     return runtime.router.runCommand(asRunCommandParams(params));
   });
 
+  input.peer.onRequest("session.runLane", async (params) => {
+    if (!runtime.initialized || !runtime.router) {
+      throw new JsonRpcResponseError({
+        code: -32000,
+        message: "Worker is not initialized for session.runLane.",
+      });
+    }
+    if (!runtime.readySent) {
+      await markReady(runtime);
+    }
+
+    return runtime.router.runLane(asRunLaneParams(params));
+  });
+
   input.peer.onRequest("dh.shutdown", async () => {
     runtime.shutdownRequested = true;
     await runtime.router?.close();
@@ -205,6 +219,25 @@ function asRunCommandParams(value: unknown): WorkerRunCommandParams {
     throw new JsonRpcResponseError({
       code: -32602,
       message: `Invalid session.runCommand params: ${result.error.message}`,
+      data: result.error.format(),
+    });
+  }
+  return result.data;
+}
+
+const WorkerRunLaneParamsSchema = z.object({
+  lane: z.enum(["quick", "delivery", "migration"]),
+  objective: z.string(),
+  repoRoot: z.string().optional(),
+  resumeSessionId: z.string().optional(),
+});
+
+function asRunLaneParams(value: unknown): WorkerRunLaneParams {
+  const result = WorkerRunLaneParamsSchema.safeParse(value);
+  if (!result.success) {
+    throw new JsonRpcResponseError({
+      code: -32602,
+      message: `Invalid session.runLane params: ${result.error.message}`,
       data: result.error.format(),
     });
   }

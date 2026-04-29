@@ -2,6 +2,7 @@ use dh_types::{FileCandidate, LanguageId, WorkspaceId};
 use ignore::WalkBuilder;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use indicatif::{ProgressBar, ProgressStyle};
 
 const HARDCODED_EXCLUDES: &[&str] = &[
     "node_modules",
@@ -46,6 +47,14 @@ pub fn scan_workspace(root: &Path, config: &ScanConfig) -> anyhow::Result<Vec<Fi
     });
 
     let walker = builder.build();
+
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.green} [{elapsed_precise}] Scanning files...")
+            .unwrap()
+            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠉"),
+    );
 
     for result in walker {
         let entry = match result {
@@ -118,7 +127,13 @@ pub fn scan_workspace(root: &Path, config: &ScanConfig) -> anyhow::Result<Vec<Fi
             executable,
             shebang: None,
         });
+        
+        if candidates.len() % 100 == 0 {
+            pb.tick();
+        }
     }
+
+    pb.finish_and_clear();
 
     candidates.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     Ok(candidates)

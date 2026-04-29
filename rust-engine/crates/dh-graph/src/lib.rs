@@ -499,9 +499,8 @@ mod tests {
         GraphEdgeRepository, ChunkRepository, Database, FileRepository, SymbolRepository,
     };
     use dh_types::{
-        CallEdge, CallKind, Chunk, ChunkKind, EmbeddingStatus, File, FreshnessReason,
-        FreshnessState, Import, ImportKind, LanguageId, ParseStatus, Reference, ReferenceKind,
-        Span, Symbol, SymbolKind, Visibility,
+        Chunk, ChunkKind, EmbeddingStatus, File, FreshnessReason,
+        FreshnessState, LanguageId, ParseStatus, Span, Symbol, SymbolKind, Visibility,
     };
     use tempfile::NamedTempFile;
 

@@ -9,7 +9,7 @@ export type QuickAgentInput = {
   provider?: ChatProvider;
 };
 
-const SYSTEM_PROMPT = `You are a Quick Agent in an AI software factory.
+const SYSTEM_PROMPT = `You are a Quick Coordinator agent in an AI software factory.
 You handle fast, low-risk, bounded tasks efficiently without heavy planning.
 Given a stage and objective, produce JSON:
 {
@@ -37,11 +37,17 @@ export async function runQuickAgent(input: QuickAgentInput): Promise<QuickOutput
       responseFormat: { type: "json_object" },
     });
 
-    const parsed = JSON.parse(response.content) as QuickOutputState;
-    if (!parsed.status || !parsed.summary) {
+    const parsed = JSON.parse(response.content) as Partial<QuickOutputState>;
+    if (!parsed.summary) {
       return fallbackQuickAgent(input);
     }
-    return parsed;
+    return {
+      status: parsed.status ?? "DONE",
+      summary: parsed.summary,
+      actionsTaken: parsed.actionsTaken ?? [],
+      verification: parsed.verification ?? [],
+      nextRole: parsed.nextRole ?? "complete",
+    };
   } catch {
     return fallbackQuickAgent(input);
   }

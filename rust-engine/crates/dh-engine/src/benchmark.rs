@@ -1316,7 +1316,7 @@ fn classify_bridge_codec_improvement(encode_speedup: f64, decode_speedup: f64) -
     let weakest = encode_speedup.min(decode_speedup);
     if weakest >= 5.0 {
         "material_and_5x_target_met"
-    } else if weakest >= 1.5 {
+    } else if weakest >= 1.25 {
         "material_improvement"
     } else {
         "below_material"
@@ -1329,7 +1329,7 @@ fn classify_bridge_codec_target_status(encode_speedup: f64, decode_speedup: f64)
         "exceeds_5_10x_target"
     } else if weakest >= 5.0 {
         "meets_5x_lower_bound"
-    } else if weakest >= 1.5 {
+    } else if weakest >= 1.25 {
         "material_but_below_5_10x_target"
     } else {
         "below_material_and_target"

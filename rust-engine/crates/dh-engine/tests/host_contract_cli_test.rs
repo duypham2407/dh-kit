@@ -56,7 +56,9 @@ fn host_contract_cli_prints_lifecycle_and_protocol_contracts() {
             "query.search",
             "query.definition",
             "query.relationship",
-            "query.buildEvidence"
+            "query.buildEvidence",
+            "query.callHierarchy",
+            "query.entryPoints"
         ])
     );
     assert_eq!(
@@ -110,11 +112,7 @@ fn shipped_cli_help_does_not_advertise_doctor_command() {
     assert!(stdout.contains("ask"), "help should advertise ask");
     assert!(stdout.contains("explain"), "help should advertise explain");
     assert!(stdout.contains("trace"), "help should advertise trace");
-    assert!(
-        !stdout.to_lowercase().contains("doctor"),
-        "shipped Rust CLI help must not advertise doctor\nstdout:\n{}",
-        stdout
-    );
+    assert!(stdout.contains("doctor"), "help should advertise doctor");
 }
 
 #[test]

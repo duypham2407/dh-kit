@@ -1,13 +1,15 @@
 use anyhow::{Context, Result};
+use dh_graph::HydratedGraphProjection;
 use dh_indexer::parity::{ParityCaseResult, ParityHarness};
-use dh_indexer::{IndexWorkspaceRequest, Indexer, IndexerApi};
+use dh_indexer::{IndexReport, IndexWorkspaceRequest, Indexer, IndexerApi};
 use dh_query::{FindSymbolQuery, QueryEngine};
 use dh_storage::{Database, SymbolRepository};
 use dh_types::{
     BenchmarkClass, BenchmarkComparison, BenchmarkCorpusKind, BenchmarkCorpusRef,
     BenchmarkPreparationState, BenchmarkResult, BenchmarkResultStatus, BenchmarkRunMetadata,
-    BenchmarkSuiteArtifact, BenchmarkSummary, IndexBenchmarkMetrics, MemoryMeasurement,
-    MemoryMeasurementStatus, ParityBenchmarkMetrics, QueryLatencyMetrics,
+    BenchmarkSuiteArtifact, BenchmarkSummary, GraphHydrationBenchmarkMetrics,
+    IndexBenchmarkMetrics, MemoryMeasurement, MemoryMeasurementStatus, ParityBenchmarkMetrics,
+    QueryLatencyMetrics, WorkspaceId,
 };
 use serde::Serialize;
 use std::collections::HashSet;
@@ -16,6 +18,7 @@ use std::path::Path;
 use std::time::Instant;
 
 const BENCHMARK_SCHEMA_VERSION: u32 = 1;
+const HYDRATE_SAMPLE_COUNT: u32 = 5;
 
 #[derive(Debug, Clone)]
 pub struct BenchmarkRunRequest {
@@ -55,6 +58,30 @@ pub fn run_benchmark(request: BenchmarkRunRequest) -> Result<BenchmarkRunRespons
             let db_path = workspace.join("dh-index.db");
             let indexer = Indexer::new(db_path);
             let artifact = run_index_benchmark(request.class, &workspace, &indexer)?;
+            Ok(BenchmarkRunResponse { artifact })
+        }
+        BenchmarkClass::HydrateGraph => {
+            let workspace = request.workspace.canonicalize().with_context(|| {
+                format!(
+                    "canonicalize hydrate benchmark workspace {}",
+                    request.workspace.display()
+                )
+            })?;
+            let db_path = workspace.join("dh-index.db");
+            let indexer = Indexer::new(db_path.clone());
+
+            let report = indexer.index_workspace(IndexWorkspaceRequest {
+                roots: vec![workspace.clone()],
+                force_full: false,
+                max_files: None,
+                include_embeddings: false,
+            })?;
+
+            let db = Database::new(&db_path)
+                .with_context(|| format!("open db {} for hydrate benchmark", db_path.display()))?;
+            db.initialize()?;
+
+            let artifact = run_hydrate_benchmark(&workspace, &db, &report)?;
             Ok(BenchmarkRunResponse { artifact })
         }
         BenchmarkClass::ColdQuery | BenchmarkClass::WarmQuery => {
@@ -145,8 +172,10 @@ pub fn benchmark_summary_lines(artifact: &BenchmarkSuiteArtifact) -> Vec<String>
 
         if let Some(index) = &result.index_timing {
             lines.push(format!(
-                "  index_timing_ms: elapsed={:.3} scanned={} changed={} reindexed={} deleted={} refreshed={} retained={} degraded={} not_current={}",
+                "  index_timing_ms: elapsed={:.3} link={:.3} graph_hydration={:.3} scanned={} changed={} reindexed={} deleted={} refreshed={} retained={} degraded={} not_current={}",
                 index.elapsed_ms,
+                index.link_ms,
+                index.graph_hydration_ms,
                 index.scanned_files,
                 index.changed_files,
                 index.reindexed_files,
@@ -155,6 +184,25 @@ pub fn benchmark_summary_lines(artifact: &BenchmarkSuiteArtifact) -> Vec<String>
                 index.retained_current_files,
                 index.degraded_partial_files,
                 index.not_current_files
+            ));
+        }
+
+        if let Some(hydration) = &result.graph_hydration {
+            lines.push(format!(
+                "  graph_hydration_ms: samples_requested={} samples_completed={} p50={:.3} p95={:.3} max={:.3} nodes={} persisted_edges={} synthetic_edges={} freshness={}",
+                hydration.sample_count_requested,
+                hydration.sample_count_completed,
+                hydration.p50_ms,
+                hydration.p95_ms,
+                hydration.max_ms,
+                hydration.node_count,
+                hydration.persisted_edge_count,
+                hydration.synthetic_edge_count,
+                hydration.freshness
+            ));
+            lines.push(format!(
+                "  graph_hydration_freshness_reason: {}",
+                hydration.freshness_reason
             ));
         }
 
@@ -407,6 +455,8 @@ fn run_index_benchmark(
         correctness: None,
         index_timing: Some(IndexBenchmarkMetrics {
             elapsed_ms,
+            link_ms: report.link_ms as f64,
+            graph_hydration_ms: report.graph_hydration_ms as f64,
             scanned_files: report.scanned_files,
             changed_files: report.changed_files,
             reindexed_files: report.reindexed_files,
@@ -417,6 +467,7 @@ fn run_index_benchmark(
             not_current_files: report.not_current_files,
         }),
         query_latency: None,
+        graph_hydration: None,
         degradation_notes,
     };
 
@@ -592,6 +643,7 @@ fn run_query_benchmark(
             p95_ms,
             query_set_label,
         }),
+        graph_hydration: None,
         degradation_notes: if sample_count_completed == 0 {
             vec!["No completed query latency samples were captured.".to_string()]
         } else {
@@ -602,6 +654,189 @@ fn run_query_benchmark(
     let summary = BenchmarkSummary {
         local_evidence_statement:
             "Benchmark results are local evidence for this corpus and this environment only."
+                .to_string(),
+        corpus_summary: format!(
+            "{}@{} ({:?})",
+            corpus.label, corpus.revision_or_snapshot, corpus.kind
+        ),
+        environment_summary: format!(
+            "{}-{} build_profile={}",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            profile_name()
+        ),
+        degraded: matches!(result.status, BenchmarkResultStatus::Degraded),
+        result_count: 1,
+    };
+
+    Ok(BenchmarkSuiteArtifact {
+        schema_version: BENCHMARK_SCHEMA_VERSION,
+        suite_id,
+        generated_at_unix_ms: now_unix_ms(),
+        summary,
+        results: vec![result],
+    })
+}
+
+fn run_hydrate_benchmark(
+    workspace: &Path,
+    db: &Database,
+    index_report: &IndexReport,
+) -> Result<BenchmarkSuiteArtifact> {
+    let workspace_id: WorkspaceId = index_report.workspace_id;
+    let run_id = format!("hydrate-benchmark-{}", now_unix_ms());
+    let suite_id = format!("benchmark-suite-{run_id}");
+    let started = now_unix_ms();
+
+    let mut timings = Vec::with_capacity(HYDRATE_SAMPLE_COUNT as usize);
+    let mut latest_stats = None;
+    for _ in 0..HYDRATE_SAMPLE_COUNT {
+        let sample_start = Instant::now();
+        let projection = HydratedGraphProjection::hydrate(db, workspace_id)?;
+        timings.push(sample_start.elapsed().as_secs_f64() * 1000.0);
+        latest_stats = Some(projection.stats());
+    }
+
+    let finished = now_unix_ms();
+    let sample_count_completed = timings.len() as u32;
+    let stats = latest_stats.context("hydrate benchmark captured no graph hydration samples")?;
+
+    let corpus = BenchmarkCorpusRef {
+        kind: BenchmarkCorpusKind::DhRepo,
+        label: workspace
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("workspace")
+            .to_string(),
+        revision_or_snapshot: "local-working-tree".to_string(),
+        root_path: workspace.to_string_lossy().to_string(),
+        query_set_label: None,
+        mutation_set_label: None,
+        notes: Some(
+            "Hydrate benchmark measures Rust in-memory graph projection construction only; it does not measure index extraction, link pass, bridge startup, or query latency."
+                .to_string(),
+        ),
+    };
+
+    let preparation = BenchmarkPreparationState {
+        state_label: "hydrate_graph_current_index_state".to_string(),
+        cleared_reusable_state: Some(false),
+        preserved_reusable_state: Some(true),
+        baseline_run_ref: Some(index_report.run_id.clone()),
+        mutation_set_label: None,
+        mutation_paths: Vec::new(),
+        query_set_label: None,
+        notes: vec![
+            format!(
+                "Hydration samples are repeated {} times against the index state produced by baseline_run_ref={}; repeated samples expose p50/p95/max instead of a single opaque hydrate value.",
+                HYDRATE_SAMPLE_COUNT, index_report.run_id
+            ),
+            "Index report graph_hydration_ms remains exposed in index_timing for index classes; this hydrate class isolates projection hydration distribution.".to_string(),
+        ],
+    };
+
+    let comparison_key = Some(comparison_key_for(
+        BenchmarkClass::HydrateGraph,
+        &corpus,
+        profile_name(),
+        &preparation,
+    ));
+
+    let graph_hydration = GraphHydrationBenchmarkMetrics {
+        sample_count_requested: HYDRATE_SAMPLE_COUNT,
+        sample_count_completed,
+        p50_ms: percentile(&timings, 50.0),
+        p95_ms: percentile(&timings, 95.0),
+        max_ms: timings.iter().copied().fold(0.0, f64::max),
+        workspace_id: stats.workspace_id,
+        node_count: stats.node_count as u64,
+        persisted_edge_count: stats.persisted_edge_count as u64,
+        synthetic_edge_count: stats.synthetic_edge_count as u64,
+        freshness: stats.freshness.as_str().to_string(),
+        freshness_reason: stats.freshness_reason,
+    };
+
+    let mut degradation_notes = Vec::new();
+    if !stats.freshness.is_current() {
+        degradation_notes.push(format!(
+            "Hydrated graph projection freshness is {}; latency remains measurable but this is not current hot-path evidence.",
+            stats.freshness.as_str()
+        ));
+    }
+    if index_report.not_current_files > 0 {
+        degradation_notes.push(format!(
+            "Baseline index report had not_current_files={}; hydrate distribution is measurable but the index state is degraded.",
+            index_report.not_current_files
+        ));
+    }
+    if sample_count_completed < HYDRATE_SAMPLE_COUNT {
+        degradation_notes.push(format!(
+            "Only {sample_count_completed} of {HYDRATE_SAMPLE_COUNT} requested hydration samples completed."
+        ));
+    }
+
+    let result = BenchmarkResult {
+        metadata: BenchmarkRunMetadata {
+            run_id,
+            benchmark_class: BenchmarkClass::HydrateGraph,
+            suite_id: suite_id.clone(),
+            started_at_unix_ms: started,
+            finished_at_unix_ms: finished,
+            engine_version: env!("CARGO_PKG_VERSION").to_string(),
+            build_profile: profile_name(),
+            host_os: std::env::consts::OS.to_string(),
+            host_arch: std::env::consts::ARCH.to_string(),
+            cpu_count: std::thread::available_parallelism()
+                .map(|count| count.get())
+                .unwrap_or(1),
+            corpus: corpus.clone(),
+            preparation,
+            baseline_run_ref: Some(index_report.run_id.clone()),
+            comparison_key: comparison_key.clone(),
+        },
+        status: if degradation_notes.is_empty() {
+            BenchmarkResultStatus::Complete
+        } else {
+            BenchmarkResultStatus::Degraded
+        },
+        memory: MemoryMeasurement {
+            status: MemoryMeasurementStatus::NotMeasured,
+            peak_rss_bytes: None,
+            method: None,
+            scope: Some("graph_hydration_benchmark".to_string()),
+            reason: Some(
+                "Peak RSS measurement is not yet instrumented for graph hydration benchmark classes."
+                    .to_string(),
+            ),
+        },
+        comparison: BenchmarkComparison {
+            eligible: true,
+            baseline_run_ref: Some(index_report.run_id.clone()),
+            comparison_key,
+            reason: None,
+        },
+        correctness: None,
+        index_timing: Some(IndexBenchmarkMetrics {
+            elapsed_ms: index_report.duration_ms as f64,
+            link_ms: index_report.link_ms as f64,
+            graph_hydration_ms: index_report.graph_hydration_ms as f64,
+            scanned_files: index_report.scanned_files,
+            changed_files: index_report.changed_files,
+            reindexed_files: index_report.reindexed_files,
+            deleted_files: index_report.deleted_files,
+            refreshed_current_files: index_report.refreshed_current_files,
+            retained_current_files: index_report.retained_current_files,
+            degraded_partial_files: index_report.degraded_partial_files,
+            not_current_files: index_report.not_current_files,
+        }),
+        query_latency: None,
+        graph_hydration: Some(graph_hydration),
+        degradation_notes,
+    };
+
+    let summary = BenchmarkSummary {
+        local_evidence_statement:
+            "Hydrate benchmark results are local evidence for this corpus and this environment only."
                 .to_string(),
         corpus_summary: format!(
             "{}@{} ({:?})",
@@ -730,6 +965,8 @@ fn parity_report_to_artifact(
         }),
         index_timing: Some(IndexBenchmarkMetrics {
             elapsed_ms: report.cold_index_time_ms as f64,
+            link_ms: 0.0,
+            graph_hydration_ms: 0.0,
             scanned_files: report.total_cases as u64,
             changed_files: report.total_cases as u64,
             reindexed_files: report.total_cases as u64,
@@ -740,6 +977,7 @@ fn parity_report_to_artifact(
             not_current_files: 0,
         }),
         query_latency: None,
+        graph_hydration: None,
         degradation_notes,
     };
 
@@ -994,6 +1232,7 @@ fn benchmark_class_label(class: BenchmarkClass) -> &'static str {
         BenchmarkClass::IncrementalReindex => "incremental_reindex",
         BenchmarkClass::ColdQuery => "cold_query",
         BenchmarkClass::WarmQuery => "warm_query",
+        BenchmarkClass::HydrateGraph => "hydrate_graph",
         BenchmarkClass::ParityBenchmark => "parity_benchmark",
     }
 }
@@ -1039,6 +1278,7 @@ mod tests {
         assert!(result.correctness.is_some());
         assert!(result.index_timing.is_some());
         assert!(result.query_latency.is_none());
+        assert!(result.graph_hydration.is_none());
         assert_eq!(result.memory.status, MemoryMeasurementStatus::NotMeasured);
         assert!(result
             .memory
@@ -1071,6 +1311,18 @@ mod tests {
         );
         assert_eq!(result.metadata.corpus.kind, BenchmarkCorpusKind::DhRepo);
         assert!(result.index_timing.is_some());
+        let index_timing = result
+            .index_timing
+            .as_ref()
+            .expect("cold index benchmark should include index timing metrics");
+        assert!(
+            index_timing.graph_hydration_ms >= 0.0,
+            "index timing should expose graph hydration milliseconds"
+        );
+        assert!(
+            index_timing.link_ms >= 0.0,
+            "index timing should expose link milliseconds"
+        );
         assert!(result.correctness.is_none());
         assert_eq!(
             result.metadata.preparation.cleared_reusable_state,
@@ -1080,6 +1332,54 @@ mod tests {
             result.metadata.preparation.preserved_reusable_state,
             Some(false)
         );
+    }
+
+    #[test]
+    fn hydrate_graph_benchmark_reports_hydration_distribution() {
+        let temp = tempdir().expect("temporary workspace should be created");
+        let workspace = temp.path();
+        fs::create_dir_all(workspace.join("src")).expect("src directory should be created");
+        fs::write(
+            workspace.join("src/main.ts"),
+            r#"export function helper(v: number): number {
+  return v + 1;
+}
+
+export function run(): number {
+  return helper(1);
+}
+"#,
+        )
+        .expect("fixture file should be written");
+
+        let response = run_benchmark(BenchmarkRunRequest {
+            class: BenchmarkClass::HydrateGraph,
+            workspace: workspace.to_path_buf(),
+        })
+        .expect("hydrate graph benchmark should run");
+
+        let result = &response.artifact.results[0];
+        assert_eq!(
+            result.metadata.benchmark_class,
+            BenchmarkClass::HydrateGraph
+        );
+        let hydration = result
+            .graph_hydration
+            .as_ref()
+            .expect("hydrate graph benchmark should include hydration metrics");
+        assert_eq!(hydration.sample_count_requested, HYDRATE_SAMPLE_COUNT);
+        assert_eq!(hydration.sample_count_completed, HYDRATE_SAMPLE_COUNT);
+        assert!(hydration.node_count > 0);
+        assert!(hydration.p95_ms >= hydration.p50_ms);
+        assert!(result.index_timing.is_some());
+        assert!(result.query_latency.is_none());
+        assert!(result.correctness.is_none());
+
+        let lines = benchmark_summary_lines(&response.artifact);
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("class=hydrate_graph")));
+        assert!(lines.iter().any(|line| line.contains("graph_hydration_ms")));
     }
 
     #[test]

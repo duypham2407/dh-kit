@@ -5,8 +5,8 @@
 //! table for auditability.
 
 use dh_types::{
-    AgentRole, HookDecision, HookInvocationLog, HookName, SemanticMode,
-    SessionState, ToolEnforcementLevel, WorkflowLane,
+    AgentRole, HookDecision, HookInvocationLog, HookName, SemanticMode, SessionState,
+    ToolEnforcementLevel, WorkflowLane,
 };
 use serde_json::{json, Value};
 use std::time::Instant;
@@ -35,19 +35,35 @@ pub struct HookResult {
 
 impl HookResult {
     fn allow(reason: impl Into<String>) -> Self {
-        Self { decision: HookDecision::Allow, reason: reason.into(), output: json!(null) }
+        Self {
+            decision: HookDecision::Allow,
+            reason: reason.into(),
+            output: json!(null),
+        }
     }
 
     fn block(reason: impl Into<String>) -> Self {
-        Self { decision: HookDecision::Block, reason: reason.into(), output: json!(null) }
+        Self {
+            decision: HookDecision::Block,
+            reason: reason.into(),
+            output: json!(null),
+        }
     }
 
     fn modify(reason: impl Into<String>, output: Value) -> Self {
-        Self { decision: HookDecision::Modify, reason: reason.into(), output }
+        Self {
+            decision: HookDecision::Modify,
+            reason: reason.into(),
+            output,
+        }
     }
 
     fn passthrough(reason: impl Into<String>) -> Self {
-        Self { decision: HookDecision::Passthrough, reason: reason.into(), output: json!(null) }
+        Self {
+            decision: HookDecision::Passthrough,
+            reason: reason.into(),
+            output: json!(null),
+        }
     }
 }
 
@@ -64,7 +80,9 @@ pub trait RuntimeHook: Send + Sync {
 pub struct ModelOverrideHook;
 
 impl RuntimeHook for ModelOverrideHook {
-    fn name(&self) -> HookName { HookName::ModelOverride }
+    fn name(&self) -> HookName {
+        HookName::ModelOverride
+    }
 
     fn evaluate(&self, _ctx: &HookContext, input: &Value) -> HookResult {
         // Default model is in the input; check if session/agent overrides apply.
@@ -84,19 +102,26 @@ impl RuntimeHook for ModelOverrideHook {
 pub struct PreToolExecHook;
 
 impl RuntimeHook for PreToolExecHook {
-    fn name(&self) -> HookName { HookName::PreToolExec }
+    fn name(&self) -> HookName {
+        HookName::PreToolExec
+    }
 
     fn evaluate(&self, ctx: &HookContext, input: &Value) -> HookResult {
         let tool_name = input.get("tool_name").and_then(Value::as_str).unwrap_or("");
         let enforcement = ctx.session.tool_enforcement_level;
 
         // OS command blocklist — enforced at `very_hard` and `hard` levels.
-        const BLOCKED_OS_COMMANDS: &[&str] = &[
-            "grep", "find", "cat", "head", "tail", "sed", "awk", "wc",
-        ];
+        const BLOCKED_OS_COMMANDS: &[&str] =
+            &["grep", "find", "cat", "head", "tail", "sed", "awk", "wc"];
 
-        if matches!(enforcement, ToolEnforcementLevel::VeryHard | ToolEnforcementLevel::Hard) {
-            if BLOCKED_OS_COMMANDS.iter().any(|cmd| tool_name.starts_with(cmd)) {
+        if matches!(
+            enforcement,
+            ToolEnforcementLevel::VeryHard | ToolEnforcementLevel::Hard
+        ) {
+            if BLOCKED_OS_COMMANDS
+                .iter()
+                .any(|cmd| tool_name.starts_with(cmd))
+            {
                 return HookResult::block(format!(
                     "tool '{}' blocked by tool_enforcement_level={:?} — use built-in tools instead",
                     tool_name, enforcement
@@ -131,27 +156,39 @@ impl RuntimeHook for PreToolExecHook {
 pub struct PreAnswerHook;
 
 impl RuntimeHook for PreAnswerHook {
-    fn name(&self) -> HookName { HookName::PreAnswer }
+    fn name(&self) -> HookName {
+        HookName::PreAnswer
+    }
 
     fn evaluate(&self, ctx: &HookContext, input: &Value) -> HookResult {
-        let evidence_score = input.get("evidence_score").and_then(Value::as_f64).unwrap_or(1.0);
-        let has_evidence = input.get("has_evidence").and_then(Value::as_bool).unwrap_or(true);
+        let evidence_score = input
+            .get("evidence_score")
+            .and_then(Value::as_f64)
+            .unwrap_or(1.0);
+        let has_evidence = input
+            .get("has_evidence")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
 
         // Semantic mode gating.
         match ctx.session.semantic_mode {
             SemanticMode::Always => {
                 if !has_evidence && evidence_score < 0.3 {
                     return HookResult::block(
-                        "answer blocked: insufficient evidence in semantic_mode=always"
+                        "answer blocked: insufficient evidence in semantic_mode=always",
                     );
                 }
             }
             SemanticMode::OnDemand => {
                 // Only gate when explicitly requested by the input.
-                if input.get("require_evidence").and_then(Value::as_bool).unwrap_or(false) {
+                if input
+                    .get("require_evidence")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
                     if evidence_score < 0.3 {
                         return HookResult::block(
-                            "answer blocked: evidence below threshold (on_demand mode)"
+                            "answer blocked: evidence below threshold (on_demand mode)",
                         );
                     }
                 }
@@ -169,12 +206,19 @@ impl RuntimeHook for PreAnswerHook {
 pub struct SkillActivationHook;
 
 impl RuntimeHook for SkillActivationHook {
-    fn name(&self) -> HookName { HookName::SkillActivation }
+    fn name(&self) -> HookName {
+        HookName::SkillActivation
+    }
 
     fn evaluate(&self, ctx: &HookContext, input: &Value) -> HookResult {
-        let available_skills: Vec<String> = input.get("available_skills")
+        let available_skills: Vec<String> = input
+            .get("available_skills")
             .and_then(Value::as_array)
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         if available_skills.is_empty() {
@@ -182,22 +226,34 @@ impl RuntimeHook for SkillActivationHook {
         }
 
         // Lane-based skill filtering.
-        let activated: Vec<&str> = available_skills.iter().map(|s| s.as_str()).filter(|skill| {
-            match ctx.lane {
-                WorkflowLane::Quick => {
-                    // Quick lane: only allow fast-path skills.
-                    !matches!(*skill, "tdd-workflow" | "deployment-procedures" | "parallel-agents")
+        let activated: Vec<&str> = available_skills
+            .iter()
+            .map(|s| s.as_str())
+            .filter(|skill| {
+                match ctx.lane {
+                    WorkflowLane::Quick => {
+                        // Quick lane: only allow fast-path skills.
+                        !matches!(
+                            *skill,
+                            "tdd-workflow" | "deployment-procedures" | "parallel-agents"
+                        )
+                    }
+                    WorkflowLane::Migration => {
+                        // Migration lane: allow migration-relevant skills.
+                        !matches!(*skill, "game-development" | "mcp-builder")
+                    }
+                    WorkflowLane::Delivery => true, // All skills available.
                 }
-                WorkflowLane::Migration => {
-                    // Migration lane: allow migration-relevant skills.
-                    !matches!(*skill, "game-development" | "mcp-builder")
-                }
-                WorkflowLane::Delivery => true, // All skills available.
-            }
-        }).collect();
+            })
+            .collect();
 
         HookResult::modify(
-            format!("activated {}/{} skills for {:?} lane", activated.len(), available_skills.len(), ctx.lane),
+            format!(
+                "activated {}/{} skills for {:?} lane",
+                activated.len(),
+                available_skills.len(),
+                ctx.lane
+            ),
             json!({ "activated_skills": activated }),
         )
     }
@@ -207,12 +263,19 @@ impl RuntimeHook for SkillActivationHook {
 pub struct McpRoutingHook;
 
 impl RuntimeHook for McpRoutingHook {
-    fn name(&self) -> HookName { HookName::McpRouting }
+    fn name(&self) -> HookName {
+        HookName::McpRouting
+    }
 
     fn evaluate(&self, ctx: &HookContext, input: &Value) -> HookResult {
-        let available_mcps: Vec<String> = input.get("available_mcps")
+        let available_mcps: Vec<String> = input
+            .get("available_mcps")
             .and_then(Value::as_array)
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         if available_mcps.is_empty() {
@@ -220,18 +283,27 @@ impl RuntimeHook for McpRoutingHook {
         }
 
         // Role-based MCP filtering — only code-facing roles get devtools.
-        let routed: Vec<&str> = available_mcps.iter().map(|s| s.as_str()).filter(|mcp| {
-            match ctx.role {
-                AgentRole::Coordinator | AgentRole::ProductLead => {
-                    // Non-code roles: block devtools-type MCPs.
-                    !matches!(*mcp, "chrome-devtools-mcp" | "filesystem-mcp")
+        let routed: Vec<&str> = available_mcps
+            .iter()
+            .map(|s| s.as_str())
+            .filter(|mcp| {
+                match ctx.role {
+                    AgentRole::Coordinator | AgentRole::ProductLead => {
+                        // Non-code roles: block devtools-type MCPs.
+                        !matches!(*mcp, "chrome-devtools-mcp" | "filesystem-mcp")
+                    }
+                    _ => true, // Code-facing roles get full access.
                 }
-                _ => true, // Code-facing roles get full access.
-            }
-        }).collect();
+            })
+            .collect();
 
         HookResult::modify(
-            format!("routed {}/{} MCPs for {:?}", routed.len(), available_mcps.len(), ctx.role),
+            format!(
+                "routed {}/{} MCPs for {:?}",
+                routed.len(),
+                available_mcps.len(),
+                ctx.role
+            ),
             json!({ "routed_mcps": routed }),
         )
     }
@@ -241,7 +313,9 @@ impl RuntimeHook for McpRoutingHook {
 pub struct SessionStateInjectionHook;
 
 impl RuntimeHook for SessionStateInjectionHook {
-    fn name(&self) -> HookName { HookName::SessionStateInjection }
+    fn name(&self) -> HookName {
+        HookName::SessionStateInjection
+    }
 
     fn evaluate(&self, ctx: &HookContext, _input: &Value) -> HookResult {
         let injected = json!({
@@ -411,10 +485,13 @@ mod tests {
         let hook = PreAnswerHook;
         let ctx = test_context();
 
-        let result = hook.evaluate(&ctx, &json!({
-            "evidence_score": 0.1,
-            "has_evidence": false,
-        }));
+        let result = hook.evaluate(
+            &ctx,
+            &json!({
+                "evidence_score": 0.1,
+                "has_evidence": false,
+            }),
+        );
         assert_eq!(result.decision, HookDecision::Block);
     }
 
@@ -423,10 +500,13 @@ mod tests {
         let hook = PreAnswerHook;
         let ctx = test_context();
 
-        let result = hook.evaluate(&ctx, &json!({
-            "evidence_score": 0.8,
-            "has_evidence": true,
-        }));
+        let result = hook.evaluate(
+            &ctx,
+            &json!({
+                "evidence_score": 0.8,
+                "has_evidence": true,
+            }),
+        );
         assert_eq!(result.decision, HookDecision::Allow);
     }
 
@@ -435,9 +515,12 @@ mod tests {
         let hook = SkillActivationHook;
         let ctx = test_context();
 
-        let result = hook.evaluate(&ctx, &json!({
-            "available_skills": ["clean-code", "tdd-workflow", "brainstorming"]
-        }));
+        let result = hook.evaluate(
+            &ctx,
+            &json!({
+                "available_skills": ["clean-code", "tdd-workflow", "brainstorming"]
+            }),
+        );
         assert_eq!(result.decision, HookDecision::Modify);
         let activated = result.output["activated_skills"].as_array().unwrap();
         assert_eq!(activated.len(), 2); // tdd-workflow filtered out in quick lane
@@ -451,9 +534,12 @@ mod tests {
         let mut ctx = test_context();
         ctx.role = AgentRole::Coordinator;
 
-        let result = hook.evaluate(&ctx, &json!({
-            "available_mcps": ["chrome-devtools-mcp", "sequential-thinking"]
-        }));
+        let result = hook.evaluate(
+            &ctx,
+            &json!({
+                "available_mcps": ["chrome-devtools-mcp", "sequential-thinking"]
+            }),
+        );
         assert_eq!(result.decision, HookDecision::Modify);
         let routed = result.output["routed_mcps"].as_array().unwrap();
         assert_eq!(routed.len(), 1);

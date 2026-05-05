@@ -1,0 +1,538 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-01T09:49:34.808Z",
+  "taskId": "RGA-07A",
+  "corpus": {
+    "label": "DH/OpenKit official corpus",
+    "rootPath": "/Users/duypham/Code/DH"
+  },
+  "productionStatus": "non_production_baseline_only",
+  "caveats": [
+    "Generated with legacy TypeScript GraphIndexer and extraction modules only for RGA-07A parity/baseline evidence.",
+    "This artifact does not reintroduce production TypeScript graph extraction or fallback behavior.",
+    "Legacy detectProjects leaf-root behavior is preserved; coverage is therefore bounded by the legacy tooling's own workspace discovery semantics.",
+    "Rust parity CLI currently reads only root-level JS/TS fixture files from the --workspace path and sibling parity-baselines JSON files; support baselines were generated for those root-level files separately."
+  ],
+  "workspaceDiscovery": [
+    {
+      "root": "/Users/duypham/Code/DH/.opencode",
+      "type": "node",
+      "files": 8,
+      "markers": {
+        "hasPackageJson": true,
+        "hasCargoToml": false
+      },
+      "diagnostics": {
+        "filesVisited": 13,
+        "filesIndexed": 8,
+        "filesIgnored": 5,
+        "dirsSkipped": 8,
+        "errors": 0,
+        "stopReason": "none"
+      },
+      "partial": false
+    },
+    {
+      "root": "/Users/duypham/Code/DH/packages/opencode-sdk",
+      "type": "node",
+      "files": 28,
+      "markers": {
+        "hasPackageJson": true,
+        "hasCargoToml": false
+      },
+      "diagnostics": {
+        "filesVisited": 28,
+        "filesIndexed": 28,
+        "filesIgnored": 0,
+        "dirsSkipped": 0,
+        "errors": 0,
+        "stopReason": "none"
+      },
+      "partial": false
+    },
+    {
+      "root": "/Users/duypham/Code/DH/rust-engine/crates/dh-engine",
+      "type": "rust",
+      "files": 0,
+      "markers": {
+        "hasPackageJson": false,
+        "hasCargoToml": true
+      },
+      "diagnostics": {
+        "filesVisited": 15,
+        "filesIndexed": 0,
+        "filesIgnored": 15,
+        "dirsSkipped": 0,
+        "errors": 0,
+        "stopReason": "none"
+      },
+      "partial": false
+    },
+    {
+      "root": "/Users/duypham/Code/DH/rust-engine/crates/dh-graph",
+      "type": "rust",
+      "files": 0,
+      "markers": {
+        "hasPackageJson": false,
+        "hasCargoToml": true
+      },
+      "diagnostics": {
+        "filesVisited": 2,
+        "filesIndexed": 0,
+        "filesIgnored": 2,
+        "dirsSkipped": 0,
+        "errors": 0,
+        "stopReason": "none"
+      },
+      "partial": false
+    },
+    {
+      "root": "/Users/duypham/Code/DH/rust-engine/crates/dh-indexer",
+      "type": "rust",
+      "files": 11,
+      "markers": {
+        "hasPackageJson": false,
+        "hasCargoToml": true
+      },
+      "diagnostics": {
+        "filesVisited": 23,
+        "filesIndexed": 11,
+        "filesIgnored": 12,
+        "dirsSkipped": 0,
+        "errors": 0,
+        "stopReason": "none"
+      },
+      "partial": false
+    },
+    {
+      "root": "/Users/duypham/Code/DH/rust-engine/crates/dh-parser",
+      "type": "rust",
+      "files": 1,
+      "markers": {
+        "hasPackageJson": false,
+        "hasCargoToml": true
+      },
+      "diagnostics": {
+        "filesVisited": 15,
+        "filesIndexed": 1,
+        "filesIgnored": 14,
+        "dirsSkipped": 0,
+        "errors": 0,
+        "stopReason": "none"
+      },
+      "partial": false
+    },
+    {
+      "root": "/Users/duypham/Code/DH/rust-engine/crates/dh-query",
+      "type": "rust",
+      "files": 0,
+      "markers": {
+        "hasPackageJson": false,
+        "hasCargoToml": true
+      },
+      "diagnostics": {
+        "filesVisited": 2,
+        "filesIndexed": 0,
+        "filesIgnored": 2,
+        "dirsSkipped": 0,
+        "errors": 0,
+        "stopReason": "none"
+      },
+      "partial": false
+    },
+    {
+      "root": "/Users/duypham/Code/DH/rust-engine/crates/dh-storage",
+      "type": "rust",
+      "files": 0,
+      "markers": {
+        "hasPackageJson": false,
+        "hasCargoToml": true
+      },
+      "diagnostics": {
+        "filesVisited": 2,
+        "filesIndexed": 0,
+        "filesIgnored": 2,
+        "dirsSkipped": 0,
+        "errors": 0,
+        "stopReason": "none"
+      },
+      "partial": false
+    },
+    {
+      "root": "/Users/duypham/Code/DH/rust-engine/crates/dh-types",
+      "type": "rust",
+      "files": 0,
+      "markers": {
+        "hasPackageJson": false,
+        "hasCargoToml": true
+      },
+      "diagnostics": {
+        "filesVisited": 2,
+        "filesIndexed": 0,
+        "filesIgnored": 2,
+        "dirsSkipped": 0,
+        "errors": 0,
+        "stopReason": "none"
+      },
+      "partial": false
+    }
+  ],
+  "indexStats": {
+    "filesScanned": 35,
+    "filesIndexed": 35,
+    "filesSkipped": 0,
+    "filesDeleted": 0,
+    "durationMs": 507,
+    "importsResolved": 44,
+    "importsUnresolved": 84,
+    "importsExternal": 6,
+    "importsAmbiguous": 0,
+    "importsUnsafe": 0,
+    "importsDegraded": 0
+  },
+  "aggregateCounts": {
+    "files": 35,
+    "parsedOk": 35,
+    "parseErrors": 0,
+    "symbols": 66,
+    "imports": 1,
+    "calls": 39,
+    "references": 33
+  },
+  "rustParityHarnessSupport": {
+    "baselineRoot": "/Users/duypham/Code/parity-baselines",
+    "rootFileBaselineCount": 1,
+    "baselines": [
+      {
+        "file": "vitest.config.ts",
+        "expected": {
+          "symbols": 0,
+          "imports": 0,
+          "call_edges": 0,
+          "references": 0,
+          "chunks": 0,
+          "parse_status": "Parsed"
+        },
+        "baselinePath": "/Users/duypham/Code/parity-baselines/vitest.config.ts.json",
+        "diagnostics": 1
+      }
+    ]
+  },
+  "files": [
+    {
+      "path": ".opencode/openkit/profile-switch.js",
+      "language": "javascript",
+      "parseStatus": "ok",
+      "symbols": 0,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": ".opencode/openkit/switch-profiles.js",
+      "language": "javascript",
+      "parseStatus": "ok",
+      "symbols": 0,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": ".opencode/openkit/workflow-state.js",
+      "language": "javascript",
+      "parseStatus": "ok",
+      "symbols": 0,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": ".opencode/profile-switch.js",
+      "language": "javascript",
+      "parseStatus": "ok",
+      "symbols": 0,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": ".opencode/switch-profiles.js",
+      "language": "javascript",
+      "parseStatus": "ok",
+      "symbols": 0,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": ".opencode/workflow-state.js",
+      "language": "javascript",
+      "parseStatus": "ok",
+      "symbols": 0,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/cli-client.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 2,
+      "imports": 0,
+      "calls": 1,
+      "references": 2
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/decision-writer.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 2,
+      "imports": 0,
+      "calls": 5,
+      "references": 1
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/filesystem-client.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 2,
+      "imports": 0,
+      "calls": 0,
+      "references": 2
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/ipc-stub.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 3,
+      "imports": 0,
+      "calls": 0,
+      "references": 1
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/mcp-client.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 1,
+      "imports": 0,
+      "calls": 2,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/model-client.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 1,
+      "imports": 0,
+      "calls": 2,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/session-client.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 1,
+      "imports": 0,
+      "calls": 2,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/skill-client.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 1,
+      "imports": 0,
+      "calls": 2,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/compat/key-normalizer.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 2,
+      "imports": 0,
+      "calls": 2,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/compat/legacy-shims.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 0,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/index.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 0,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/protocol/envelope-contract.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 2,
+      "imports": 0,
+      "calls": 2,
+      "references": 1
+    },
+    {
+      "path": "packages/opencode-sdk/src/protocol/error-envelope.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 2,
+      "imports": 0,
+      "calls": 0,
+      "references": 1
+    },
+    {
+      "path": "packages/opencode-sdk/src/protocol/key-normalization.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 4,
+      "imports": 0,
+      "calls": 11,
+      "references": 5
+    },
+    {
+      "path": "packages/opencode-sdk/src/protocol/serialization.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 2,
+      "imports": 0,
+      "calls": 3,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/protocol/versioning.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 0,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/envelope.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 3,
+      "imports": 0,
+      "calls": 0,
+      "references": 1
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/extension-contract.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 8,
+      "imports": 0,
+      "calls": 0,
+      "references": 5
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/hook-decision.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 9,
+      "imports": 0,
+      "calls": 0,
+      "references": 4
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/model.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 2,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/protocol.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 1,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/session.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 2,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/transport-mode.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 1,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": "rust-engine/crates/dh-indexer/tests/fixtures/parity/class-methods.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 2,
+      "imports": 0,
+      "calls": 0,
+      "references": 1
+    },
+    {
+      "path": "rust-engine/crates/dh-indexer/tests/fixtures/parity/dynamic-import.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 1,
+      "imports": 0,
+      "calls": 2,
+      "references": 0
+    },
+    {
+      "path": "rust-engine/crates/dh-indexer/tests/fixtures/parity/imports-and-exports.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 1,
+      "imports": 1,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": "rust-engine/crates/dh-indexer/tests/fixtures/parity/simple-module.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 1,
+      "imports": 0,
+      "calls": 0,
+      "references": 1
+    },
+    {
+      "path": "rust-engine/crates/dh-indexer/tests/fixtures/parity/syntax-error.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 0,
+      "imports": 0,
+      "calls": 0,
+      "references": 0
+    },
+    {
+      "path": "rust-engine/crates/dh-parser/tests/fixtures/sample.ts",
+      "language": "typescript",
+      "parseStatus": "ok",
+      "symbols": 10,
+      "imports": 0,
+      "calls": 5,
+      "references": 8
+    }
+  ]
+}

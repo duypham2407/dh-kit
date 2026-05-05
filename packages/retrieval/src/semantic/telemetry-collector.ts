@@ -14,6 +14,18 @@ import fs from "node:fs";
 import path from "node:path";
 import type { TelemetryEvent, EmbeddingPipelineMetrics, AnnBuildMetrics, SemanticSearchMetrics } from "../../../shared/src/types/telemetry.js";
 
+type RetrievalTelemetryEvent = TelemetryEvent | {
+  kind: "retrieval_dependency_graph_unavailable";
+  details: {
+    reason: string;
+    attemptedAdapter: string;
+    engine?: string;
+    selectorLabel?: string;
+    runtimeBehavior?: string;
+    fallbackPath: "semantic_vector_retrieval";
+  };
+};
+
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
@@ -30,7 +42,7 @@ function eventsFilePath(repoRoot: string): string {
 // Write
 // ---------------------------------------------------------------------------
 
-type TimestampedEvent = TelemetryEvent & { timestamp: string };
+type TimestampedEvent = RetrievalTelemetryEvent & { timestamp: string };
 
 export type TelemetrySummaryWindow = {
   sinceIso?: string;
@@ -41,7 +53,7 @@ export type TelemetrySummaryWindow = {
  * Append a telemetry event to the local JSONL log.
  * Synchronous to avoid interfering with async pipeline flow.
  */
-export function recordTelemetry(repoRoot: string, event: TelemetryEvent): void {
+export function recordTelemetry(repoRoot: string, event: RetrievalTelemetryEvent): void {
   const dir = telemetryDir(repoRoot);
   fs.mkdirSync(dir, { recursive: true });
   const line: TimestampedEvent = { ...event, timestamp: new Date().toISOString() };
@@ -66,7 +78,8 @@ export function readTelemetryEvents(repoRoot: string): TimestampedEvent[] {
     try {
       events.push(JSON.parse(line) as TimestampedEvent);
     } catch {
-      // skip malformed lines
+      // Malformed telemetry is non-authoritative diagnostics; skip the line and keep reading later events.
+      continue;
     }
   }
   return events;
@@ -100,6 +113,9 @@ export type TelemetrySummary = {
     semantic: number;
     evidence: number;
   };
+  degradedRetrieval: {
+    dependencyGraphUnavailable: number;
+  };
 };
 
 /**
@@ -130,6 +146,7 @@ function summarizeTelemetryFromEvents(events: TimestampedEvent[]): TelemetrySumm
   const sTotalDur = searchEvents.reduce((s, e) => s + e.metrics.durationMs, 0);
   const semanticPathUnresolvedCount = events.filter((e) => e.kind === "semantic_path_unresolved").length;
   const evidencePathUnresolvedCount = events.filter((e) => e.kind === "evidence_path_unresolved").length;
+  const dependencyGraphUnavailableCount = events.filter((e) => e.kind === "retrieval_dependency_graph_unavailable").length;
   const strategyBreakdown: Record<string, number> = {};
   for (const e of searchEvents) {
     strategyBreakdown[e.metrics.strategy] = (strategyBreakdown[e.metrics.strategy] ?? 0) + 1;
@@ -158,6 +175,9 @@ function summarizeTelemetryFromEvents(events: TimestampedEvent[]): TelemetrySumm
     unresolvedPaths: {
       semantic: semanticPathUnresolvedCount,
       evidence: evidencePathUnresolvedCount,
+    },
+    degradedRetrieval: {
+      dependencyGraphUnavailable: dependencyGraphUnavailableCount,
     },
   };
 }

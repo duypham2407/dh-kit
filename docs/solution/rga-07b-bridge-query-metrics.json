@@ -1,0 +1,671 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-01T10:13:59.558Z",
+  "taskId": "RGA-07B",
+  "measurement": "bridge_query_payload_event_loop_memory",
+  "corpus": {
+    "label": "DH/OpenKit official corpus",
+    "rootPath": "/Users/duypham/Code/DH",
+    "snapshot": "local-working-tree",
+    "largeCorpusTargetFiles": 3000,
+    "limitation": "Current official corpus is smaller than the 3,000-file target recorded in the approved solution; measurements remain official-corpus evidence, not large-corpus proof."
+  },
+  "process": {
+    "executable": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+    "mode": "serve",
+    "pid": 88041
+  },
+  "samplePlan": {
+    "repetitions": 5,
+    "defaultBoundedQueryCount": 9,
+    "includesInitialize": true
+  },
+  "payload": {
+    "status": "measured",
+    "unit": "bytes",
+    "sampleCount": 45,
+    "p50": 853,
+    "p95": 15171,
+    "max": 15171,
+    "threshold": {
+      "p95Bytes": 262144,
+      "maxBytes": 1048576
+    },
+    "thresholdResult": "measured_subset_pass"
+  },
+  "latency": {
+    "unit": "ms",
+    "byMethod": [
+      {
+        "method": "query.search",
+        "sampleCount": 10,
+        "latencyMs": {
+          "p50": 5.936,
+          "p95": 10.916,
+          "max": 10.916
+        },
+        "responsePayloadBytes": {
+          "p50": 2584,
+          "p95": 2585,
+          "max": 2585
+        }
+      },
+      {
+        "method": "query.definition",
+        "sampleCount": 5,
+        "latencyMs": {
+          "p50": 4.984,
+          "p95": 7.499,
+          "max": 7.499
+        },
+        "responsePayloadBytes": {
+          "p50": 1741,
+          "p95": 1741,
+          "max": 1741
+        }
+      },
+      {
+        "method": "query.relationship",
+        "sampleCount": 15,
+        "latencyMs": {
+          "p50": 393.067,
+          "p95": 421.137,
+          "max": 465.653
+        },
+        "responsePayloadBytes": {
+          "p50": 776,
+          "p95": 853,
+          "max": 853
+        }
+      },
+      {
+        "method": "query.callHierarchy",
+        "sampleCount": 5,
+        "latencyMs": {
+          "p50": 4.932,
+          "p95": 5.059,
+          "max": 5.059
+        },
+        "responsePayloadBytes": {
+          "p50": 455,
+          "p95": 455,
+          "max": 455
+        }
+      },
+      {
+        "method": "query.entryPoints",
+        "sampleCount": 5,
+        "latencyMs": {
+          "p50": 4.592,
+          "p95": 5.212,
+          "max": 5.212
+        },
+        "responsePayloadBytes": {
+          "p50": 440,
+          "p95": 440,
+          "max": 440
+        }
+      },
+      {
+        "method": "query.buildEvidence",
+        "sampleCount": 5,
+        "latencyMs": {
+          "p50": 454.828,
+          "p95": 529.007,
+          "max": 529.007
+        },
+        "responsePayloadBytes": {
+          "p50": 15171,
+          "p95": 15171,
+          "max": 15171
+        }
+      }
+    ],
+    "buildEvidence": {
+      "status": "measured",
+      "sampleCount": 5,
+      "p50Ms": 454.828,
+      "p95Ms": 529.007,
+      "maxMs": 529.007,
+      "thresholdP95Ms": 1000,
+      "thresholdResult": "measured_subset_pass"
+    }
+  },
+  "eventLoop": {
+    "status": "measured",
+    "method": "node:perf_hooks monitorEventLoopDelay",
+    "resolutionMs": 10,
+    "p50Ms": 11.035,
+    "p95Ms": 11.231,
+    "maxMs": 24.15,
+    "meanMs": 10.943,
+    "threshold": {
+      "p95Ms": 20,
+      "maxMs": 100
+    },
+    "thresholdResult": "measured_subset_pass"
+  },
+  "memory": {
+    "status": "measured",
+    "method": "sampled via ps -o rss= -p <pid>",
+    "pid": 88041,
+    "sampleCount": 66,
+    "peakRssBytes": 289161216,
+    "p50RssBytes": 233422848,
+    "p95RssBytes": 284049408,
+    "maxRssBytes": 289161216,
+    "failures": []
+  },
+  "rawSamples": [
+    {
+      "label": "initialize",
+      "method": "dh.initialize",
+      "success": true,
+      "latencyMs": 4.827500000000327,
+      "requestPayloadBytes": 182,
+      "responsePayloadBytes": 18818,
+      "itemCount": 0
+    },
+    {
+      "label": "search_symbol_indexer",
+      "method": "query.search",
+      "success": true,
+      "latencyMs": 10.111416000000645,
+      "requestPayloadBytes": 144,
+      "responsePayloadBytes": 1695,
+      "answerState": "insufficient",
+      "questionClass": "search_symbol",
+      "itemCount": 0
+    },
+    {
+      "label": "search_file_bridge",
+      "method": "query.search",
+      "success": true,
+      "latencyMs": 10.915541999999732,
+      "requestPayloadBytes": 146,
+      "responsePayloadBytes": 2584,
+      "answerState": "partial",
+      "questionClass": "search_file_discovery",
+      "itemCount": 5
+    },
+    {
+      "label": "definition_indexer",
+      "method": "query.definition",
+      "success": true,
+      "latencyMs": 7.498792000000321,
+      "requestPayloadBytes": 133,
+      "responsePayloadBytes": 1740,
+      "answerState": "insufficient",
+      "questionClass": "definition",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_usage_indexer",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 421.1368339999999,
+      "requestPayloadBytes": 154,
+      "responsePayloadBytes": 775,
+      "answerState": "insufficient",
+      "questionClass": "references",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_dependencies_bridge",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 0.3113329999996495,
+      "requestPayloadBytes": 198,
+      "responsePayloadBytes": 772,
+      "answerState": "insufficient",
+      "questionClass": "dependencies",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_dependents_bridge",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 406.19208400000025,
+      "requestPayloadBytes": 194,
+      "responsePayloadBytes": 852,
+      "answerState": "insufficient",
+      "questionClass": "dependents",
+      "itemCount": 0
+    },
+    {
+      "label": "call_hierarchy_run_benchmark",
+      "method": "query.callHierarchy",
+      "success": true,
+      "latencyMs": 5.059416000000056,
+      "requestPayloadBytes": 215,
+      "responsePayloadBytes": 454,
+      "answerState": "insufficient",
+      "questionClass": "call_hierarchy",
+      "itemCount": 1
+    },
+    {
+      "label": "entry_points_run_benchmark",
+      "method": "query.entryPoints",
+      "success": true,
+      "latencyMs": 5.211874999999964,
+      "requestPayloadBytes": 213,
+      "responsePayloadBytes": 439,
+      "answerState": "insufficient",
+      "questionClass": "entry_points",
+      "itemCount": 1
+    },
+    {
+      "label": "build_evidence_rust_graph",
+      "method": "query.buildEvidence",
+      "success": true,
+      "latencyMs": 529.0074170000007,
+      "requestPayloadBytes": 280,
+      "responsePayloadBytes": 15171,
+      "answerState": "partial",
+      "questionClass": "build_evidence",
+      "itemCount": 10
+    },
+    {
+      "label": "search_symbol_indexer",
+      "method": "query.search",
+      "success": true,
+      "latencyMs": 4.73620899999969,
+      "requestPayloadBytes": 145,
+      "responsePayloadBytes": 1696,
+      "answerState": "insufficient",
+      "questionClass": "search_symbol",
+      "itemCount": 0
+    },
+    {
+      "label": "search_file_bridge",
+      "method": "query.search",
+      "success": true,
+      "latencyMs": 7.154999999999745,
+      "requestPayloadBytes": 147,
+      "responsePayloadBytes": 2585,
+      "answerState": "partial",
+      "questionClass": "search_file_discovery",
+      "itemCount": 5
+    },
+    {
+      "label": "definition_indexer",
+      "method": "query.definition",
+      "success": true,
+      "latencyMs": 4.689833999999792,
+      "requestPayloadBytes": 134,
+      "responsePayloadBytes": 1741,
+      "answerState": "insufficient",
+      "questionClass": "definition",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_usage_indexer",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 401.20316699999967,
+      "requestPayloadBytes": 155,
+      "responsePayloadBytes": 776,
+      "answerState": "insufficient",
+      "questionClass": "references",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_dependencies_bridge",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 0.2827919999999722,
+      "requestPayloadBytes": 199,
+      "responsePayloadBytes": 773,
+      "answerState": "insufficient",
+      "questionClass": "dependencies",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_dependents_bridge",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 396.1396670000004,
+      "requestPayloadBytes": 195,
+      "responsePayloadBytes": 853,
+      "answerState": "insufficient",
+      "questionClass": "dependents",
+      "itemCount": 0
+    },
+    {
+      "label": "call_hierarchy_run_benchmark",
+      "method": "query.callHierarchy",
+      "success": true,
+      "latencyMs": 4.85412499999984,
+      "requestPayloadBytes": 216,
+      "responsePayloadBytes": 455,
+      "answerState": "insufficient",
+      "questionClass": "call_hierarchy",
+      "itemCount": 1
+    },
+    {
+      "label": "entry_points_run_benchmark",
+      "method": "query.entryPoints",
+      "success": true,
+      "latencyMs": 4.591667000000598,
+      "requestPayloadBytes": 214,
+      "responsePayloadBytes": 440,
+      "answerState": "insufficient",
+      "questionClass": "entry_points",
+      "itemCount": 1
+    },
+    {
+      "label": "build_evidence_rust_graph",
+      "method": "query.buildEvidence",
+      "success": true,
+      "latencyMs": 440.9181670000007,
+      "requestPayloadBytes": 280,
+      "responsePayloadBytes": 15171,
+      "answerState": "partial",
+      "questionClass": "build_evidence",
+      "itemCount": 10
+    },
+    {
+      "label": "search_symbol_indexer",
+      "method": "query.search",
+      "success": true,
+      "latencyMs": 4.658790999999837,
+      "requestPayloadBytes": 145,
+      "responsePayloadBytes": 1696,
+      "answerState": "insufficient",
+      "questionClass": "search_symbol",
+      "itemCount": 0
+    },
+    {
+      "label": "search_file_bridge",
+      "method": "query.search",
+      "success": true,
+      "latencyMs": 5.935958000000028,
+      "requestPayloadBytes": 147,
+      "responsePayloadBytes": 2585,
+      "answerState": "partial",
+      "questionClass": "search_file_discovery",
+      "itemCount": 5
+    },
+    {
+      "label": "definition_indexer",
+      "method": "query.definition",
+      "success": true,
+      "latencyMs": 7.088957999998456,
+      "requestPayloadBytes": 134,
+      "responsePayloadBytes": 1741,
+      "answerState": "insufficient",
+      "questionClass": "definition",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_usage_indexer",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 465.65349999999853,
+      "requestPayloadBytes": 155,
+      "responsePayloadBytes": 776,
+      "answerState": "insufficient",
+      "questionClass": "references",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_dependencies_bridge",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 0.2870419999999285,
+      "requestPayloadBytes": 199,
+      "responsePayloadBytes": 773,
+      "answerState": "insufficient",
+      "questionClass": "dependencies",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_dependents_bridge",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 393.0667080000003,
+      "requestPayloadBytes": 195,
+      "responsePayloadBytes": 853,
+      "answerState": "insufficient",
+      "questionClass": "dependents",
+      "itemCount": 0
+    },
+    {
+      "label": "call_hierarchy_run_benchmark",
+      "method": "query.callHierarchy",
+      "success": true,
+      "latencyMs": 4.99462499999936,
+      "requestPayloadBytes": 216,
+      "responsePayloadBytes": 455,
+      "answerState": "insufficient",
+      "questionClass": "call_hierarchy",
+      "itemCount": 1
+    },
+    {
+      "label": "entry_points_run_benchmark",
+      "method": "query.entryPoints",
+      "success": true,
+      "latencyMs": 4.551540999998906,
+      "requestPayloadBytes": 214,
+      "responsePayloadBytes": 440,
+      "answerState": "insufficient",
+      "questionClass": "entry_points",
+      "itemCount": 1
+    },
+    {
+      "label": "build_evidence_rust_graph",
+      "method": "query.buildEvidence",
+      "success": true,
+      "latencyMs": 430.2383750000008,
+      "requestPayloadBytes": 280,
+      "responsePayloadBytes": 15171,
+      "answerState": "partial",
+      "questionClass": "build_evidence",
+      "itemCount": 10
+    },
+    {
+      "label": "search_symbol_indexer",
+      "method": "query.search",
+      "success": true,
+      "latencyMs": 4.774707999999009,
+      "requestPayloadBytes": 145,
+      "responsePayloadBytes": 1696,
+      "answerState": "insufficient",
+      "questionClass": "search_symbol",
+      "itemCount": 0
+    },
+    {
+      "label": "search_file_bridge",
+      "method": "query.search",
+      "success": true,
+      "latencyMs": 6.058833000000959,
+      "requestPayloadBytes": 147,
+      "responsePayloadBytes": 2585,
+      "answerState": "partial",
+      "questionClass": "search_file_discovery",
+      "itemCount": 5
+    },
+    {
+      "label": "definition_indexer",
+      "method": "query.definition",
+      "success": true,
+      "latencyMs": 4.98370900000009,
+      "requestPayloadBytes": 134,
+      "responsePayloadBytes": 1741,
+      "answerState": "insufficient",
+      "questionClass": "definition",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_usage_indexer",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 410.46712500000103,
+      "requestPayloadBytes": 155,
+      "responsePayloadBytes": 776,
+      "answerState": "insufficient",
+      "questionClass": "references",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_dependencies_bridge",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 0.3436249999995198,
+      "requestPayloadBytes": 199,
+      "responsePayloadBytes": 773,
+      "answerState": "insufficient",
+      "questionClass": "dependencies",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_dependents_bridge",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 392.2921660000011,
+      "requestPayloadBytes": 195,
+      "responsePayloadBytes": 853,
+      "answerState": "insufficient",
+      "questionClass": "dependents",
+      "itemCount": 0
+    },
+    {
+      "label": "call_hierarchy_run_benchmark",
+      "method": "query.callHierarchy",
+      "success": true,
+      "latencyMs": 4.93237500000032,
+      "requestPayloadBytes": 216,
+      "responsePayloadBytes": 455,
+      "answerState": "insufficient",
+      "questionClass": "call_hierarchy",
+      "itemCount": 1
+    },
+    {
+      "label": "entry_points_run_benchmark",
+      "method": "query.entryPoints",
+      "success": true,
+      "latencyMs": 4.836457999999766,
+      "requestPayloadBytes": 214,
+      "responsePayloadBytes": 440,
+      "answerState": "insufficient",
+      "questionClass": "entry_points",
+      "itemCount": 1
+    },
+    {
+      "label": "build_evidence_rust_graph",
+      "method": "query.buildEvidence",
+      "success": true,
+      "latencyMs": 454.82795799999985,
+      "requestPayloadBytes": 280,
+      "responsePayloadBytes": 15171,
+      "answerState": "partial",
+      "questionClass": "build_evidence",
+      "itemCount": 10
+    },
+    {
+      "label": "search_symbol_indexer",
+      "method": "query.search",
+      "success": true,
+      "latencyMs": 4.4149170000000595,
+      "requestPayloadBytes": 145,
+      "responsePayloadBytes": 1696,
+      "answerState": "insufficient",
+      "questionClass": "search_symbol",
+      "itemCount": 0
+    },
+    {
+      "label": "search_file_bridge",
+      "method": "query.search",
+      "success": true,
+      "latencyMs": 5.901208999999653,
+      "requestPayloadBytes": 147,
+      "responsePayloadBytes": 2585,
+      "answerState": "partial",
+      "questionClass": "search_file_discovery",
+      "itemCount": 5
+    },
+    {
+      "label": "definition_indexer",
+      "method": "query.definition",
+      "success": true,
+      "latencyMs": 4.384375000001455,
+      "requestPayloadBytes": 134,
+      "responsePayloadBytes": 1741,
+      "answerState": "insufficient",
+      "questionClass": "definition",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_usage_indexer",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 391.8759170000012,
+      "requestPayloadBytes": 155,
+      "responsePayloadBytes": 776,
+      "answerState": "insufficient",
+      "questionClass": "references",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_dependencies_bridge",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 0.29604099999960454,
+      "requestPayloadBytes": 199,
+      "responsePayloadBytes": 773,
+      "answerState": "insufficient",
+      "questionClass": "dependencies",
+      "itemCount": 0
+    },
+    {
+      "label": "relationship_dependents_bridge",
+      "method": "query.relationship",
+      "success": true,
+      "latencyMs": 394.6997080000001,
+      "requestPayloadBytes": 195,
+      "responsePayloadBytes": 853,
+      "answerState": "insufficient",
+      "questionClass": "dependents",
+      "itemCount": 0
+    },
+    {
+      "label": "call_hierarchy_run_benchmark",
+      "method": "query.callHierarchy",
+      "success": true,
+      "latencyMs": 4.651957999998558,
+      "requestPayloadBytes": 216,
+      "responsePayloadBytes": 455,
+      "answerState": "insufficient",
+      "questionClass": "call_hierarchy",
+      "itemCount": 1
+    },
+    {
+      "label": "entry_points_run_benchmark",
+      "method": "query.entryPoints",
+      "success": true,
+      "latencyMs": 4.551207999998951,
+      "requestPayloadBytes": 214,
+      "responsePayloadBytes": 440,
+      "answerState": "insufficient",
+      "questionClass": "entry_points",
+      "itemCount": 1
+    },
+    {
+      "label": "build_evidence_rust_graph",
+      "method": "query.buildEvidence",
+      "success": true,
+      "latencyMs": 473.7014170000002,
+      "requestPayloadBytes": 280,
+      "responsePayloadBytes": 15171,
+      "answerState": "partial",
+      "questionClass": "build_evidence",
+      "itemCount": 10
+    }
+  ],
+  "limitations": [
+    "This measures direct JSON-RPC bridge responses from a TypeScript harness, not every higher-level UI/retrieval call site.",
+    "Payload size is response JSON body bytes after Rust serialization and before Content-Length framing overhead.",
+    "Node event-loop delay is measured in the TypeScript harness process while awaiting Rust stdio responses; it does not profile every OpenCode app runtime path.",
+    "Peak RSS is sampled externally for the child dh-engine serve process; short spikes between polling intervals may be missed."
+  ]
+}

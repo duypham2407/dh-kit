@@ -1,8 +1,8 @@
 use dh_types::{FileCandidate, LanguageId, WorkspaceId};
 use ignore::WalkBuilder;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use indicatif::{ProgressBar, ProgressStyle};
 
 const HARDCODED_EXCLUDES: &[&str] = &[
     "node_modules",
@@ -127,7 +127,7 @@ pub fn scan_workspace(root: &Path, config: &ScanConfig) -> anyhow::Result<Vec<Fi
             executable,
             shebang: None,
         });
-        
+
         if candidates.len() % 100 == 0 {
             pb.tick();
         }

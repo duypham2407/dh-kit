@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-01T10:13:47.647Z",
+  "taskId": "RGA-07B",
+  "corpus": {
+    "label": "DH/OpenKit official corpus",
+    "rootPath": "/Users/duypham/Code/DH",
+    "snapshot": "local-working-tree",
+    "largeCorpusTargetFiles": 3000,
+    "limitation": "Current official corpus is smaller than the 3,000-file target recorded in the approved solution; measurements remain official-corpus evidence, not large-corpus proof."
+  },
+  "inspectedSurfaces": {
+    "packageJson": {
+      "path": "package.json",
+      "scripts": {
+        "check": "tsc --noEmit",
+        "test": "vitest run",
+        "test:watch": "vitest"
+      },
+      "benchmarkScriptPresent": false,
+      "parityScriptPresent": false
+    },
+    "rustEngine": {
+      "cargoManifest": "rust-engine/Cargo.toml",
+      "binaryPath": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+      "binaryExists": true,
+      "currentCliClasses": [
+        "cold-full-index",
+        "warm-no-change-index",
+        "incremental-reindex",
+        "cold-query",
+        "warm-query",
+        "parity-benchmark"
+      ],
+      "currentCliLimitations": [
+        "Benchmark JSON has index/query timings but does not expose payload byte distribution.",
+        "Benchmark JSON memory fields are currently not_measured.",
+        "Hydrate timing exists in the Rust IndexReport but is not printed by the dh-engine index CLI or serialized in benchmark JSON.",
+        "The built-in incremental benchmark class is labeled no-mutation; changed-file mutation samples need external temp-copy orchestration."
+      ]
+    },
+    "rga07aInputs": {
+      "parityReport": "docs/solution/2026-04-30-rust-graph-ast-migration-rga-07a-parity-report.md",
+      "rustIndexCounts": "docs/solution/rga-07a-rust-index-counts.json",
+      "normalizedParity": "docs/solution/rga-07a-normalized-parity.json"
+    }
+  },
+  "blockerClassification": {
+    "missingNativeNpmBenchmarkScript": true,
+    "nativeRustBenchmarkCliAvailable": true,
+    "measurementToolingAddedAsNonProductionArtifact": true,
+    "productionCodeModified": false
+  }
+}

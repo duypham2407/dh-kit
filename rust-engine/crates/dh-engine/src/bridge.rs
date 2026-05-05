@@ -1,29 +1,30 @@
+use crate::hooks::{HookContext, HookDispatcher};
 use crate::host_lifecycle::{lifecycle_contract, LifecycleContract};
 use crate::worker_protocol::{
     is_worker_to_host_query_method, worker_protocol_contract, WorkerProtocolContract,
     BRIDGE_INITIALIZE_METHODS, BRIDGE_LIFECYCLE_CONTROL_METHODS, BUILD_EVIDENCE_DEFAULT_MAX_FILES,
     BUILD_EVIDENCE_DEFAULT_MAX_SNIPPETS, BUILD_EVIDENCE_DEFAULT_MAX_SYMBOLS,
     BUILD_EVIDENCE_HARD_MAX_FILES, BUILD_EVIDENCE_HARD_MAX_SNIPPETS,
-    BUILD_EVIDENCE_HARD_MAX_SYMBOLS, QUERY_BUILD_EVIDENCE_METHOD, QUERY_RELATIONSHIPS,
-    WORKER_PROTOCOL_VERSION,
+    BUILD_EVIDENCE_HARD_MAX_SYMBOLS, QUERY_BUILD_EVIDENCE_METHOD, QUERY_CALL_HIERARCHY_METHOD,
+    QUERY_ENTRY_POINTS_METHOD, QUERY_RELATIONSHIPS, WORKER_PROTOCOL_VERSION,
 };
 use anyhow::{Context, Result};
+use dh_indexer;
 use dh_query::{
     capability_state_to_wire, capability_to_wire, classify_relationship_support,
     classify_search_support, infer_language_from_path, infer_query_languages_from_paths,
     language_capability_matrix, language_id_to_wire, summarize_language_capability,
-    BuildEvidenceQuery, FindDependenciesQuery, FindDependentsQuery, FindReferencesQuery,
-    FindSymbolQuery, GotoDefinitionQuery, CallHierarchyQuery, EntryPointsQuery,
-    TraceFlowQuery, ImpactAnalysisQuery, SemanticSearchQuery, QueryEngine,
+    BuildEvidenceQuery, CallHierarchyQuery, EntryPointsQuery, FindDependenciesQuery,
+    FindDependentsQuery, FindReferencesQuery, FindSymbolQuery, GotoDefinitionQuery,
+    ImpactAnalysisQuery, QueryEngine, SemanticSearchQuery, TraceFlowQuery,
 };
-use crate::hooks::{HookContext, HookDispatcher};
-use dh_types::HookName;
-use dh_indexer;
 use dh_storage::{Database, FileRepository, GraphRepository, HookLogRepository};
+use dh_types::HookName;
 use dh_types::{
-    AnswerState, EvidenceBounds, EvidenceConfidence, EvidenceEntry, EvidenceKind, EvidencePacket,
-    EvidenceSource, LanguageCapability, LanguageCapabilityState, LanguageCapabilitySummary,
-    LanguageId, QuestionClass, WorkflowLane, SessionState, SessionStatus, SemanticMode, ToolEnforcementLevel, AgentRole, HookDecision
+    AgentRole, AnswerState, EvidenceBounds, EvidenceConfidence, EvidenceEntry, EvidenceKind,
+    EvidencePacket, EvidenceSource, HookDecision, LanguageCapability, LanguageCapabilityState,
+    LanguageCapabilitySummary, LanguageId, QuestionClass, SemanticMode, SessionState,
+    SessionStatus, ToolEnforcementLevel, WorkflowLane,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -477,12 +478,16 @@ fn handle_request(
                 "tool_args": query_params,
             });
 
-            let (log, result) = dispatcher.dispatch(HookName::PreToolExec, &ctx, &input, "bridge-session", None);
+            let (log, result) =
+                dispatcher.dispatch(HookName::PreToolExec, &ctx, &input, "bridge-session", None);
             let _ = log_repo.insert_hook_log(&log);
 
             if let HookDecision::Block = result.decision {
-                return BridgeRpcError::access_denied(format!("Hook blocked execution: {}", result.reason))
-                    .to_response(request.id);
+                return BridgeRpcError::access_denied(format!(
+                    "Hook blocked execution: {}",
+                    result.reason
+                ))
+                .to_response(request.id);
             }
 
             let final_params = match result.decision {
@@ -490,11 +495,12 @@ fn handle_request(
                 _ => query_params,
             };
 
-            let delegated = BridgeRpcRouter::new(workspace, db, dispatcher, log_repo).route_worker_query(RpcRequest {
-                id: request.id.clone(),
-                method: query_method.clone(),
-                params: final_params,
-            });
+            let delegated = BridgeRpcRouter::new(workspace, db, dispatcher, log_repo)
+                .route_worker_query(RpcRequest {
+                    id: request.id.clone(),
+                    method: query_method.clone(),
+                    params: final_params,
+                });
 
             if delegated.get("error").is_some() {
                 return delegated;
@@ -505,12 +511,21 @@ fn handle_request(
                 .cloned()
                 .unwrap_or_else(|| json!({}));
 
-            let (ans_log, ans_result) = dispatcher.dispatch(HookName::PreAnswer, &ctx, &delegated_result, "bridge-session", None);
+            let (ans_log, ans_result) = dispatcher.dispatch(
+                HookName::PreAnswer,
+                &ctx,
+                &delegated_result,
+                "bridge-session",
+                None,
+            );
             let _ = log_repo.insert_hook_log(&ans_log);
 
             if let HookDecision::Block = ans_result.decision {
-                return BridgeRpcError::execution_failed(format!("Hook blocked answer: {}", ans_result.reason))
-                    .to_response(request.id);
+                return BridgeRpcError::execution_failed(format!(
+                    "Hook blocked answer: {}",
+                    ans_result.reason
+                ))
+                .to_response(request.id);
             }
 
             let final_result = match ans_result.decision {
@@ -957,7 +972,11 @@ fn handle_request(
                 .and_then(|v| v.as_array())
             {
                 // TS worker already sent a vector — use it directly.
-                Some(arr.iter().filter_map(|n| n.as_f64().map(|f| f as f32)).collect())
+                Some(
+                    arr.iter()
+                        .filter_map(|n| n.as_f64().map(|f| f as f32))
+                        .collect(),
+                )
             } else {
                 // No precomputed vector: embed on-demand via env-configured client.
                 let embed_client = dh_indexer::embedding::build_embedding_client_from_env();
@@ -1005,9 +1024,9 @@ fn handle_request(
                 }
             }
         }
-        "query.callHierarchy" => {
+        QUERY_CALL_HIERARCHY_METHOD => {
             let symbol = str_param(&request.params, "symbol").unwrap_or_default();
-            if symbol.is_empty() {
+            if symbol.trim().is_empty() {
                 return invalid_params(
                     request.id,
                     "query.callHierarchy requires a 'symbol' parameter",
@@ -1016,6 +1035,17 @@ fn handle_request(
             let workspace_id = int_param(&request.params, "workspaceId", 1) as i64;
             let limit = int_param(&request.params, "limit", 100);
             let max_depth = int_param(&request.params, "maxDepth", 3) as u32;
+            let language_hint = str_param_opt(&request.params, "language")
+                .or_else(|| str_param_opt(&request.params, "filePath"));
+            if language_hint
+                .as_deref()
+                .is_some_and(|value| infer_language_from_path(value).is_none())
+            {
+                return capability_unsupported(
+                    request.id,
+                    "query.callHierarchy is unsupported for unknown language scope",
+                );
+            }
 
             match db.call_hierarchy(CallHierarchyQuery {
                 workspace_id,
@@ -1059,12 +1089,14 @@ fn handle_request(
                         },
                     )
                 }
-                Err(err) => internal_error(request.id, format!("query.callHierarchy failed: {err}")),
+                Err(err) => {
+                    internal_error(request.id, format!("query.callHierarchy failed: {err}"))
+                }
             }
         }
-        "query.entryPoints" => {
+        QUERY_ENTRY_POINTS_METHOD => {
             let symbol = str_param(&request.params, "symbol").unwrap_or_default();
-            if symbol.is_empty() {
+            if symbol.trim().is_empty() {
                 return invalid_params(
                     request.id,
                     "query.entryPoints requires a 'symbol' parameter",
@@ -1073,6 +1105,17 @@ fn handle_request(
             let workspace_id = int_param(&request.params, "workspaceId", 1) as i64;
             let limit = int_param(&request.params, "limit", 100);
             let max_depth = int_param(&request.params, "maxDepth", 3) as u32;
+            let language_hint = str_param_opt(&request.params, "language")
+                .or_else(|| str_param_opt(&request.params, "filePath"));
+            if language_hint
+                .as_deref()
+                .is_some_and(|value| infer_language_from_path(value).is_none())
+            {
+                return capability_unsupported(
+                    request.id,
+                    "query.entryPoints is unsupported for unknown language scope",
+                );
+            }
 
             match db.entry_points(EntryPointsQuery {
                 workspace_id,
@@ -1208,23 +1251,26 @@ fn handle_request(
                         },
                     )
                 }
-                Err(err) => internal_error(request.id, format!("query.impactAnalysis failed: {err}")),
+                Err(err) => {
+                    internal_error(request.id, format!("query.impactAnalysis failed: {err}"))
+                }
             }
         }
         "query.semanticSearch" => {
-            let model = str_param(&request.params, "model").unwrap_or_else(|| "text-embedding-3-small".to_string());
-                
+            let model = str_param(&request.params, "model")
+                .unwrap_or_else(|| "text-embedding-3-small".to_string());
+
             let query_vector_json = request.params["queryVector"].as_array();
             if query_vector_json.is_none() {
                 return invalid_params(request.id, "query.semanticSearch requires queryVector");
             }
-            
+
             let query_vector: Vec<f32> = query_vector_json
                 .unwrap()
                 .iter()
                 .filter_map(|v| v.as_f64().map(|f| f as f32))
                 .collect();
-                
+
             let limit = int_param(&request.params, "limit", 20);
             let min_score = request.params["minScore"].as_f64().unwrap_or(0.0) as f32;
             let workspace_id = int_param(&request.params, "workspaceId", 1) as i64;
@@ -1237,22 +1283,26 @@ fn handle_request(
                 min_score,
             }) {
                 Ok(result) => {
-                    let json_matches: Vec<serde_json::Value> = result.matches.into_iter().map(|m| {
-                        json!({
-                            "chunkId": m.chunk_id,
-                            "filePath": m.file_path,
-                            "title": m.title,
-                            "content": m.content,
-                            "score": m.score,
-                            "span": {
-                                "startLine": m.span.start_line,
-                                "startColumn": m.span.start_column,
-                                "endLine": m.span.end_line,
-                                "endColumn": m.span.end_column
-                            }
+                    let json_matches: Vec<serde_json::Value> = result
+                        .matches
+                        .into_iter()
+                        .map(|m| {
+                            json!({
+                                "chunkId": m.chunk_id,
+                                "filePath": m.file_path,
+                                "title": m.title,
+                                "content": m.content,
+                                "score": m.score,
+                                "span": {
+                                    "startLine": m.span.start_line,
+                                    "startColumn": m.span.start_column,
+                                    "endLine": m.span.end_line,
+                                    "endColumn": m.span.end_column
+                                }
+                            })
                         })
-                    }).collect();
-                    
+                        .collect();
+
                     ok_result(
                         request.id,
                         BridgeResult::<serde_json::Value> {
@@ -1266,7 +1316,9 @@ fn handle_request(
                         },
                     )
                 }
-                Err(err) => internal_error(request.id, format!("query.semanticSearch failed: {err}")),
+                Err(err) => {
+                    internal_error(request.id, format!("query.semanticSearch failed: {err}"))
+                }
             }
         }
         _ => method_not_supported(
@@ -1353,6 +1405,10 @@ fn invalid_params(id: Option<Value>, message: &str) -> Value {
 }
 
 fn method_not_supported(id: Option<Value>, message: &str) -> Value {
+    BridgeRpcError::capability_unsupported(message).to_response(id)
+}
+
+fn capability_unsupported(id: Option<Value>, message: &str) -> Value {
     BridgeRpcError::capability_unsupported(message).to_response(id)
 }
 
@@ -1845,12 +1901,10 @@ fn push_language(target: &mut Vec<LanguageId>, language: LanguageId) {
 mod tests {
     use super::{handle_request, BridgeRpcRouter, RpcRequest};
     use crate::hooks::HookDispatcher;
-    use dh_storage::{
-        Database, FileRepository, SymbolRepository, GraphEdgeRepository,
-    };
+    use dh_storage::{Database, FileRepository, GraphEdgeRepository, SymbolRepository};
     use dh_types::{
-        File, FreshnessReason, FreshnessState, LanguageId, ParseStatus, Span, Symbol, SymbolKind, Visibility,
-        GraphEdge, EdgeKind, EdgeResolution, EdgeConfidence, NodeId,
+        EdgeConfidence, EdgeKind, EdgeResolution, File, FreshnessReason, FreshnessState, GraphEdge,
+        LanguageId, NodeId, ParseStatus, Span, Symbol, SymbolKind, Visibility,
     };
     use serde_json::json;
     use serde_json::Value;
@@ -2135,56 +2189,98 @@ mod tests {
             },
         ])?;
 
-        db.insert_edges(&[
-            GraphEdge {
-                from: NodeId::File(1),
-                to: NodeId::File(2),
-                kind: EdgeKind::Imports,
-                resolution: EdgeResolution::Resolved,
-                confidence: EdgeConfidence::Direct,
-                reason: "./util".into(),
-                span: Some(Span {
-                    start_byte: 0,
-                    end_byte: 1,
-                    start_line: 1,
-                    start_column: 0,
-                    end_line: 1,
-                    end_column: 1,
-                }),
-            },
-            GraphEdge {
-                from: NodeId::Symbol(10),
-                to: NodeId::Symbol(11),
-                kind: EdgeKind::References,
-                resolution: EdgeResolution::Resolved,
-                confidence: EdgeConfidence::Direct,
-                reason: "helper".into(),
-                span: Some(Span {
-                    start_byte: 0,
-                    end_byte: 1,
-                    start_line: 2,
-                    start_column: 0,
-                    end_line: 2,
-                    end_column: 1,
-                }),
-            },
-            GraphEdge {
-                from: NodeId::Symbol(10),
-                to: NodeId::Symbol(11),
-                kind: EdgeKind::Calls,
-                resolution: EdgeResolution::Resolved,
-                confidence: EdgeConfidence::Direct,
-                reason: "helper".into(),
-                span: Some(Span {
-                    start_byte: 0,
-                    end_byte: 1,
-                    start_line: 2,
-                    start_column: 0,
-                    end_line: 2,
-                    end_column: 1,
-                }),
-            },
-            GraphEdge {
+        db.insert_edges(
+            &[
+                GraphEdge {
+                    from: NodeId::File(1),
+                    to: NodeId::File(2),
+                    kind: EdgeKind::Imports,
+                    resolution: EdgeResolution::Resolved,
+                    confidence: EdgeConfidence::Direct,
+                    reason: "./util".into(),
+                    span: Some(Span {
+                        start_byte: 0,
+                        end_byte: 1,
+                        start_line: 1,
+                        start_column: 0,
+                        end_line: 1,
+                        end_column: 1,
+                    }),
+                    payload_json: None,
+                },
+                GraphEdge {
+                    from: NodeId::Symbol(10),
+                    to: NodeId::Symbol(11),
+                    kind: EdgeKind::References,
+                    resolution: EdgeResolution::Resolved,
+                    confidence: EdgeConfidence::Direct,
+                    reason: "helper".into(),
+                    span: Some(Span {
+                        start_byte: 0,
+                        end_byte: 1,
+                        start_line: 2,
+                        start_column: 0,
+                        end_line: 2,
+                        end_column: 1,
+                    }),
+                    payload_json: None,
+                },
+                GraphEdge {
+                    from: NodeId::Symbol(10),
+                    to: NodeId::Symbol(11),
+                    kind: EdgeKind::Calls,
+                    resolution: EdgeResolution::Resolved,
+                    confidence: EdgeConfidence::Direct,
+                    reason: "helper".into(),
+                    span: Some(Span {
+                        start_byte: 0,
+                        end_byte: 1,
+                        start_line: 2,
+                        start_column: 0,
+                        end_line: 2,
+                        end_column: 1,
+                    }),
+                    payload_json: None,
+                },
+                GraphEdge {
+                    from: NodeId::Symbol(13),
+                    to: NodeId::Symbol(12),
+                    kind: EdgeKind::Calls,
+                    resolution: EdgeResolution::Resolved,
+                    confidence: EdgeConfidence::Direct,
+                    reason: "py_helper".into(),
+                    span: Some(Span {
+                        start_byte: 0,
+                        end_byte: 1,
+                        start_line: 2,
+                        start_column: 0,
+                        end_line: 2,
+                        end_column: 1,
+                    }),
+                    payload_json: None,
+                },
+                GraphEdge {
+                    from: NodeId::Symbol(10),
+                    to: NodeId::Symbol(14),
+                    kind: EdgeKind::Calls,
+                    resolution: EdgeResolution::Resolved,
+                    confidence: EdgeConfidence::Direct,
+                    reason: "rust_helper".into(),
+                    span: Some(Span {
+                        start_byte: 0,
+                        end_byte: 1,
+                        start_line: 3,
+                        start_column: 0,
+                        end_line: 3,
+                        end_column: 1,
+                    }),
+                    payload_json: None,
+                },
+            ],
+            1,
+        )?;
+        db.insert_edges(
+            &[GraphEdge {
                 from: NodeId::Symbol(13),
                 to: NodeId::Symbol(12),
                 kind: EdgeKind::Calls,
@@ -2199,42 +2295,10 @@ mod tests {
                     end_line: 2,
                     end_column: 1,
                 }),
-            },
-            GraphEdge {
-                from: NodeId::Symbol(10),
-                to: NodeId::Symbol(14),
-                kind: EdgeKind::Calls,
-                resolution: EdgeResolution::Resolved,
-                confidence: EdgeConfidence::Direct,
-                reason: "rust_helper".into(),
-                span: Some(Span {
-                    start_byte: 0,
-                    end_byte: 1,
-                    start_line: 3,
-                    start_column: 0,
-                    end_line: 3,
-                    end_column: 1,
-                }),
-            },
-        ], 1)?;
-        db.insert_edges(&[
-            GraphEdge {
-                from: NodeId::Symbol(13),
-                to: NodeId::Symbol(12),
-                kind: EdgeKind::Calls,
-                resolution: EdgeResolution::Resolved,
-                confidence: EdgeConfidence::Direct,
-                reason: "py_helper".into(),
-                span: Some(Span {
-                    start_byte: 0,
-                    end_byte: 1,
-                    start_line: 2,
-                    start_column: 0,
-                    end_line: 2,
-                    end_column: 1,
-                }),
-            },
-        ], 3)?;
+                payload_json: None,
+            }],
+            3,
+        )?;
 
         Ok(())
     }
@@ -2251,7 +2315,12 @@ mod tests {
             params,
         };
 
-        let definition = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let definition = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            mk(
                 "query.definition",
                 json!({ "symbol": "helper", "workspaceId": 1 }),
             ),
@@ -2262,7 +2331,12 @@ mod tests {
             json!("definition")
         );
 
-        let search = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let search = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            mk(
                 "query.search",
                 json!({ "query": "main", "workspaceId": 1, "mode": "file_path" }),
             ),
@@ -2276,7 +2350,12 @@ mod tests {
             json!("search_file_discovery")
         );
 
-        let definition_none = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let definition_none = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            mk(
                 "query.definition",
                 json!({ "symbol": "missingSymbol", "workspaceId": 1 }),
             ),
@@ -2295,30 +2374,50 @@ mod tests {
                 .as_str()
                 .is_some_and(|text| text.contains("no parser-backed definition match")))));
 
-        let usage = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let usage = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            mk(
                 "query.relationship",
                 json!({ "relation": "usage", "symbol": "helper", "workspaceId": 1 }),
             ),
         );
         assert!(usage["result"]["items"].as_array().is_some());
-        assert_eq!(usage["result"]["answerState"], "grounded");
+        assert_eq!(usage["result"]["answerState"], "partial");
         assert!(usage["result"]["evidence"].is_object());
 
-        let deps = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let deps = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            mk(
                 "query.relationship",
                 json!({ "relation": "dependencies", "filePath": "src/main.ts", "workspaceId": 1 }),
             ),
         );
         assert!(deps["result"]["items"].as_array().is_some());
 
-        let dependents = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let dependents = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            mk(
                 "query.relationship",
                 json!({ "relation": "dependents", "target": "src/util.ts", "workspaceId": 1 }),
             ),
         );
         assert!(dependents["result"]["items"].as_array().is_some());
 
-        let build_evidence = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let build_evidence = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            mk(
                 "query.buildEvidence",
                 json!({
                     "query": "how does helper work?",
@@ -2346,7 +2445,12 @@ mod tests {
             .as_array()
             .is_some_and(|items| !items.is_empty()));
 
-        let build_evidence_unsupported = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let build_evidence_unsupported = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            mk(
                 "query.buildEvidence",
                 json!({
                     "query": "trace flow through the entire subsystem",
@@ -2364,7 +2468,12 @@ mod tests {
             json!("runtime_trace")
         );
 
-        let unsupported_unknown_usage = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let unsupported_unknown_usage = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            mk(
                 "query.relationship",
                 json!({ "relation": "usage", "symbol": "mystery_symbol", "workspaceId": 1 }),
             ),
@@ -2389,7 +2498,12 @@ mod tests {
             .as_array()
             .is_some_and(|gaps| !gaps.is_empty()));
 
-        let unsupported = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let unsupported = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            mk(
                 "query.relationship",
                 json!({ "relation": "deep_impact", "target": "unknown-target", "workspaceId": 1 }),
             ),
@@ -2399,24 +2513,33 @@ mod tests {
             .as_str()
             .is_some_and(|value| value.contains("bridge contract v2")));
 
-        db.insert_edges(&[GraphEdge {
-            from: NodeId::Symbol(10),
-            to: NodeId::Symbol(11),
-            kind: EdgeKind::References,
-            resolution: EdgeResolution::Unresolved,
-            confidence: EdgeConfidence::BestEffort,
-            reason: "helper".into(),
-            span: Some(Span {
-                start_byte: 0,
-                end_byte: 1,
-                start_line: 3,
-                start_column: 0,
-                end_line: 3,
-                end_column: 1,
-            }),
-        }], 1)?;
+        db.insert_edges(
+            &[GraphEdge {
+                from: NodeId::Symbol(10),
+                to: NodeId::Symbol(11),
+                kind: EdgeKind::References,
+                resolution: EdgeResolution::Unresolved,
+                confidence: EdgeConfidence::BestEffort,
+                reason: "helper".into(),
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 3,
+                    start_column: 0,
+                    end_line: 3,
+                    end_column: 1,
+                }),
+                payload_json: None,
+            }],
+            1,
+        )?;
 
-        let usage_partial = handle_request(tmp.path(), &db, &dispatcher, &db, mk(
+        let usage_partial = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            mk(
                 "query.relationship",
                 json!({ "relation": "usage", "symbol": "helper", "workspaceId": 1 }),
             ),
@@ -2436,7 +2559,12 @@ mod tests {
     fn initialize_advertises_stable_v2_capabilities() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
         let dispatcher = HookDispatcher::new();
-        let response = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let response = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            RpcRequest {
                 id: Some(json!(42)),
                 method: "dh.initialize".into(),
                 params: json!({}),
@@ -2452,7 +2580,9 @@ mod tests {
                 "query.search",
                 "query.definition",
                 "query.relationship",
-                "query.buildEvidence"
+                "query.buildEvidence",
+                "query.callHierarchy",
+                "query.entryPoints"
             ])
         );
         assert_eq!(
@@ -2481,7 +2611,12 @@ mod tests {
     fn initialize_advertises_bounded_rust_host_lifecycle_contract() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
         let dispatcher = HookDispatcher::new();
-        let response = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let response = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            RpcRequest {
                 id: Some(json!(43)),
                 method: "dh.initialize".into(),
                 params: json!({}),
@@ -2521,7 +2656,9 @@ mod tests {
                 "query.search",
                 "query.definition",
                 "query.relationship",
-                "query.buildEvidence"
+                "query.buildEvidence",
+                "query.callHierarchy",
+                "query.entryPoints"
             ])
         );
         assert_eq!(
@@ -2612,6 +2749,183 @@ mod tests {
         assert!(response["result"]["items"]
             .as_array()
             .is_some_and(|items| !items.is_empty()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_rpc_router_routes_call_hierarchy_through_worker_query_contract() -> anyhow::Result<()>
+    {
+        let (tmp, db) = setup_db()?;
+        let _dispatcher = HookDispatcher::new();
+        seed(&db)?;
+        let dispatcher = HookDispatcher::new();
+        let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
+
+        let response = router.route_worker_query(RpcRequest {
+            id: Some(json!(51)),
+            method: "query.callHierarchy".into(),
+            params: json!({
+                "symbol": "helper",
+                "workspaceId": 1,
+                "limit": 10,
+                "maxDepth": 3,
+                "filePath": "src/util.ts"
+            }),
+        });
+
+        assert!(response.get("error").is_none());
+        assert_eq!(response["result"]["questionClass"], json!("call_hierarchy"));
+        assert_eq!(
+            response["result"]["evidence"]["questionClass"],
+            json!("call_hierarchy")
+        );
+        let callers = response["result"]["items"][0]["callers"]
+            .as_array()
+            .expect("callers array");
+        assert!(callers
+            .iter()
+            .any(|caller| caller["qualifiedName"] == "run"));
+        assert!(response["result"]["items"][0]["callees"]
+            .as_array()
+            .is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_rpc_router_routes_entry_points_through_worker_query_contract() -> anyhow::Result<()> {
+        let (tmp, db) = setup_db()?;
+        let _dispatcher = HookDispatcher::new();
+        seed(&db)?;
+        db.upsert_file(&File {
+            id: 6,
+            workspace_id: 1,
+            root_id: 1,
+            package_id: None,
+            rel_path: "api/routes.ts".into(),
+            language: LanguageId::TypeScript,
+            size_bytes: 1,
+            mtime_unix_ms: 1,
+            content_hash: "f".into(),
+            structure_hash: None,
+            public_api_hash: None,
+            parse_status: ParseStatus::Parsed,
+            parse_error: None,
+            symbol_count: 1,
+            chunk_count: 0,
+            is_barrel: false,
+            last_indexed_at_unix_ms: None,
+            deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::RefreshedCurrent,
+            freshness_reason: Some(FreshnessReason::ContentChanged),
+            last_freshness_run_id: Some("run-bridge-6".into()),
+        })?;
+        db.insert_symbols(&[Symbol {
+            id: 16,
+            workspace_id: 1,
+            file_id: 6,
+            parent_symbol_id: None,
+            kind: SymbolKind::Function,
+            name: "auth_handler".into(),
+            qualified_name: "auth_handler".into(),
+            signature: None,
+            detail: None,
+            visibility: Visibility::Public,
+            exported: true,
+            async_flag: false,
+            static_flag: false,
+            span: Span {
+                start_byte: 0,
+                end_byte: 1,
+                start_line: 1,
+                start_column: 0,
+                end_line: 1,
+                end_column: 1,
+            },
+            symbol_hash: "s16".into(),
+        }])?;
+        db.insert_edges(
+            &[GraphEdge {
+                from: NodeId::Symbol(16),
+                to: NodeId::Symbol(11),
+                kind: EdgeKind::Calls,
+                resolution: EdgeResolution::Resolved,
+                confidence: EdgeConfidence::Direct,
+                reason: "handler calls helper".into(),
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 2,
+                    start_column: 0,
+                    end_line: 2,
+                    end_column: 1,
+                }),
+                payload_json: None,
+            }],
+            1,
+        )?;
+        let dispatcher = HookDispatcher::new();
+        let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
+
+        let response = router.route_worker_query(RpcRequest {
+            id: Some(json!(52)),
+            method: "query.entryPoints".into(),
+            params: json!({
+                "symbol": "helper",
+                "workspaceId": 1,
+                "limit": 10,
+                "maxDepth": 3,
+                "filePath": "src/util.ts"
+            }),
+        });
+
+        assert!(response.get("error").is_none());
+        assert_eq!(response["result"]["questionClass"], json!("entry_points"));
+        assert_eq!(
+            response["result"]["evidence"]["bounds"]["traversalScope"],
+            json!("entry_points")
+        );
+        let entry_points = response["result"]["items"][0]["entryPoints"]
+            .as_array()
+            .expect("entryPoints array");
+        assert!(entry_points
+            .iter()
+            .any(|entry_point| entry_point["qualifiedName"] == "auth_handler"
+                && entry_point["entryPoint"] == "ApiRoute"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_rpc_router_preserves_expanded_method_error_shape_for_unsupported_scope(
+    ) -> anyhow::Result<()> {
+        let (tmp, db) = setup_db()?;
+        let _dispatcher = HookDispatcher::new();
+        seed(&db)?;
+        let dispatcher = HookDispatcher::new();
+        let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
+
+        for method in ["query.callHierarchy", "query.entryPoints"] {
+            let response = router.route_worker_query(RpcRequest {
+                id: Some(json!(53)),
+                method: method.into(),
+                params: json!({
+                    "symbol": "mystery_symbol",
+                    "workspaceId": 1,
+                    "language": "unknown"
+                }),
+            });
+
+            assert_eq!(response["error"]["code"], json!(-32601));
+            assert_eq!(
+                response["error"]["data"]["code"],
+                json!("CAPABILITY_UNSUPPORTED")
+            );
+            assert!(response["error"]["message"]
+                .as_str()
+                .is_some_and(|value| value.contains("unsupported for unknown language scope")));
+        }
 
         Ok(())
     }
@@ -2803,11 +3117,7 @@ mod tests {
         let dispatcher = HookDispatcher::new();
         let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
 
-        for method in [
-            "tool.execute",
-            "query.trace",
-            "arbitrary.forward",
-        ] {
+        for method in ["tool.execute", "query.trace", "arbitrary.forward"] {
             let response = router.route_worker_query(RpcRequest {
                 id: Some(json!(45)),
                 method: method.into(),
@@ -2834,7 +3144,12 @@ mod tests {
         let dispatcher = HookDispatcher::new();
 
         for method in ["query.trace"] {
-            let response = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+            let response = handle_request(
+                tmp.path(),
+                &db,
+                &dispatcher,
+                &db,
+                RpcRequest {
                     id: Some(json!(72)),
                     method: method.into(),
                     params: json!({}),
@@ -2860,7 +3175,12 @@ mod tests {
         let dispatcher = HookDispatcher::new();
         seed(&db)?;
 
-        let initialized = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let initialized = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            RpcRequest {
                 id: Some(json!(7)),
                 method: "dh.initialized".into(),
                 params: json!({}),
@@ -2869,7 +3189,12 @@ mod tests {
         assert_eq!(initialized["result"]["accepted"], json!(true));
         assert_eq!(initialized["result"]["phase"], json!("startup"));
 
-        let ready = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let ready = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            RpcRequest {
                 id: Some(json!(8)),
                 method: "dh.ready".into(),
                 params: json!({}),
@@ -2879,7 +3204,12 @@ mod tests {
         assert_eq!(ready["result"]["workerState"], json!("ready"));
         assert_eq!(ready["result"]["healthState"], json!("healthy"));
 
-        let ping = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let ping = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            RpcRequest {
                 id: Some(json!(9)),
                 method: "runtime.ping".into(),
                 params: json!({}),
@@ -2888,7 +3218,12 @@ mod tests {
         assert_eq!(ping["result"]["ok"], json!(true));
         assert_eq!(ping["result"]["phase"], json!("health"));
 
-        let run_command = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let run_command = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            RpcRequest {
                 id: Some(json!(10)),
                 method: "session.runCommand".into(),
                 params: json!({
@@ -2905,7 +3240,12 @@ mod tests {
         assert_eq!(run_command["result"]["method"], json!("query.definition"));
         assert!(run_command["result"]["items"].as_array().is_some());
 
-        let run_build_evidence = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let run_build_evidence = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            RpcRequest {
                 id: Some(json!(12)),
                 method: "session.runCommand".into(),
                 params: json!({
@@ -2934,7 +3274,12 @@ mod tests {
             json!("build_evidence")
         );
 
-        let run_arbitrary_method = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let run_arbitrary_method = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            RpcRequest {
                 id: Some(json!(13)),
                 method: "session.runCommand".into(),
                 params: json!({
@@ -2951,7 +3296,12 @@ mod tests {
             json!("CAPABILITY_UNSUPPORTED")
         );
 
-        let shutdown = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+        let shutdown = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            RpcRequest {
                 id: Some(json!(11)),
                 method: "dh.shutdown".into(),
                 params: json!({}),
@@ -2970,7 +3320,12 @@ mod tests {
         seed(&db)?;
 
         for relation in ["call_hierarchy", "trace_flow", "impact"] {
-            let response = handle_request(tmp.path(), &db, &dispatcher, &db, RpcRequest {
+            let response = handle_request(
+                tmp.path(),
+                &db,
+                &dispatcher,
+                &db,
+                RpcRequest {
                     id: Some(json!(71)),
                     method: "query.relationship".into(),
                     params: json!({

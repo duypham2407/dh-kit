@@ -1,10 +1,10 @@
 import type { NormalizedRetrievalResult } from "../../../shared/src/types/evidence.js";
 import { createId } from "../../../shared/src/utils/ids.js";
 import { detectProjects } from "../../../intelligence/src/workspace/detect-projects.js";
-import { extractImportEdges } from "../../../intelligence/src/graph/extract-import-edges.js";
 import { extractSymbolsFromFiles } from "../../../intelligence/src/symbols/extract-symbols.js";
 import { buildEvidencePackets } from "./build-evidence-packets.js";
 import { buildRetrievalPlan } from "./build-retrieval-plan.js";
+import { loadDependencyEdgesFromRustBridge } from "./dependency-edge-adapter.js";
 import { expandGraph } from "./expand-graph.js";
 import { searchDefinitions, searchReferences } from "./search-symbols.js";
 import { chunkFiles } from "../semantic/chunker.js";
@@ -46,7 +46,21 @@ export async function runRetrieval(input: {
     .map((workspace) => workspace.diagnostics?.stopReason ?? "none")
     .filter((reason) => reason !== "none"))];
   const symbols = await extractSymbolsFromFiles(input.repoRoot, files);
-  const edges = await extractImportEdges(input.repoRoot, files);
+  const dependencyEdges = await loadDependencyEdgesFromRustBridge(input.repoRoot, files);
+  const edges = dependencyEdges.edges;
+  if (!dependencyEdges.available) {
+    recordTelemetry(input.repoRoot, {
+      kind: "retrieval_dependency_graph_unavailable",
+      details: {
+        reason: dependencyEdges.reason,
+        attemptedAdapter: dependencyEdges.source,
+        engine: dependencyEdges.engineSelector.engine,
+        selectorLabel: dependencyEdges.engineSelector.label,
+        runtimeBehavior: dependencyEdges.runtimeBehavior,
+        fallbackPath: "semantic_vector_retrieval",
+      },
+    });
+  }
   const filePathById = buildRepoRelativeFilePathById(input.repoRoot, files);
   const symbolResults = selectSymbolResults(plan.intent, symbols, filePathById, plan.seedTerms);
   const fileResults = selectResults(files, filePathById, plan.seedTerms, plan.selectedTools);
@@ -110,6 +124,7 @@ export async function runRetrieval(input: {
       reducedCoverage,
       stopReasons: scanStopReasons,
     },
+    dependencyGraph: dependencyEdges,
     symbols,
     edges,
     results: normalizedResults,

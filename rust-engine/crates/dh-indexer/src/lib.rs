@@ -3,35 +3,40 @@
 pub mod dirty;
 pub mod embedding;
 pub mod hasher;
+pub mod linker;
 pub mod parity;
 pub mod scanner;
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
+use dh_graph::HydratedGraphProjection;
 use dh_parser::{
     default_language_registry, extract_file_facts, pool::ParserPool, registry::LanguageRegistry,
     ExtractionContext,
 };
 use dh_storage::{
-    GraphEdgeRepository, ChunkRepository, Database, FileRepository,
-    IndexStateRepository, SymbolRepository,
+    ChunkRepository, Database, FileRepository, GraphEdgeRepository, IndexStateRepository,
+    SymbolRepository,
 };
 use dh_types::{
-    File, FileCandidate, FreshnessReason, FreshnessState, IndexRunStatus, IndexState, ParseStatus,
-    WorkspaceId,
+    EdgeKind, EdgeResolution, File, FileCandidate, FileId, FreshnessReason, FreshnessState,
+    IndexRunStatus, IndexState, NodeId, ParseStatus, WorkspaceId,
 };
+use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{info, warn};
 use uuid::Uuid;
-use indicatif::{ProgressBar, ProgressStyle};
+
+use crate::linker::{LinkFileInput, LinkFileOutput, LinkReport, LinkWorkspaceSnapshot};
 
 use crate::dirty::{
     confirmed_delta, is_resolution_scope_path, ConfirmedDelta, DirtyPlannerInput,
     InvalidationLevel, PlannedFile,
 };
+use crate::hasher::FileKey;
 
 pub struct IndexWorkspaceRequest {
     pub roots: Vec<PathBuf>,
@@ -61,6 +66,23 @@ pub struct IndexReport {
     pub degraded_partial_files: u64,
     pub not_current_files: u64,
     pub deleted_paths: u64,
+    pub workspace_root_count: u64,
+    pub package_root_count: u64,
+    pub symbols_extracted: u64,
+    pub imports_extracted: u64,
+    pub call_sites_extracted: u64,
+    pub references_extracted: u64,
+    pub linked_imports: u64,
+    pub linked_cross_root_imports: u64,
+    pub linked_calls: u64,
+    pub linked_cross_root_calls: u64,
+    pub linked_references: u64,
+    pub unresolved_imports: u64,
+    pub unresolved_cross_root_imports: u64,
+    pub unresolved_calls: u64,
+    pub unresolved_references: u64,
+    pub graph_hydration_ms: u128,
+    pub link_ms: u128,
 }
 
 pub trait IndexerApi {
@@ -100,18 +122,24 @@ impl Indexer {
         run_id: &str,
         registry: &LanguageRegistry,
         parser_pool: &mut ParserPool,
+        link_snapshot: Option<&LinkWorkspaceSnapshot>,
+        workspace_root: &Path,
+        root_paths: &HashMap<i64, PathBuf>,
+        workspace_roots: &[PathBuf],
+        package_roots: &[PathBuf],
     ) -> Result<ProcessOutcome> {
         let candidate = &planned.candidate;
         let now = now_unix_ms();
         let run_id_marker = run_id_to_i64(run_id);
         let file_id = existing_file.map(|file| file.id).unwrap_or_else(|| {
             stable_id_i64(&format!(
-                "file|{}|{}",
-                candidate.workspace_id, candidate.rel_path
+                "file|{}|{}|{}",
+                candidate.workspace_id, candidate.root_id, candidate.rel_path
             ))
         });
 
         let mut warnings = Vec::new();
+        let mut stats = ExtractedFileStats::default();
 
         let source = match fs::read(&candidate.abs_path) {
             Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
@@ -155,12 +183,17 @@ impl Indexer {
                     &[],
                     &[],
                     &[],
+                    &[],
+                    LinkReport::default(),
                     existing_file.is_some(),
+                    false,
                 )?;
                 return Ok(ProcessOutcome {
                     warnings,
                     persisted_file: failed_file,
                     delta: ConfirmedDelta::default(),
+                    stats,
+                    link_report: LinkReport::default(),
                 });
             }
         };
@@ -172,6 +205,10 @@ impl Indexer {
             file_id,
             rel_path: &candidate.rel_path,
             source: &source,
+            abs_path: Some(candidate.abs_path.clone()),
+            workspace_root: Some(workspace_root.to_path_buf()),
+            workspace_roots: workspace_roots.to_vec(),
+            package_roots: package_roots.to_vec(),
         };
 
         let extracted = match extract_file_facts(registry, parser_pool, candidate.language, &ctx) {
@@ -213,12 +250,17 @@ impl Indexer {
                     &[],
                     &[],
                     &[],
+                    &[],
+                    LinkReport::default(),
                     existing_file.is_some(),
+                    false,
                 )?;
                 return Ok(ProcessOutcome {
                     warnings,
                     persisted_file: failed_file,
                     delta: ConfirmedDelta::default(),
+                    stats,
+                    link_report: LinkReport::default(),
                 });
             }
         };
@@ -234,6 +276,11 @@ impl Indexer {
         let mut call_edges = extracted.call_edges;
         let mut references = extracted.references;
         let mut chunks = extracted.chunks;
+
+        stats.symbols_extracted = symbols.len() as u64;
+        stats.imports_extracted = imports.len() as u64;
+        stats.call_sites_extracted = call_edges.len() as u64;
+        stats.references_extracted = references.len() as u64;
 
         // Keep IDs stable and ensure file_id fields are always the current row id.
         for symbol in &mut symbols {
@@ -301,6 +348,43 @@ impl Indexer {
             }
         });
 
+        let can_reuse_existing_edges = should_reuse_existing_edges(existing_file, &file, delta);
+        let link_output = if can_reuse_existing_edges {
+            LinkFileOutput {
+                edges: db.find_edges_by_file(file_id)?,
+                report: LinkReport::default(),
+            }
+        } else if let Some(link_snapshot) = link_snapshot {
+            link_snapshot.link_file(LinkFileInput {
+                file: &file,
+                imports: &imports,
+                call_edges: &call_edges,
+                references: &references,
+            })
+        } else {
+            let workspace_files = db.list_files_by_workspace(candidate.workspace_id)?;
+            let workspace_symbols = db.find_symbols_by_workspace(candidate.workspace_id)?;
+            linker::link_file_facts(
+                &ctx.workspace_root
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from(".")),
+                root_paths,
+                &workspace_files,
+                &workspace_symbols,
+                LinkFileInput {
+                    file: &file,
+                    imports: &imports,
+                    call_edges: &call_edges,
+                    references: &references,
+                },
+            )
+        };
+        let mut graph_edges = link_output.edges;
+        let preserve_existing_edges = false;
+        if preserve_existing_edges {
+            preserve_existing_file_edges(&db, file.id, &mut graph_edges)?;
+        }
+
         write_file_atomically(
             db,
             &file,
@@ -309,7 +393,10 @@ impl Indexer {
             &call_edges,
             &references,
             &chunks,
+            &graph_edges,
+            link_output.report,
             existing_file.is_some(),
+            false,
         )?;
 
         if has_errors {
@@ -323,6 +410,8 @@ impl Indexer {
             warnings,
             persisted_file: file,
             delta,
+            stats,
+            link_report: link_output.report,
         })
     }
 
@@ -333,13 +422,13 @@ impl Indexer {
         run_id: &str,
         scanned_candidates: &[FileCandidate],
         existing_files: &[File],
-        changed_files_by_path: &HashMap<String, File>,
-        delta_by_path: &HashMap<String, ConfirmedDelta>,
-        deleted_rel_paths: &HashSet<String>,
-        forced_dependent_roots: &HashSet<String>,
-        initial_indexed_rel_paths: &HashSet<String>,
+        changed_files_by_path: &HashMap<FileKey, File>,
+        delta_by_path: &HashMap<FileKey, ConfirmedDelta>,
+        deleted_rel_paths: &HashSet<FileKey>,
+        forced_dependent_roots: &HashSet<FileKey>,
+        initial_indexed_rel_paths: &HashSet<FileKey>,
         refresh_queue: &mut VecDeque<PlannedFile>,
-        queued_rel_paths: &mut HashSet<String>,
+        queued_rel_paths: &mut HashSet<FileKey>,
         counters: &mut FreshnessCounters,
         warnings: &mut Vec<String>,
     ) -> Result<()> {
@@ -352,33 +441,33 @@ impl Indexer {
 
         let scanned_by_path = scanned_candidates
             .iter()
-            .map(|candidate| (candidate.rel_path.clone(), candidate))
+            .map(|candidate| (file_key_for_candidate(candidate), candidate))
             .collect::<HashMap<_, _>>();
 
         let existing_by_path = existing_files
             .iter()
-            .map(|file| (file.rel_path.clone(), file))
+            .map(|file| (file_key_for_file(file), file))
             .collect::<HashMap<_, _>>();
 
         let mut public_api_roots = HashSet::new();
         let mut structural_roots = HashSet::new();
         let mut resolution_scope_roots = HashSet::new();
 
-        for (rel_path, delta) in delta_by_path {
+        for (file_key, delta) in delta_by_path {
             if delta.public_api_changed {
-                public_api_roots.insert(rel_path.clone());
+                public_api_roots.insert(file_key.clone());
             }
             if delta.structure_changed {
-                structural_roots.insert(rel_path.clone());
+                structural_roots.insert(file_key.clone());
             }
-            if is_resolution_scope_path(rel_path) {
-                resolution_scope_roots.insert(rel_path.clone());
+            if is_resolution_scope_path(&file_key.rel_path) {
+                resolution_scope_roots.insert(file_key.clone());
             }
         }
 
-        for rel_path in changed_files_by_path.keys() {
-            if is_resolution_scope_path(rel_path) {
-                resolution_scope_roots.insert(rel_path.clone());
+        for file_key in changed_files_by_path.keys() {
+            if is_resolution_scope_path(&file_key.rel_path) {
+                resolution_scope_roots.insert(file_key.clone());
             }
         }
 
@@ -515,6 +604,33 @@ struct ProcessOutcome {
     warnings: Vec<String>,
     persisted_file: File,
     delta: ConfirmedDelta,
+    stats: ExtractedFileStats,
+    link_report: LinkReport,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct ExtractedFileStats {
+    symbols_extracted: u64,
+    imports_extracted: u64,
+    call_sites_extracted: u64,
+    references_extracted: u64,
+}
+
+impl ExtractedFileStats {
+    fn accumulate(&mut self, other: Self) {
+        self.symbols_extracted = self
+            .symbols_extracted
+            .saturating_add(other.symbols_extracted);
+        self.imports_extracted = self
+            .imports_extracted
+            .saturating_add(other.imports_extracted);
+        self.call_sites_extracted = self
+            .call_sites_extracted
+            .saturating_add(other.call_sites_extracted);
+        self.references_extracted = self
+            .references_extracted
+            .saturating_add(other.references_extracted);
+    }
 }
 
 impl IndexerApi for Indexer {
@@ -522,20 +638,39 @@ impl IndexerApi for Indexer {
         let start = Instant::now();
         let started_at_unix_ms = now_unix_ms();
 
-        let workspace_root = req
+        if req.roots.is_empty() {
+            return Err(anyhow!("index_workspace requires at least one root"));
+        }
+
+        let workspace_roots = req
             .roots
+            .iter()
+            .map(|root| {
+                root.canonicalize()
+                    .with_context(|| format!("canonicalize workspace root: {}", root.display()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let workspace_root = workspace_roots
             .first()
             .cloned()
-            .ok_or_else(|| anyhow!("index_workspace requires at least one root"))?;
-
-        let workspace_root = workspace_root.canonicalize().with_context(|| {
-            format!("canonicalize workspace root: {}", workspace_root.display())
-        })?;
+            .expect("non-empty roots checked before canonicalization");
+        let package_roots = workspace_roots.clone();
+        let extraction_package_roots = if workspace_roots.len() == 1 {
+            Vec::new()
+        } else {
+            package_roots.clone()
+        };
 
         let db = self.open_db()?;
         let workspace_id = 1_i64;
-        let root_id = 1_i64;
-        ensure_workspace_and_root(&db, workspace_id, root_id, &workspace_root)?;
+        let root_assignments = assign_workspace_root_ids(&db, workspace_id, &workspace_roots)?;
+        let root_paths = root_assignments
+            .iter()
+            .map(|(root_id, root)| (*root_id, root.clone()))
+            .collect::<HashMap<_, _>>();
+        for (root_id, root) in &root_assignments {
+            ensure_workspace_and_root(&db, workspace_id, *root_id, root)?;
+        }
 
         let run_id = Uuid::new_v4().to_string();
         db.upsert_run(
@@ -559,16 +694,19 @@ impl IndexerApi for Indexer {
         db.update_state(&state)?;
 
         let index_result = (|| -> Result<IndexReport> {
-            let scan_config = scanner::ScanConfig {
-                workspace_id,
-                root_id,
-                package_id: None,
-            };
-
-            let mut candidates = scanner::scan_workspace(&workspace_root, &scan_config)?;
+            let mut candidates = Vec::new();
+            for (root_id, root) in &root_assignments {
+                let scan_config = scanner::ScanConfig {
+                    workspace_id,
+                    root_id: *root_id,
+                    package_id: None,
+                };
+                candidates.append(&mut scanner::scan_workspace(root, &scan_config)?);
+            }
             if let Some(max_files) = req.max_files {
                 candidates.truncate(max_files);
             }
+            let existing_files = db.list_files_by_workspace(workspace_id)?;
 
             info!(
                 workspace = %workspace_root.display(),
@@ -593,22 +731,43 @@ impl IndexerApi for Indexer {
 
             let hasher::HashCandidatesResult {
                 hashes: content_hashes,
+                hashes_by_file_key: content_hashes_by_file_key,
                 hash_failures,
+                hash_failures_by_file_key,
                 mut warnings,
-            } = hasher::hash_candidates(&candidates);
-            let existing_files = db.list_files_by_workspace(workspace_id)?;
+            } = hasher::hash_incremental_candidates(
+                &candidates,
+                &existing_files,
+                req.force_full,
+                None,
+                None,
+            );
 
-            let dirty_set = dirty::build_dirty_set(DirtyPlannerInput {
-                scanned: &candidates,
-                content_hashes: &content_hashes,
-                existing_files: &existing_files,
-                force_full: req.force_full,
-                expand_dependents: false,
-                touched_paths: None,
-            });
+            let dirty_set = if content_hashes.is_empty() && !req.force_full {
+                build_metadata_only_dirty_set(&candidates, &existing_files)
+            } else {
+                dirty::build_dirty_set(DirtyPlannerInput {
+                    scanned: &candidates,
+                    content_hashes: &content_hashes,
+                    content_hashes_by_file_key: &content_hashes_by_file_key,
+                    existing_files: &existing_files,
+                    force_full: req.force_full,
+                    expand_dependents: false,
+                    touched_paths: None,
+                    touched_file_keys: None,
+                })
+            };
             let hash_failed_candidates = candidates
                 .iter()
-                .filter(|candidate| hash_failures.contains_key(&candidate.rel_path))
+                .filter(|candidate| {
+                    hash_failure_message(
+                        &file_key_for_candidate(candidate),
+                        &candidate.rel_path,
+                        &hash_failures_by_file_key,
+                        &hash_failures,
+                    )
+                    .is_some()
+                })
                 .collect::<Vec<_>>();
 
             db.upsert_run(
@@ -629,16 +788,29 @@ impl IndexerApi for Indexer {
 
             let registry = default_language_registry();
             let mut parser_pool = ParserPool::new();
-            let existing_by_path = existing_files
+            let existing_by_key = existing_files
                 .iter()
-                .map(|file| (file.rel_path.clone(), file))
+                .map(|file| (file_key_for_file(file), file))
                 .collect::<HashMap<_, _>>();
+            let link_snapshot = if dirty_set.to_index.len() > 1 || req.force_full {
+                Some(LinkWorkspaceSnapshot::new(
+                    &workspace_root,
+                    &root_paths,
+                    existing_files.clone(),
+                    db.find_symbols_by_workspace(workspace_id)?,
+                ))
+            } else {
+                None
+            };
 
             let mut counters = FreshnessCounters::default();
+            let mut fact_stats = ExtractedFileStats::default();
+            let mut link_report = LinkReport::default();
             let mut reindexed_files = 0_u64;
             let mut indexed_rel_paths = HashSet::new();
             let mut changed_files_by_path = HashMap::new();
             let mut confirmed_delta_by_path = HashMap::new();
+            let mut contract_changed_files_by_path = HashMap::new();
             let mut fatal_invalidation_roots = HashSet::new();
             let mut invalidation_refresh_queue = VecDeque::new();
             let mut queued_rel_paths = HashSet::new();
@@ -652,12 +824,15 @@ impl IndexerApi for Indexer {
             );
 
             for planned in &dirty_set.to_index {
-                let Some(content_hash) = content_hashes.get(&planned.candidate.rel_path) else {
-                    continue;
-                };
+                let content_hash = content_hash_for_planned_file(
+                    &planned.candidate,
+                    &content_hashes,
+                    &content_hashes_by_file_key,
+                    &existing_by_key,
+                );
 
-                let existing = existing_by_path
-                    .get(planned.candidate.rel_path.as_str())
+                let existing = existing_by_key
+                    .get(&file_key_for_candidate(&planned.candidate))
                     .copied();
                 let mut outcome = self.process_and_write_file(
                     &db,
@@ -667,42 +842,61 @@ impl IndexerApi for Indexer {
                     &run_id,
                     &registry,
                     &mut parser_pool,
+                    link_snapshot.as_ref(),
+                    &workspace_root,
+                    &root_paths,
+                    &workspace_roots,
+                    &extraction_package_roots,
                 )?;
                 warnings.append(&mut outcome.warnings);
+                fact_stats.accumulate(outcome.stats);
+                link_report.accumulate(outcome.link_report);
                 counters.register(outcome.persisted_file.freshness_state);
                 if is_fatal_failure_invalidation_root(&outcome.persisted_file) {
-                    fatal_invalidation_roots.insert(planned.candidate.rel_path.clone());
+                    fatal_invalidation_roots.insert(file_key_for_candidate(&planned.candidate));
                 }
-                changed_files_by_path
-                    .insert(planned.candidate.rel_path.clone(), outcome.persisted_file);
-                confirmed_delta_by_path.insert(planned.candidate.rel_path.clone(), outcome.delta);
-                indexed_rel_paths.insert(planned.candidate.rel_path.clone());
+                if outcome.delta.public_api_changed || outcome.delta.structure_changed {
+                    contract_changed_files_by_path.insert(
+                        file_key_for_candidate(&planned.candidate),
+                        outcome.persisted_file.clone(),
+                    );
+                }
+                changed_files_by_path.insert(
+                    file_key_for_candidate(&planned.candidate),
+                    outcome.persisted_file,
+                );
+                confirmed_delta_by_path
+                    .insert(file_key_for_candidate(&planned.candidate), outcome.delta);
+                indexed_rel_paths.insert(file_key_for_candidate(&planned.candidate));
                 reindexed_files += 1;
                 pb.inc(1);
             }
             pb.finish_and_clear();
 
-
             let initial_indexed_rel_paths = indexed_rel_paths.clone();
 
             for candidate in hash_failed_candidates {
-                if indexed_rel_paths.contains(&candidate.rel_path) {
+                let candidate_key = file_key_for_candidate(candidate);
+                if indexed_rel_paths.contains(&candidate_key) {
                     continue;
                 }
-                let Some(existing) = existing_by_path.get(candidate.rel_path.as_str()).copied()
-                else {
+                let Some(existing) = existing_by_key.get(&candidate_key).copied() else {
                     continue;
                 };
 
-                let parse_error = hash_failures
-                    .get(&candidate.rel_path)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        format!(
-                            "failed to read file for hashing: {}",
-                            candidate.abs_path.display()
-                        )
-                    });
+                let parse_error = hash_failure_message(
+                    &candidate_key,
+                    &candidate.rel_path,
+                    &hash_failures_by_file_key,
+                    &hash_failures,
+                )
+                .cloned()
+                .unwrap_or_else(|| {
+                    format!(
+                        "failed to read file for hashing: {}",
+                        candidate.abs_path.display()
+                    )
+                });
 
                 warnings.push(format!(
                     "marking file as failed after hash read error: {}",
@@ -711,8 +905,8 @@ impl IndexerApi for Indexer {
 
                 mark_hash_read_failure(&db, existing, candidate, parse_error, &run_id)?;
                 counters.register(FreshnessState::NotCurrent);
-                fatal_invalidation_roots.insert(candidate.rel_path.clone());
-                indexed_rel_paths.insert(candidate.rel_path.clone());
+                fatal_invalidation_roots.insert(candidate_key.clone());
+                indexed_rel_paths.insert(candidate_key);
                 reindexed_files += 1;
             }
 
@@ -723,7 +917,7 @@ impl IndexerApi for Indexer {
                     existing_files
                         .iter()
                         .find(|file| file.id == *file_id)
-                        .map(|file| file.rel_path.clone())
+                        .map(file_key_for_file)
                 })
                 .collect::<HashSet<_>>();
 
@@ -745,24 +939,40 @@ impl IndexerApi for Indexer {
             )?;
 
             while let Some(planned) = invalidation_refresh_queue.pop_front() {
-                if indexed_rel_paths.contains(&planned.candidate.rel_path) {
+                let planned_key = file_key_for_candidate(&planned.candidate);
+                if indexed_rel_paths.contains(&planned_key) {
                     continue;
                 }
 
-                let Some(content_hash) = content_hashes.get(&planned.candidate.rel_path) else {
-                    if let Some(existing) = existing_by_path
-                        .get(planned.candidate.rel_path.as_str())
-                        .copied()
-                    {
-                        let parse_error = hash_failures
-                            .get(&planned.candidate.rel_path)
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                format!(
-                                    "failed to read file for hashing: {}",
-                                    planned.candidate.abs_path.display()
-                                )
-                            });
+                let content_hash = if let Some(content_hash) = content_hash_message(
+                    &planned_key,
+                    &planned.candidate.rel_path,
+                    &content_hashes_by_file_key,
+                    &content_hashes,
+                ) {
+                    content_hash.as_str()
+                } else if hash_failure_message(
+                    &planned_key,
+                    &planned.candidate.rel_path,
+                    &hash_failures_by_file_key,
+                    &hash_failures,
+                )
+                .is_some()
+                {
+                    if let Some(existing) = existing_by_key.get(&planned_key).copied() {
+                        let parse_error = hash_failure_message(
+                            &planned_key,
+                            &planned.candidate.rel_path,
+                            &hash_failures_by_file_key,
+                            &hash_failures,
+                        )
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            format!(
+                                "failed to read file for hashing: {}",
+                                planned.candidate.abs_path.display()
+                            )
+                        });
                         warnings.push(format!(
                             "marking file as failed after hash read error during invalidation: {}",
                             planned.candidate.rel_path
@@ -775,16 +985,21 @@ impl IndexerApi for Indexer {
                             &run_id,
                         )?;
                         counters.register(FreshnessState::NotCurrent);
-                        fatal_invalidation_roots.insert(planned.candidate.rel_path.clone());
-                        indexed_rel_paths.insert(planned.candidate.rel_path.clone());
+                        fatal_invalidation_roots.insert(planned_key.clone());
+                        indexed_rel_paths.insert(planned_key);
                         reindexed_files += 1;
                     }
                     continue;
+                } else {
+                    content_hash_for_planned_file(
+                        &planned.candidate,
+                        &content_hashes,
+                        &content_hashes_by_file_key,
+                        &existing_by_key,
+                    )
                 };
 
-                let existing = existing_by_path
-                    .get(planned.candidate.rel_path.as_str())
-                    .copied();
+                let existing = existing_by_key.get(&planned_key).copied();
                 let mut outcome = self.process_and_write_file(
                     &db,
                     &planned,
@@ -793,16 +1008,26 @@ impl IndexerApi for Indexer {
                     &run_id,
                     &registry,
                     &mut parser_pool,
+                    link_snapshot.as_ref(),
+                    &workspace_root,
+                    &root_paths,
+                    &workspace_roots,
+                    &extraction_package_roots,
                 )?;
                 warnings.append(&mut outcome.warnings);
+                fact_stats.accumulate(outcome.stats);
+                link_report.accumulate(outcome.link_report);
                 counters.register(outcome.persisted_file.freshness_state);
                 if is_fatal_failure_invalidation_root(&outcome.persisted_file) {
-                    fatal_invalidation_roots.insert(planned.candidate.rel_path.clone());
+                    fatal_invalidation_roots.insert(planned_key.clone());
                 }
-                changed_files_by_path
-                    .insert(planned.candidate.rel_path.clone(), outcome.persisted_file);
-                confirmed_delta_by_path.insert(planned.candidate.rel_path.clone(), outcome.delta);
-                indexed_rel_paths.insert(planned.candidate.rel_path.clone());
+                if outcome.delta.public_api_changed || outcome.delta.structure_changed {
+                    contract_changed_files_by_path
+                        .insert(planned_key.clone(), outcome.persisted_file.clone());
+                }
+                changed_files_by_path.insert(planned_key.clone(), outcome.persisted_file);
+                confirmed_delta_by_path.insert(planned_key.clone(), outcome.delta);
+                indexed_rel_paths.insert(planned_key);
                 reindexed_files += 1;
             }
 
@@ -837,6 +1062,32 @@ impl IndexerApi for Indexer {
                 &mut counters,
             )?;
 
+            let content_only_incremental = !req.force_full
+                && dirty_set.to_delete.is_empty()
+                && changed_files_by_path.len() == indexed_rel_paths.len()
+                && changed_files_by_path
+                    .keys()
+                    .all(|file_key| existing_by_key.contains_key(file_key))
+                && confirmed_delta_by_path
+                    .values()
+                    .all(|delta| !delta.public_api_changed && !delta.structure_changed)
+                && fatal_invalidation_roots.is_empty();
+            link_report = if indexed_rel_paths.is_empty() && dirty_set.to_delete.is_empty() {
+                LinkReport::default()
+            } else if content_only_incremental {
+                link_report
+            } else if dirty_set.to_delete.is_empty() && !contract_changed_files_by_path.is_empty() {
+                relink_contract_changed_files(
+                    &db,
+                    workspace_id,
+                    &workspace_root,
+                    &root_paths,
+                    &changed_files_by_path,
+                    &contract_changed_files_by_path,
+                )?
+            } else {
+                linker::link_workspace(&db, workspace_id, &workspace_root, &root_paths)?
+            };
             let finished_at_unix_ms = now_unix_ms();
             state.status = IndexRunStatus::Completed;
             state.index_version = state.index_version.saturating_add(1);
@@ -849,6 +1100,14 @@ impl IndexerApi for Indexer {
             state.last_successful_index_at_unix_ms = Some(finished_at_unix_ms);
             state.last_error = None;
             db.update_state(&state)?;
+
+            let graph_hydration_ms = if indexed_rel_paths.is_empty()
+                || (content_only_incremental && dirty_set.to_delete.is_empty())
+            {
+                0
+            } else {
+                hydrate_current_graph_projection(&db, workspace_id, &mut warnings)?
+            };
 
             db.upsert_run(
                 &run_id,
@@ -876,6 +1135,23 @@ impl IndexerApi for Indexer {
                 degraded_partial_files: counters.degraded_partial_files,
                 not_current_files: counters.not_current_files,
                 deleted_paths: counters.deleted_paths,
+                workspace_root_count: workspace_roots.len() as u64,
+                package_root_count: package_roots.len() as u64,
+                symbols_extracted: fact_stats.symbols_extracted,
+                imports_extracted: fact_stats.imports_extracted,
+                call_sites_extracted: fact_stats.call_sites_extracted,
+                references_extracted: fact_stats.references_extracted,
+                linked_imports: link_report.linked_imports,
+                linked_cross_root_imports: link_report.linked_cross_root_imports,
+                linked_calls: link_report.linked_calls,
+                linked_cross_root_calls: link_report.linked_cross_root_calls,
+                linked_references: link_report.linked_references,
+                unresolved_imports: link_report.unresolved_imports,
+                unresolved_cross_root_imports: link_report.unresolved_cross_root_imports,
+                unresolved_calls: link_report.unresolved_calls,
+                unresolved_references: link_report.unresolved_references,
+                graph_hydration_ms,
+                link_ms: link_report.link_ms,
             })
         })();
 
@@ -915,49 +1191,54 @@ impl IndexerApi for Indexer {
         let db = self.open_db()?;
         let workspace_id = req.workspace_id;
         let workspace_root = workspace_root_for(&db, workspace_id)?;
-
-        let scan_config = scanner::ScanConfig {
-            workspace_id,
-            root_id: 1,
-            package_id: None,
+        let root_paths = root_paths_by_id(&db, workspace_id)?;
+        let workspace_roots = workspace_roots_from_root_paths(&root_paths, &workspace_root);
+        let package_roots = if workspace_roots.len() == 1 {
+            Vec::new()
+        } else {
+            workspace_roots.clone()
         };
 
-        let candidates = scanner::scan_workspace(&workspace_root, &scan_config)?;
-        let hasher::HashCandidatesResult {
-            hashes: content_hashes,
-            hash_failures,
-            mut warnings,
-        } = hasher::hash_candidates(&candidates);
+        let mut candidates = Vec::new();
+        for (root_id, root) in sorted_root_paths(&root_paths) {
+            let scan_config = scanner::ScanConfig {
+                workspace_id,
+                root_id,
+                package_id: None,
+            };
+            candidates.append(&mut scanner::scan_workspace(&root, &scan_config)?);
+        }
         let existing_files = db.list_files_by_workspace(workspace_id)?;
 
-        let touched_paths = req
-            .paths
+        let touched_file_keys = resolve_touched_file_keys(&req.paths, &root_paths);
+        let touched_paths = touched_file_keys
             .iter()
-            .map(|path| {
-                if path.is_absolute() {
-                    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-                    canonical_path
-                        .strip_prefix(&workspace_root)
-                        .map(normalize_workspace_rel_path)
-                        .or_else(|_| {
-                            path.strip_prefix(&workspace_root)
-                                .map(normalize_workspace_rel_path)
-                        })
-                        .unwrap_or_else(|_| normalize_workspace_rel_path(&canonical_path))
-                } else {
-                    normalize_workspace_rel_path(path)
-                }
-            })
+            .map(|file_key| file_key.rel_path.clone())
             .collect::<Vec<_>>();
-        let touched_path_set = touched_paths.iter().cloned().collect::<HashSet<_>>();
+        let touched_path_set = touched_file_keys.iter().cloned().collect::<HashSet<_>>();
+        let hasher::HashCandidatesResult {
+            hashes: content_hashes,
+            hashes_by_file_key: content_hashes_by_file_key,
+            hash_failures,
+            hash_failures_by_file_key,
+            mut warnings,
+        } = hasher::hash_incremental_candidates(
+            &candidates,
+            &existing_files,
+            false,
+            Some(&touched_paths),
+            Some(&touched_file_keys),
+        );
 
         let dirty_set = dirty::build_dirty_set(DirtyPlannerInput {
             scanned: &candidates,
             content_hashes: &content_hashes,
+            content_hashes_by_file_key: &content_hashes_by_file_key,
             existing_files: &existing_files,
             force_full: false,
             expand_dependents: req.expand_dependents,
             touched_paths: Some(&touched_paths),
+            touched_file_keys: Some(&touched_file_keys),
         });
 
         let forced_dependent_roots = if req.expand_dependents {
@@ -979,51 +1260,79 @@ impl IndexerApi for Indexer {
 
         let registry = default_language_registry();
         let mut parser_pool = ParserPool::new();
-        let existing_by_path = existing_files
+        let existing_by_key = existing_files
             .iter()
-            .map(|file| (file.rel_path.clone(), file))
+            .map(|file| (file_key_for_file(file), file))
             .collect::<HashMap<_, _>>();
+        let link_snapshot = if dirty_set.to_index.len() > 1 {
+            Some(LinkWorkspaceSnapshot::new(
+                &workspace_root,
+                &root_paths,
+                existing_files.clone(),
+                db.find_symbols_by_workspace(workspace_id)?,
+            ))
+        } else {
+            None
+        };
         let existing_by_id = existing_files
             .iter()
             .map(|file| (file.id, file))
             .collect::<HashMap<_, _>>();
 
         let mut counters = FreshnessCounters::default();
+        let mut fact_stats = ExtractedFileStats::default();
+        let mut link_report = LinkReport::default();
         let mut reindexed_files = 0_u64;
         let mut indexed_rel_paths = HashSet::new();
         let mut changed_files_by_path = HashMap::new();
         let mut confirmed_delta_by_path = HashMap::new();
+        let mut contract_changed_files_by_path = HashMap::new();
         let mut fatal_invalidation_roots = HashSet::new();
         let mut invalidation_refresh_queue = VecDeque::new();
         let mut queued_rel_paths = HashSet::new();
 
-        for touched_rel_path in &touched_path_set {
-            if !hash_failures.contains_key(touched_rel_path)
-                || indexed_rel_paths.contains(touched_rel_path)
+        for touched_file_key in &touched_path_set {
+            if hash_failure_message(
+                touched_file_key,
+                &touched_file_key.rel_path,
+                &hash_failures_by_file_key,
+                &hash_failures,
+            )
+            .is_none()
+                || indexed_rel_paths.contains(touched_file_key)
             {
                 continue;
             }
 
-            let Some(existing) = existing_by_path.get(touched_rel_path).copied() else {
+            let Some(existing) = existing_by_key.get(touched_file_key).copied() else {
                 continue;
             };
 
-            let parse_error = hash_failures
-                .get(touched_rel_path)
-                .cloned()
-                .unwrap_or_else(|| format!("failed to read file for hashing: {touched_rel_path}"));
+            let parse_error = hash_failure_message(
+                touched_file_key,
+                &touched_file_key.rel_path,
+                &hash_failures_by_file_key,
+                &hash_failures,
+            )
+            .cloned()
+            .unwrap_or_else(|| {
+                format!(
+                    "failed to read file for hashing: {}",
+                    touched_file_key.rel_path
+                )
+            });
 
             if let Some(candidate) = candidates
                 .iter()
-                .find(|candidate| candidate.rel_path == *touched_rel_path)
+                .find(|candidate| file_key_for_candidate(candidate) == *touched_file_key)
             {
                 warnings.push(format!(
                     "marking file as failed after hash read error: {}",
-                    touched_rel_path
+                    touched_file_key.rel_path
                 ));
                 mark_hash_read_failure(&db, existing, candidate, parse_error, &run_id)?;
                 counters.register(FreshnessState::NotCurrent);
-                fatal_invalidation_roots.insert(touched_rel_path.clone());
+                fatal_invalidation_roots.insert(touched_file_key.clone());
             } else {
                 mark_not_current_without_refresh(
                     &db,
@@ -1034,21 +1343,23 @@ impl IndexerApi for Indexer {
                     &mut counters,
                     &mut warnings,
                 )?;
-                fatal_invalidation_roots.insert(touched_rel_path.clone());
+                fatal_invalidation_roots.insert(touched_file_key.clone());
             }
 
-            indexed_rel_paths.insert(touched_rel_path.clone());
+            indexed_rel_paths.insert(touched_file_key.clone());
             reindexed_files = reindexed_files.saturating_add(1);
         }
 
         for planned in &dirty_set.to_index {
-            let Some(content_hash) = content_hashes.get(&planned.candidate.rel_path) else {
-                continue;
-            };
+            let planned_key = file_key_for_candidate(&planned.candidate);
+            let content_hash = content_hash_for_planned_file(
+                &planned.candidate,
+                &content_hashes,
+                &content_hashes_by_file_key,
+                &existing_by_key,
+            );
 
-            let existing = existing_by_path
-                .get(planned.candidate.rel_path.as_str())
-                .copied();
+            let existing = existing_by_key.get(&planned_key).copied();
             let mut outcome = self.process_and_write_file(
                 &db,
                 planned,
@@ -1057,43 +1368,61 @@ impl IndexerApi for Indexer {
                 &run_id,
                 &registry,
                 &mut parser_pool,
+                link_snapshot.as_ref(),
+                &workspace_root,
+                &root_paths,
+                &workspace_roots,
+                &package_roots,
             )?;
             warnings.append(&mut outcome.warnings);
+            fact_stats.accumulate(outcome.stats);
+            link_report.accumulate(outcome.link_report);
             counters.register(outcome.persisted_file.freshness_state);
             if is_fatal_failure_invalidation_root(&outcome.persisted_file) {
-                fatal_invalidation_roots.insert(planned.candidate.rel_path.clone());
+                fatal_invalidation_roots.insert(planned_key.clone());
             }
-            changed_files_by_path
-                .insert(planned.candidate.rel_path.clone(), outcome.persisted_file);
-            confirmed_delta_by_path.insert(planned.candidate.rel_path.clone(), outcome.delta);
-            indexed_rel_paths.insert(planned.candidate.rel_path.clone());
+            if outcome.delta.public_api_changed || outcome.delta.structure_changed {
+                contract_changed_files_by_path
+                    .insert(planned_key.clone(), outcome.persisted_file.clone());
+            }
+            changed_files_by_path.insert(planned_key.clone(), outcome.persisted_file);
+            confirmed_delta_by_path.insert(planned_key.clone(), outcome.delta);
+            indexed_rel_paths.insert(planned_key);
             reindexed_files = reindexed_files.saturating_add(1);
         }
 
         let initial_indexed_rel_paths = indexed_rel_paths.clone();
 
         for planned in &dirty_set.to_index {
-            if indexed_rel_paths.contains(&planned.candidate.rel_path)
-                || !hash_failures.contains_key(&planned.candidate.rel_path)
+            let planned_key = file_key_for_candidate(&planned.candidate);
+            if indexed_rel_paths.contains(&planned_key)
+                || hash_failure_message(
+                    &planned_key,
+                    &planned.candidate.rel_path,
+                    &hash_failures_by_file_key,
+                    &hash_failures,
+                )
+                .is_none()
             {
                 continue;
             }
-            let Some(existing) = existing_by_path
-                .get(planned.candidate.rel_path.as_str())
-                .copied()
-            else {
+            let Some(existing) = existing_by_key.get(&planned_key).copied() else {
                 continue;
             };
 
-            let parse_error = hash_failures
-                .get(&planned.candidate.rel_path)
-                .cloned()
-                .unwrap_or_else(|| {
-                    format!(
-                        "failed to read file for hashing: {}",
-                        planned.candidate.abs_path.display()
-                    )
-                });
+            let parse_error = hash_failure_message(
+                &planned_key,
+                &planned.candidate.rel_path,
+                &hash_failures_by_file_key,
+                &hash_failures,
+            )
+            .cloned()
+            .unwrap_or_else(|| {
+                format!(
+                    "failed to read file for hashing: {}",
+                    planned.candidate.abs_path.display()
+                )
+            });
 
             warnings.push(format!(
                 "marking file as failed after hash read error: {}",
@@ -1101,8 +1430,8 @@ impl IndexerApi for Indexer {
             ));
             mark_hash_read_failure(&db, existing, &planned.candidate, parse_error, &run_id)?;
             counters.register(FreshnessState::NotCurrent);
-            fatal_invalidation_roots.insert(planned.candidate.rel_path.clone());
-            indexed_rel_paths.insert(planned.candidate.rel_path.clone());
+            fatal_invalidation_roots.insert(planned_key.clone());
+            indexed_rel_paths.insert(planned_key);
             reindexed_files = reindexed_files.saturating_add(1);
         }
 
@@ -1113,7 +1442,7 @@ impl IndexerApi for Indexer {
                 existing_files
                     .iter()
                     .find(|file| file.id == *file_id)
-                    .map(|file| file.rel_path.clone())
+                    .map(file_key_for_file)
             })
             .collect::<HashSet<_>>();
 
@@ -1138,24 +1467,40 @@ impl IndexerApi for Indexer {
         )?;
 
         while let Some(planned) = invalidation_refresh_queue.pop_front() {
-            if indexed_rel_paths.contains(&planned.candidate.rel_path) {
+            let planned_key = file_key_for_candidate(&planned.candidate);
+            if indexed_rel_paths.contains(&planned_key) {
                 continue;
             }
 
-            let Some(content_hash) = content_hashes.get(&planned.candidate.rel_path) else {
-                if let Some(existing) = existing_by_path
-                    .get(planned.candidate.rel_path.as_str())
-                    .copied()
-                {
-                    let parse_error = hash_failures
-                        .get(&planned.candidate.rel_path)
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            format!(
-                                "failed to read file for hashing: {}",
-                                planned.candidate.abs_path.display()
-                            )
-                        });
+            let content_hash = if let Some(content_hash) = content_hash_message(
+                &planned_key,
+                &planned.candidate.rel_path,
+                &content_hashes_by_file_key,
+                &content_hashes,
+            ) {
+                content_hash.as_str()
+            } else if hash_failure_message(
+                &planned_key,
+                &planned.candidate.rel_path,
+                &hash_failures_by_file_key,
+                &hash_failures,
+            )
+            .is_some()
+            {
+                if let Some(existing) = existing_by_key.get(&planned_key).copied() {
+                    let parse_error = hash_failure_message(
+                        &planned_key,
+                        &planned.candidate.rel_path,
+                        &hash_failures_by_file_key,
+                        &hash_failures,
+                    )
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        format!(
+                            "failed to read file for hashing: {}",
+                            planned.candidate.abs_path.display()
+                        )
+                    });
                     warnings.push(format!(
                         "marking file as failed after hash read error during invalidation: {}",
                         planned.candidate.rel_path
@@ -1168,16 +1513,21 @@ impl IndexerApi for Indexer {
                         &run_id,
                     )?;
                     counters.register(FreshnessState::NotCurrent);
-                    fatal_invalidation_roots.insert(planned.candidate.rel_path.clone());
-                    indexed_rel_paths.insert(planned.candidate.rel_path.clone());
+                    fatal_invalidation_roots.insert(planned_key.clone());
+                    indexed_rel_paths.insert(planned_key);
                     reindexed_files = reindexed_files.saturating_add(1);
                 }
                 continue;
+            } else {
+                content_hash_for_planned_file(
+                    &planned.candidate,
+                    &content_hashes,
+                    &content_hashes_by_file_key,
+                    &existing_by_key,
+                )
             };
 
-            let existing = existing_by_path
-                .get(planned.candidate.rel_path.as_str())
-                .copied();
+            let existing = existing_by_key.get(&planned_key).copied();
             let mut outcome = self.process_and_write_file(
                 &db,
                 &planned,
@@ -1186,16 +1536,26 @@ impl IndexerApi for Indexer {
                 &run_id,
                 &registry,
                 &mut parser_pool,
+                link_snapshot.as_ref(),
+                &workspace_root,
+                &root_paths,
+                &workspace_roots,
+                &package_roots,
             )?;
             warnings.append(&mut outcome.warnings);
+            fact_stats.accumulate(outcome.stats);
+            link_report.accumulate(outcome.link_report);
             counters.register(outcome.persisted_file.freshness_state);
             if is_fatal_failure_invalidation_root(&outcome.persisted_file) {
-                fatal_invalidation_roots.insert(planned.candidate.rel_path.clone());
+                fatal_invalidation_roots.insert(planned_key.clone());
             }
-            changed_files_by_path
-                .insert(planned.candidate.rel_path.clone(), outcome.persisted_file);
-            confirmed_delta_by_path.insert(planned.candidate.rel_path.clone(), outcome.delta);
-            indexed_rel_paths.insert(planned.candidate.rel_path.clone());
+            if outcome.delta.public_api_changed || outcome.delta.structure_changed {
+                contract_changed_files_by_path
+                    .insert(planned_key.clone(), outcome.persisted_file.clone());
+            }
+            changed_files_by_path.insert(planned_key.clone(), outcome.persisted_file);
+            confirmed_delta_by_path.insert(planned_key.clone(), outcome.delta);
+            indexed_rel_paths.insert(planned_key);
             reindexed_files = reindexed_files.saturating_add(1);
         }
 
@@ -1215,6 +1575,31 @@ impl IndexerApi for Indexer {
             &mut counters,
         )?;
 
+        let content_only_incremental = dirty_set.to_delete.is_empty()
+            && changed_files_by_path.len() == indexed_rel_paths.len()
+            && changed_files_by_path
+                .keys()
+                .all(|file_key| existing_by_key.contains_key(file_key))
+            && confirmed_delta_by_path
+                .values()
+                .all(|delta| !delta.public_api_changed && !delta.structure_changed)
+            && fatal_invalidation_roots.is_empty();
+        link_report = if indexed_rel_paths.is_empty() && dirty_set.to_delete.is_empty() {
+            LinkReport::default()
+        } else if content_only_incremental {
+            link_report
+        } else if dirty_set.to_delete.is_empty() && !contract_changed_files_by_path.is_empty() {
+            relink_contract_changed_files(
+                &db,
+                workspace_id,
+                &workspace_root,
+                &root_paths,
+                &changed_files_by_path,
+                &contract_changed_files_by_path,
+            )?
+        } else {
+            linker::link_workspace(&db, workspace_id, &workspace_root, &root_paths)?
+        };
         let finished_at_unix_ms = now_unix_ms();
 
         let mut state = db
@@ -1232,6 +1617,14 @@ impl IndexerApi for Indexer {
         state.last_successful_index_at_unix_ms = Some(finished_at_unix_ms);
         state.last_error = None;
         db.update_state(&state)?;
+
+        let graph_hydration_ms = if indexed_rel_paths.is_empty()
+            || (content_only_incremental && dirty_set.to_delete.is_empty())
+        {
+            0
+        } else {
+            hydrate_current_graph_projection(&db, workspace_id, &mut warnings)?
+        };
 
         db.upsert_run(
             &run_id,
@@ -1259,26 +1652,54 @@ impl IndexerApi for Indexer {
             degraded_partial_files: counters.degraded_partial_files,
             not_current_files: counters.not_current_files,
             deleted_paths: counters.deleted_paths,
+            workspace_root_count: workspace_roots.len() as u64,
+            package_root_count: package_roots.len() as u64,
+            symbols_extracted: fact_stats.symbols_extracted,
+            imports_extracted: fact_stats.imports_extracted,
+            call_sites_extracted: fact_stats.call_sites_extracted,
+            references_extracted: fact_stats.references_extracted,
+            linked_imports: link_report.linked_imports,
+            linked_cross_root_imports: link_report.linked_cross_root_imports,
+            linked_calls: link_report.linked_calls,
+            linked_cross_root_calls: link_report.linked_cross_root_calls,
+            linked_references: link_report.linked_references,
+            unresolved_imports: link_report.unresolved_imports,
+            unresolved_cross_root_imports: link_report.unresolved_cross_root_imports,
+            unresolved_calls: link_report.unresolved_calls,
+            unresolved_references: link_report.unresolved_references,
+            graph_hydration_ms,
+            link_ms: link_report.link_ms,
         })
     }
 
     fn invalidate_paths(&self, workspace_id: WorkspaceId, paths: Vec<PathBuf>) -> Result<()> {
         let db = self.open_db()?;
-        let root = workspace_root_for(&db, workspace_id)?;
+        let workspace_root = workspace_root_for(&db, workspace_id)?;
+        let root_paths = root_paths_by_id(&db, workspace_id)?;
 
         for path in paths {
-            let rel_path = if path.is_absolute() {
-                let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-                canonical_path
-                    .strip_prefix(&root)
-                    .map(normalize_path)
-                    .or_else(|_| path.strip_prefix(&root).map(normalize_path))
-                    .unwrap_or_else(|_| normalize_path(&canonical_path))
-            } else {
-                normalize_path(&path)
+            let Some(file_key) = resolve_touched_file_key(&path, &root_paths).or_else(|| {
+                if path.is_absolute() {
+                    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+                    path.strip_prefix(&workspace_root)
+                        .map(normalize_path)
+                        .or_else(|_| {
+                            canonical_path
+                                .strip_prefix(&workspace_root)
+                                .map(normalize_path)
+                        })
+                        .ok()
+                        .map(|rel_path| FileKey::new(1, rel_path))
+                } else {
+                    Some(FileKey::new(1, normalize_path(&path)))
+                }
+            }) else {
+                continue;
             };
 
-            let Some(mut file) = db.get_file_by_path(workspace_id, &rel_path)? else {
+            let Some(mut file) =
+                db.get_file_by_root_path(workspace_id, file_key.root_id, &file_key.rel_path)?
+            else {
                 continue;
             };
 
@@ -1294,7 +1715,19 @@ impl IndexerApi for Indexer {
             file.freshness_state = FreshnessState::NotCurrent;
             file.freshness_reason = Some(FreshnessReason::PathInvalidated);
             file.last_freshness_run_id = None;
-            write_file_atomically(&db, &file, &[], &[], &[], &[], &[], true)?;
+            write_file_atomically(
+                &db,
+                &file,
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                LinkReport::default(),
+                true,
+                false,
+            )?;
         }
 
         Ok(())
@@ -1309,24 +1742,24 @@ impl IndexerApi for Indexer {
 }
 
 fn queue_candidate_for_refresh(
-    scanned_by_path: &HashMap<String, &FileCandidate>,
-    rel_path: &str,
+    scanned_by_path: &HashMap<FileKey, &FileCandidate>,
+    file_key: &FileKey,
     level: InvalidationLevel,
     reason: &str,
     triggered_by: &str,
-    initial_indexed_rel_paths: &HashSet<String>,
-    queued_rel_paths: &mut HashSet<String>,
+    initial_indexed_rel_paths: &HashSet<FileKey>,
+    queued_rel_paths: &mut HashSet<FileKey>,
     refresh_queue: &mut VecDeque<PlannedFile>,
 ) -> bool {
-    if initial_indexed_rel_paths.contains(rel_path) || queued_rel_paths.contains(rel_path) {
+    if initial_indexed_rel_paths.contains(file_key) || queued_rel_paths.contains(file_key) {
         return false;
     }
 
-    let Some(candidate) = scanned_by_path.get(rel_path) else {
+    let Some(candidate) = scanned_by_path.get(file_key) else {
         return false;
     };
 
-    queued_rel_paths.insert(rel_path.to_string());
+    queued_rel_paths.insert(file_key.clone());
     refresh_queue.push_back(PlannedFile {
         candidate: (*candidate).clone(),
         level,
@@ -1334,6 +1767,109 @@ fn queue_candidate_for_refresh(
         triggered_by: triggered_by.to_string(),
     });
     true
+}
+
+fn build_metadata_only_dirty_set(
+    candidates: &[FileCandidate],
+    existing_files: &[File],
+) -> dirty::DirtySet {
+    let existing_by_key = existing_files
+        .iter()
+        .map(|file| (file_key_for_file(file), file))
+        .collect::<HashMap<_, _>>();
+    let scanned_keys = candidates
+        .iter()
+        .map(file_key_for_candidate)
+        .collect::<HashSet<_>>();
+
+    let to_index = candidates
+        .iter()
+        .filter_map(|candidate| {
+            let existing = existing_by_key
+                .get(&file_key_for_candidate(candidate))
+                .copied()?;
+            let metadata_changed = existing.deleted_at_unix_ms.is_some()
+                || existing.content_hash.is_empty()
+                || existing.size_bytes != candidate.size_bytes
+                || existing.mtime_unix_ms != candidate.mtime_unix_ms;
+            metadata_changed.then(|| PlannedFile {
+                candidate: candidate.clone(),
+                level: InvalidationLevel::ContentOnly,
+                reason: "metadata change detected; content hash required".to_string(),
+                triggered_by: candidate.rel_path.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut to_delete = existing_files
+        .iter()
+        .filter(|file| file.deleted_at_unix_ms.is_none())
+        .filter(|file| !scanned_keys.contains(&file_key_for_file(file)))
+        .map(|file| file.id)
+        .collect::<Vec<_>>();
+    to_delete.sort_unstable();
+    to_delete.dedup();
+
+    dirty::DirtySet {
+        to_index,
+        to_delete,
+    }
+}
+
+fn content_hash_message<'a>(
+    file_key: &FileKey,
+    rel_path: &str,
+    content_hashes_by_file_key: &'a HashMap<FileKey, String>,
+    content_hashes: &'a HashMap<String, String>,
+) -> Option<&'a String> {
+    content_hashes_by_file_key.get(file_key).or_else(|| {
+        content_hashes
+            .get(rel_path)
+            .filter(|_| content_hashes_by_file_key.is_empty())
+    })
+}
+
+fn hash_failure_message<'a>(
+    file_key: &FileKey,
+    rel_path: &str,
+    hash_failures_by_file_key: &'a HashMap<FileKey, String>,
+    hash_failures: &'a HashMap<String, String>,
+) -> Option<&'a String> {
+    hash_failures_by_file_key.get(file_key).or_else(|| {
+        hash_failures
+            .get(rel_path)
+            .filter(|_| hash_failures_by_file_key.is_empty())
+    })
+}
+
+fn content_hash_for_planned_file<'a>(
+    candidate: &FileCandidate,
+    content_hashes: &'a HashMap<String, String>,
+    content_hashes_by_file_key: &'a HashMap<FileKey, String>,
+    existing_by_key: &'a HashMap<FileKey, &File>,
+) -> &'a str {
+    let file_key = file_key_for_candidate(candidate);
+    content_hash_message(
+        &file_key,
+        &candidate.rel_path,
+        content_hashes_by_file_key,
+        content_hashes,
+    )
+    .map(String::as_str)
+    .or_else(|| {
+        existing_by_key
+            .get(&file_key)
+            .map(|file| file.content_hash.as_str())
+    })
+    .unwrap_or("")
+}
+
+fn file_key_for_candidate(candidate: &FileCandidate) -> FileKey {
+    FileKey::new(candidate.root_id, candidate.rel_path.clone())
+}
+
+fn file_key_for_file(file: &File) -> FileKey {
+    FileKey::new(file.root_id, file.rel_path.clone())
 }
 
 fn mark_hash_read_failure(
@@ -1368,7 +1904,19 @@ fn mark_hash_read_failure(
         last_freshness_run_id: Some(run_id_marker.to_string()),
     };
 
-    write_file_atomically(db, &failed_file, &[], &[], &[], &[], &[], true)
+    write_file_atomically(
+        db,
+        &failed_file,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        LinkReport::default(),
+        true,
+        false,
+    )
 }
 
 fn mark_not_current_without_refresh(
@@ -1393,7 +1941,19 @@ fn mark_not_current_without_refresh(
     invalidated.freshness_reason = Some(reason);
     invalidated.last_freshness_run_id = Some(run_id_marker.to_string());
 
-    write_file_atomically(db, &invalidated, &[], &[], &[], &[], &[], true)?;
+    write_file_atomically(
+        db,
+        &invalidated,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        LinkReport::default(),
+        true,
+        false,
+    )?;
     counters.register(FreshnessState::NotCurrent);
     warnings.push(format!(
         "marked file as not current without refresh: {} ({reason_message})",
@@ -1420,12 +1980,12 @@ fn apply_resolution_scope_invalidation(
     db: &Database,
     workspace_id: WorkspaceId,
     run_id: &str,
-    scanned_by_path: &HashMap<String, &FileCandidate>,
-    existing_by_path: &HashMap<String, &File>,
-    resolution_scope_roots: &HashSet<String>,
-    initial_indexed_rel_paths: &HashSet<String>,
+    scanned_by_path: &HashMap<FileKey, &FileCandidate>,
+    existing_by_path: &HashMap<FileKey, &File>,
+    resolution_scope_roots: &HashSet<FileKey>,
+    initial_indexed_rel_paths: &HashSet<FileKey>,
     refresh_queue: &mut VecDeque<PlannedFile>,
-    queued_rel_paths: &mut HashSet<String>,
+    queued_rel_paths: &mut HashSet<FileKey>,
     counters: &mut FreshnessCounters,
     warnings: &mut Vec<String>,
 ) -> Result<()> {
@@ -1437,14 +1997,14 @@ fn apply_resolution_scope_invalidation(
         "resolution-basis change detected; widening invalidation for workspace {workspace_id}"
     ));
 
-    for (rel_path, existing) in existing_by_path {
-        if existing.deleted_at_unix_ms.is_some() || initial_indexed_rel_paths.contains(rel_path) {
+    for (file_key, existing) in existing_by_path {
+        if existing.deleted_at_unix_ms.is_some() || initial_indexed_rel_paths.contains(file_key) {
             continue;
         }
 
         if !queue_candidate_for_refresh(
             scanned_by_path,
-            rel_path,
+            file_key,
             InvalidationLevel::ResolutionScope,
             "resolution basis changed",
             "resolution_scope",
@@ -1452,7 +2012,7 @@ fn apply_resolution_scope_invalidation(
             queued_rel_paths,
             refresh_queue,
         ) {
-            if !scanned_by_path.contains_key(rel_path) {
+            if !scanned_by_path.contains_key(file_key) {
                 mark_not_current_without_refresh(
                     db,
                     existing,
@@ -1479,14 +2039,14 @@ fn apply_dependent_invalidation(
     db: &Database,
     workspace_id: WorkspaceId,
     run_id: &str,
-    scanned_by_path: &HashMap<String, &FileCandidate>,
-    existing_by_path: &HashMap<String, &File>,
-    public_api_roots: &HashSet<String>,
-    deleted_rel_paths: &HashSet<String>,
-    forced_dependent_roots: &HashSet<String>,
-    initial_indexed_rel_paths: &HashSet<String>,
+    scanned_by_path: &HashMap<FileKey, &FileCandidate>,
+    existing_by_path: &HashMap<FileKey, &File>,
+    public_api_roots: &HashSet<FileKey>,
+    deleted_rel_paths: &HashSet<FileKey>,
+    forced_dependent_roots: &HashSet<FileKey>,
+    initial_indexed_rel_paths: &HashSet<FileKey>,
     refresh_queue: &mut VecDeque<PlannedFile>,
-    queued_rel_paths: &mut HashSet<String>,
+    queued_rel_paths: &mut HashSet<FileKey>,
     counters: &mut FreshnessCounters,
     warnings: &mut Vec<String>,
 ) -> Result<()> {
@@ -1511,21 +2071,21 @@ fn apply_dependent_invalidation(
 
     let mut queue = VecDeque::new();
     let mut visited_file_ids = HashSet::new();
-    for rel_path in &root_rel_paths {
-        if let Some(file) = existing_by_path.get(rel_path) {
+    for file_key in &root_rel_paths {
+        if let Some(file) = existing_by_path.get(file_key) {
             if visited_file_ids.insert(file.id) {
                 queue.push_back(file.id);
             }
         }
     }
 
-    for rel_path in &root_rel_paths {
-        if initial_indexed_rel_paths.contains(rel_path) {
+    for file_key in &root_rel_paths {
+        if initial_indexed_rel_paths.contains(file_key) {
             continue;
         }
         if !queue_candidate_for_refresh(
             scanned_by_path,
-            rel_path,
+            file_key,
             InvalidationLevel::Dependent,
             "dependent expansion requested from path-scoped run",
             "dependent_invalidation",
@@ -1533,8 +2093,8 @@ fn apply_dependent_invalidation(
             queued_rel_paths,
             refresh_queue,
         ) {
-            if let Some(existing) = existing_by_path.get(rel_path) {
-                if !scanned_by_path.contains_key(rel_path) {
+            if let Some(existing) = existing_by_path.get(file_key) {
+                if !scanned_by_path.contains_key(file_key) {
                     mark_not_current_without_refresh(
                         db,
                         existing,
@@ -1551,8 +2111,12 @@ fn apply_dependent_invalidation(
 
     let mut dependent_rel_paths = HashSet::new();
     while let Some(current_file_id) = queue.pop_front() {
-        for reverse in db.find_incoming_edges(workspace_id, "file", current_file_id as i64, 200_000)? {
-            if reverse.kind != dh_types::EdgeKind::Imports { continue; }
+        for reverse in
+            db.find_incoming_edges(workspace_id, "file", current_file_id as i64, 200_000)?
+        {
+            if reverse.kind != dh_types::EdgeKind::Imports {
+                continue;
+            }
             let source_file_id = match reverse.from {
                 dh_types::NodeId::File(id) => id,
                 _ => continue,
@@ -1562,7 +2126,7 @@ fn apply_dependent_invalidation(
                     continue;
                 }
 
-                if dependent_rel_paths.insert(importer.rel_path.clone())
+                if dependent_rel_paths.insert(file_key_for_file(importer))
                     && visited_file_ids.insert(importer.id)
                 {
                     queue.push_back(importer.id);
@@ -1582,30 +2146,35 @@ fn apply_dependent_invalidation(
         if importer.deleted_at_unix_ms.is_some() {
             continue;
         }
-        if root_rel_paths.contains(&importer.rel_path) {
+        let importer_key = file_key_for_file(importer);
+        if root_rel_paths.contains(&importer_key) {
             continue;
         }
 
         let imports = db.find_edges_by_file(importer.id)?;
-        if imports.iter().filter(|e| e.kind == dh_types::EdgeKind::Imports).any(|import| {
-            root_rel_paths.iter().any(|root_rel_path| {
-                import_specifier_matches_rel_path(&import.reason, root_rel_path)
+        if imports
+            .iter()
+            .filter(|e| e.kind == dh_types::EdgeKind::Imports)
+            .any(|import| {
+                root_rel_paths.iter().any(|root_file_key| {
+                    import_specifier_matches_rel_path(&import.reason, &root_file_key.rel_path)
+                })
             })
-        }) {
-            dependent_rel_paths.insert(importer.rel_path.clone());
+        {
+            dependent_rel_paths.insert(importer_key);
         }
     }
 
-    for dependent_rel_path in dependent_rel_paths {
-        if root_rel_paths.contains(&dependent_rel_path)
-            || initial_indexed_rel_paths.contains(&dependent_rel_path)
+    for dependent_file_key in dependent_rel_paths {
+        if root_rel_paths.contains(&dependent_file_key)
+            || initial_indexed_rel_paths.contains(&dependent_file_key)
         {
             continue;
         }
 
         if !queue_candidate_for_refresh(
             scanned_by_path,
-            &dependent_rel_path,
+            &dependent_file_key,
             InvalidationLevel::Dependent,
             "dependent invalidated by upstream outward contract change",
             "dependent_invalidation",
@@ -1613,7 +2182,7 @@ fn apply_dependent_invalidation(
             queued_rel_paths,
             refresh_queue,
         ) {
-            if let Some(existing) = existing_by_path.get(&dependent_rel_path) {
+            if let Some(existing) = existing_by_path.get(&dependent_file_key) {
                 mark_not_current_without_refresh(
                     db,
                     existing,
@@ -1635,12 +2204,12 @@ fn apply_structural_invalidation(
     db: &Database,
     workspace_id: WorkspaceId,
     run_id: &str,
-    scanned_by_path: &HashMap<String, &FileCandidate>,
-    existing_by_path: &HashMap<String, &File>,
-    structural_roots: &HashSet<String>,
-    initial_indexed_rel_paths: &HashSet<String>,
+    scanned_by_path: &HashMap<FileKey, &FileCandidate>,
+    existing_by_path: &HashMap<FileKey, &File>,
+    structural_roots: &HashSet<FileKey>,
+    initial_indexed_rel_paths: &HashSet<FileKey>,
     refresh_queue: &mut VecDeque<PlannedFile>,
-    queued_rel_paths: &mut HashSet<String>,
+    queued_rel_paths: &mut HashSet<FileKey>,
     counters: &mut FreshnessCounters,
     warnings: &mut Vec<String>,
 ) -> Result<()> {
@@ -1660,14 +2229,14 @@ fn apply_structural_invalidation(
 
     let mut direct_structural_rel_paths = HashSet::new();
 
-    for rel_path in structural_roots {
-        if initial_indexed_rel_paths.contains(rel_path) {
+    for file_key in structural_roots {
+        if initial_indexed_rel_paths.contains(file_key) {
             continue;
         }
 
         if !queue_candidate_for_refresh(
             scanned_by_path,
-            rel_path,
+            file_key,
             InvalidationLevel::StructuralLocal,
             "structural-local invalidation due to confirmed structure hash change",
             "structural_invalidation",
@@ -1675,8 +2244,8 @@ fn apply_structural_invalidation(
             queued_rel_paths,
             refresh_queue,
         ) {
-            if let Some(existing) = existing_by_path.get(rel_path) {
-                if !scanned_by_path.contains_key(rel_path) {
+            if let Some(existing) = existing_by_path.get(file_key) {
+                if !scanned_by_path.contains_key(file_key) {
                     mark_not_current_without_refresh(
                         db,
                         existing,
@@ -1691,20 +2260,22 @@ fn apply_structural_invalidation(
         }
     }
 
-    for root_rel_path in structural_roots {
-        let Some(root_file) = existing_by_path.get(root_rel_path) else {
+    for root_file_key in structural_roots {
+        let Some(root_file) = existing_by_path.get(root_file_key) else {
             continue;
         };
 
         for reverse in db.find_incoming_edges(workspace_id, "file", root_file.id as i64, 200_000)? {
-            if reverse.kind != dh_types::EdgeKind::Imports { continue; }
+            if reverse.kind != dh_types::EdgeKind::Imports {
+                continue;
+            }
             let source_file_id = match reverse.from {
                 dh_types::NodeId::File(id) => id,
                 _ => continue,
             };
             if let Some(importer) = existing_by_id.get(&source_file_id) {
                 if importer.deleted_at_unix_ms.is_none() {
-                    direct_structural_rel_paths.insert(importer.rel_path.clone());
+                    direct_structural_rel_paths.insert(file_key_for_file(importer));
                 }
             }
         }
@@ -1715,14 +2286,14 @@ fn apply_structural_invalidation(
         direct_structural_rel_paths.len()
     ));
 
-    for rel_path in direct_structural_rel_paths {
-        if structural_roots.contains(&rel_path) || initial_indexed_rel_paths.contains(&rel_path) {
+    for file_key in direct_structural_rel_paths {
+        if structural_roots.contains(&file_key) || initial_indexed_rel_paths.contains(&file_key) {
             continue;
         }
 
         if !queue_candidate_for_refresh(
             scanned_by_path,
-            &rel_path,
+            &file_key,
             InvalidationLevel::StructuralLocal,
             "structural-local invalidation due to confirmed structure hash change",
             "structural_invalidation",
@@ -1730,16 +2301,18 @@ fn apply_structural_invalidation(
             queued_rel_paths,
             refresh_queue,
         ) {
-            if let Some(existing) = existing_by_path.get(&rel_path) {
-                mark_not_current_without_refresh(
-                    db,
-                    existing,
-                    run_id,
-                    "structural-local invalidation but path is not currently scannable",
-                    FreshnessReason::StructureChanged,
-                    counters,
-                    warnings,
-                )?;
+            if let Some(existing) = existing_by_path.get(&file_key) {
+                if !scanned_by_path.contains_key(&file_key) {
+                    mark_not_current_without_refresh(
+                        db,
+                        existing,
+                        run_id,
+                        "structural-local invalidation but path is not currently scannable",
+                        FreshnessReason::StructureChanged,
+                        counters,
+                        warnings,
+                    )?;
+                }
             }
         }
     }
@@ -1776,12 +2349,14 @@ fn ensure_workspace_and_root(
     let now = now_unix_ms();
 
     db.connection().execute(
-        "INSERT OR IGNORE INTO workspaces(id, root_path, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO workspaces(id, root_path, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at",
         rusqlite::params![workspace_id, root_path, now, now],
     )?;
 
     db.connection().execute(
-        "INSERT OR IGNORE INTO roots(id, workspace_id, abs_path, root_kind, marker_path) VALUES (?1, ?2, ?3, 'workspace_root', NULL)",
+        "INSERT INTO roots(id, workspace_id, abs_path, root_kind, marker_path) VALUES (?1, ?2, ?3, 'workspace_root', NULL)
+         ON CONFLICT(id) DO UPDATE SET abs_path = excluded.abs_path, root_kind = excluded.root_kind, marker_path = excluded.marker_path",
         rusqlite::params![root_id, workspace_id, root.to_string_lossy().to_string()],
     )?;
 
@@ -1797,22 +2372,347 @@ fn workspace_root_for(db: &Database, workspace_id: WorkspaceId) -> Result<PathBu
     Ok(PathBuf::from(root_path))
 }
 
+fn root_paths_by_id(db: &Database, workspace_id: WorkspaceId) -> Result<HashMap<i64, PathBuf>> {
+    let mut stmt = db
+        .connection()
+        .prepare("SELECT id, abs_path FROM roots WHERE workspace_id = ?1 ORDER BY id ASC")?;
+    let rows = stmt.query_map(rusqlite::params![workspace_id], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            PathBuf::from(row.get::<_, String>(1)?),
+        ))
+    })?;
+
+    let mut roots = HashMap::new();
+    for row in rows {
+        let (root_id, abs_path) = row?;
+        roots.insert(root_id, abs_path);
+    }
+
+    Ok(roots)
+}
+
+fn sorted_root_paths(root_paths: &HashMap<i64, PathBuf>) -> Vec<(i64, PathBuf)> {
+    let mut entries = root_paths
+        .iter()
+        .map(|(root_id, root)| (*root_id, root.clone()))
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|(root_id, _)| *root_id);
+    entries
+}
+
+fn workspace_roots_from_root_paths(
+    root_paths: &HashMap<i64, PathBuf>,
+    fallback_root: &Path,
+) -> Vec<PathBuf> {
+    let roots = sorted_root_paths(root_paths)
+        .into_iter()
+        .map(|(_, root)| root)
+        .collect::<Vec<_>>();
+    if roots.is_empty() {
+        vec![fallback_root.to_path_buf()]
+    } else {
+        roots
+    }
+}
+
+fn assign_workspace_root_ids(
+    db: &Database,
+    workspace_id: WorkspaceId,
+    workspace_roots: &[PathBuf],
+) -> Result<Vec<(i64, PathBuf)>> {
+    let existing_root_paths = root_paths_by_id(db, workspace_id)?;
+    let mut existing_by_path = existing_root_paths
+        .iter()
+        .map(|(root_id, root)| (normalize_path(root), *root_id))
+        .collect::<HashMap<_, _>>();
+    let mut next_root_id = existing_root_paths
+        .keys()
+        .copied()
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+
+    let mut assignments = Vec::new();
+    for root in workspace_roots {
+        let normalized = normalize_path(root);
+        let root_id = if let Some(root_id) = existing_by_path.get(&normalized).copied() {
+            root_id
+        } else {
+            let root_id = next_root_id;
+            next_root_id = next_root_id.saturating_add(1);
+            existing_by_path.insert(normalized, root_id);
+            root_id
+        };
+        assignments.push((root_id, root.clone()));
+    }
+    Ok(assignments)
+}
+
+fn resolve_touched_file_keys(
+    paths: &[PathBuf],
+    root_paths: &HashMap<i64, PathBuf>,
+) -> Vec<FileKey> {
+    let mut keys = paths
+        .iter()
+        .filter_map(|path| resolve_touched_file_key(path, root_paths))
+        .collect::<Vec<_>>();
+    keys.sort_by(|left, right| {
+        (left.root_id, left.rel_path.as_str()).cmp(&(right.root_id, right.rel_path.as_str()))
+    });
+    keys.dedup();
+    keys
+}
+
+fn resolve_touched_file_key(path: &Path, root_paths: &HashMap<i64, PathBuf>) -> Option<FileKey> {
+    if path.is_absolute() {
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let candidates = [canonical_path.as_path(), path];
+        return sorted_root_paths(root_paths)
+            .into_iter()
+            .filter_map(|(root_id, root)| {
+                candidates.iter().find_map(|candidate| {
+                    candidate.strip_prefix(&root).ok().map(|rel_path| {
+                        FileKey::new(root_id, normalize_workspace_rel_path(rel_path))
+                    })
+                })
+            })
+            .max_by_key(|file_key| {
+                root_paths
+                    .get(&file_key.root_id)
+                    .map(|root| normalize_path(root).len())
+                    .unwrap_or(0)
+            });
+    }
+
+    if root_paths.len() == 1 {
+        let root_id = root_paths.keys().copied().next().unwrap_or(1);
+        return Some(FileKey::new(root_id, normalize_workspace_rel_path(path)));
+    }
+
+    None
+}
+
+fn should_reuse_existing_edges(
+    existing_file: Option<&File>,
+    file: &File,
+    delta: ConfirmedDelta,
+) -> bool {
+    existing_file.is_some()
+        && file.deleted_at_unix_ms.is_none()
+        && matches!(file.freshness_state, FreshnessState::RefreshedCurrent)
+        && !delta.public_api_changed
+        && !delta.structure_changed
+        && !is_resolution_scope_path(&file.rel_path)
+}
+
+fn relink_contract_changed_files(
+    db: &Database,
+    workspace_id: WorkspaceId,
+    workspace_root: &Path,
+    root_paths: &HashMap<i64, PathBuf>,
+    changed_files_by_path: &HashMap<FileKey, File>,
+    contract_changed_files_by_path: &HashMap<FileKey, File>,
+) -> Result<LinkReport> {
+    if contract_changed_files_by_path.is_empty() {
+        return Ok(LinkReport::default());
+    }
+
+    let started = Instant::now();
+    let mut import_edges = Vec::new();
+    for file in changed_files_by_path.values() {
+        import_edges.extend(preserved_file_import_edges(db, file.id)?);
+    }
+    for file in contract_changed_files_by_path.values() {
+        import_edges.extend(preserved_incoming_import_edges(db, workspace_id, file.id)?);
+    }
+
+    db.connection()
+        .execute_batch("BEGIN IMMEDIATE TRANSACTION")?;
+    let write_result = (|| -> Result<()> {
+        for file in contract_changed_files_by_path.values() {
+            delete_graph_edges_for_source_file(db, file.id)?;
+        }
+        for edge in &import_edges {
+            let source_file_id = match edge.from {
+                NodeId::File(id) => id,
+                _ => continue,
+            };
+            db.insert_edges(std::slice::from_ref(edge), source_file_id)?;
+        }
+        Ok(())
+    })();
+
+    match write_result {
+        Ok(()) => db.connection().execute_batch("COMMIT")?,
+        Err(err) => {
+            let _ = db.connection().execute_batch("ROLLBACK");
+            return Err(err);
+        }
+    }
+
+    let mut report =
+        linker::summarize_workspace_edges(db, workspace_id, workspace_root, root_paths)?;
+    report.link_ms = started.elapsed().as_millis();
+    Ok(report)
+}
+
+fn preserved_file_import_edges(db: &Database, file_id: FileId) -> Result<Vec<dh_types::GraphEdge>> {
+    let mut edges = Vec::new();
+    preserve_existing_file_edges(db, file_id, &mut edges)?;
+    Ok(edges)
+}
+
+fn preserved_incoming_import_edges(
+    db: &Database,
+    workspace_id: WorkspaceId,
+    file_id: FileId,
+) -> Result<Vec<dh_types::GraphEdge>> {
+    Ok(db
+        .find_incoming_edges(workspace_id, "file", file_id, 200_000)?
+        .into_iter()
+        .filter(|edge| matches!(edge.kind, EdgeKind::Imports | EdgeKind::ReExports))
+        .filter(|edge| edge.resolution == EdgeResolution::Resolved)
+        .collect())
+}
+
+fn preserve_existing_file_edges(
+    db: &Database,
+    file_id: FileId,
+    graph_edges: &mut Vec<dh_types::GraphEdge>,
+) -> Result<()> {
+    let mut stmt = db.connection().prepare(
+        "
+        SELECT id, workspace_id, source_file_id, kind, from_node_kind, from_node_id,
+               to_node_kind, to_node_id, resolution, confidence, start_line, start_column,
+               end_line, end_column, reason, payload_json
+          FROM graph_edges
+         WHERE source_file_id = ?1
+           AND from_node_kind = 'file'
+           AND from_node_id = ?1
+           AND kind IN ('imports', 're_exports')
+           AND resolution = 'resolved'
+         ORDER BY id ASC
+        ",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![file_id], map_preserved_file_edge)?;
+    for row in rows {
+        graph_edges.push(row?);
+    }
+    Ok(())
+}
+
+fn map_preserved_file_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<dh_types::GraphEdge> {
+    let kind = match row.get::<_, String>(3)?.as_str() {
+        "imports" => EdgeKind::Imports,
+        "re_exports" => EdgeKind::ReExports,
+        _ => EdgeKind::Imports,
+    };
+    let from = match row.get::<_, String>(4)?.as_str() {
+        "file" => NodeId::File(row.get(5)?),
+        "symbol" => NodeId::Symbol(row.get(5)?),
+        "chunk" => NodeId::Chunk(row.get(5)?),
+        _ => NodeId::File(row.get(5)?),
+    };
+    let to = match row.get::<_, String>(6)?.as_str() {
+        "file" => NodeId::File(row.get(7)?),
+        "symbol" => NodeId::Symbol(row.get(7)?),
+        "chunk" => NodeId::Chunk(row.get(7)?),
+        _ => NodeId::File(row.get(7)?),
+    };
+    let resolution = match row.get::<_, String>(8)?.as_str() {
+        "resolved" => EdgeResolution::Resolved,
+        _ => EdgeResolution::Unresolved,
+    };
+    let confidence = match row.get::<_, String>(9)?.as_str() {
+        "direct" => dh_types::EdgeConfidence::Direct,
+        _ => dh_types::EdgeConfidence::BestEffort,
+    };
+    let start_line = row.get::<_, Option<i64>>(10)?;
+    let start_column = row.get::<_, Option<i64>>(11)?;
+    let end_line = row.get::<_, Option<i64>>(12)?;
+    let end_column = row.get::<_, Option<i64>>(13)?;
+    let span = match (start_line, start_column, end_line, end_column) {
+        (Some(start_line), Some(start_column), Some(end_line), Some(end_column)) => {
+            Some(dh_types::Span {
+                start_byte: 0,
+                end_byte: 0,
+                start_line: start_line as u32,
+                start_column: start_column as u32,
+                end_line: end_line as u32,
+                end_column: end_column as u32,
+            })
+        }
+        _ => None,
+    };
+
+    Ok(dh_types::GraphEdge {
+        kind,
+        from,
+        to,
+        resolution,
+        confidence,
+        span,
+        reason: row.get(14)?,
+        payload_json: row.get(15)?,
+    })
+}
+
+fn delete_graph_edges_for_source_file(db: &Database, file_id: FileId) -> Result<()> {
+    db.connection().execute(
+        "
+        DELETE FROM graph_edges
+         WHERE (from_node_kind = 'file' AND from_node_id = ?1)
+            OR (source_file_id = ?1 AND from_node_kind <> 'file')
+        ",
+        rusqlite::params![file_id],
+    )?;
+    Ok(())
+}
+
+fn delete_graph_edges_for_deleted_file(
+    db: &Database,
+    file_id: FileId,
+    symbol_ids: &[dh_types::SymbolId],
+) -> Result<()> {
+    delete_graph_edges_for_source_file(db, file_id)?;
+    db.connection().execute(
+        "DELETE FROM graph_edges WHERE to_node_kind = 'file' AND to_node_id = ?1",
+        rusqlite::params![file_id],
+    )?;
+    db.delete_edges_for_symbol_endpoints(symbol_ids)?;
+    Ok(())
+}
+
 fn write_file_atomically(
     db: &Database,
     file: &File,
     symbols: &[dh_types::Symbol],
-    imports: &[dh_types::Import],
-    call_edges: &[dh_types::CallEdge],
-    references: &[dh_types::Reference],
+    _imports: &[dh_types::Import],
+    _call_edges: &[dh_types::CallEdge],
+    _references: &[dh_types::Reference],
     chunks: &[dh_types::Chunk],
+    graph_edges: &[dh_types::GraphEdge],
+    link_report: LinkReport,
     has_existing: bool,
+    preserve_existing_edges: bool,
 ) -> Result<()> {
     db.connection()
         .execute_batch("BEGIN IMMEDIATE TRANSACTION")?;
 
     let write_result = (|| -> Result<()> {
         if has_existing {
+            let old_symbol_ids = db
+                .find_symbols_by_file(file.id)?
+                .into_iter()
+                .map(|symbol| symbol.id)
+                .collect::<Vec<_>>();
+            db.delete_edges_for_symbol_endpoints(&old_symbol_ids)?;
             db.delete_file_facts(file.id)?;
+        }
+
+        if !preserve_existing_edges {
+            delete_graph_edges_for_source_file(db, file.id)?;
         }
 
         db.upsert_file(file)
@@ -1823,74 +2723,20 @@ fn write_file_atomically(
                 .with_context(|| format!("insert symbols for {}", file.rel_path))?;
         }
 
-        let mut graph_edges = Vec::new();
-        
-        for import in imports {
-            graph_edges.push(dh_types::GraphEdge {
-                kind: dh_types::EdgeKind::Imports,
-                from: dh_types::NodeId::File(import.source_file_id),
-                to: if let Some(sym) = import.resolved_symbol_id {
-                    dh_types::NodeId::Symbol(sym)
-                } else if let Some(file_id) = import.resolved_file_id {
-                    dh_types::NodeId::File(file_id)
-                } else {
-                    dh_types::NodeId::Symbol(0)
-                },
-                resolution: if import.resolved_file_id.is_some() || import.resolved_symbol_id.is_some() {
-                    dh_types::EdgeResolution::Resolved
-                } else {
-                    dh_types::EdgeResolution::Unresolved
-                },
-                confidence: dh_types::EdgeConfidence::BestEffort,
-                span: Some(import.span.clone()),
-                reason: import.raw_specifier.clone(),
-            });
-        }
-        
-        for edge in call_edges {
-            graph_edges.push(dh_types::GraphEdge {
-                kind: dh_types::EdgeKind::Calls,
-                from: edge.caller_symbol_id.map(dh_types::NodeId::Symbol).unwrap_or(dh_types::NodeId::File(edge.source_file_id)),
-                to: if let Some(callee) = edge.callee_symbol_id {
-                    dh_types::NodeId::Symbol(callee)
-                } else {
-                    dh_types::NodeId::Symbol(0)
-                },
-                resolution: if edge.resolved {
-                    dh_types::EdgeResolution::Resolved
-                } else {
-                    dh_types::EdgeResolution::Unresolved
-                },
-                confidence: dh_types::EdgeConfidence::BestEffort,
-                span: Some(edge.span.clone()),
-                reason: edge.callee_qualified_name.clone().unwrap_or_default(),
-            });
-        }
-        
-        for ref_edge in references {
-            graph_edges.push(dh_types::GraphEdge {
-                kind: dh_types::EdgeKind::References,
-                from: ref_edge.source_symbol_id.map(dh_types::NodeId::Symbol).unwrap_or(dh_types::NodeId::File(ref_edge.source_file_id)),
-                to: if let Some(target) = ref_edge.target_symbol_id {
-                    dh_types::NodeId::Symbol(target)
-                } else {
-                    dh_types::NodeId::Symbol(0)
-                },
-                resolution: if ref_edge.resolved {
-                    dh_types::EdgeResolution::Resolved
-                } else {
-                    dh_types::EdgeResolution::Unresolved
-                },
-                confidence: dh_types::EdgeConfidence::BestEffort,
-                span: Some(ref_edge.span.clone()),
-                reason: ref_edge.target_name.clone(),
-            });
-        }
-        
         if !graph_edges.is_empty() {
-            db.insert_edges(&graph_edges, file.id)
+            db.insert_edges(graph_edges, file.id)
                 .with_context(|| format!("insert graph edges for {}", file.rel_path))?;
         }
+        tracing::debug!(
+            file = %file.rel_path,
+            linked_imports = link_report.linked_imports,
+            unresolved_imports = link_report.unresolved_imports,
+            linked_calls = link_report.linked_calls,
+            unresolved_calls = link_report.unresolved_calls,
+            linked_references = link_report.linked_references,
+            unresolved_references = link_report.unresolved_references,
+            "linked graph facts"
+        );
         if !chunks.is_empty() {
             db.insert_chunks(chunks)
                 .with_context(|| format!("insert chunks for {}", file.rel_path))?;
@@ -1922,7 +2768,13 @@ fn mark_deleted_file(
         .execute_batch("BEGIN IMMEDIATE TRANSACTION")?;
 
     let delete_result = (|| -> Result<()> {
+        let symbol_ids = db
+            .find_symbols_by_file(file.id)?
+            .into_iter()
+            .map(|symbol| symbol.id)
+            .collect::<Vec<_>>();
         db.delete_file_facts(file.id)?;
+        delete_graph_edges_for_deleted_file(db, file.id, &symbol_ids)?;
 
         let mut deleted = file.clone();
         deleted.deleted_at_unix_ms = Some(deleted_at_unix_ms);
@@ -2047,7 +2899,7 @@ fn run_id_to_i64(run_id: &str) -> i64 {
 fn refresh_unchanged_files(
     db: &Database,
     workspace_id: WorkspaceId,
-    indexed_rel_paths: &std::collections::HashSet<String>,
+    indexed_rel_paths: &std::collections::HashSet<FileKey>,
     run_id: &str,
     counters: &mut FreshnessCounters,
 ) -> Result<()> {
@@ -2057,7 +2909,7 @@ fn refresh_unchanged_files(
         if file.deleted_at_unix_ms.is_some() {
             continue;
         }
-        if indexed_rel_paths.contains(&file.rel_path) {
+        if indexed_rel_paths.contains(&file_key_for_file(&file)) {
             continue;
         }
         if matches!(
@@ -2075,6 +2927,23 @@ fn refresh_unchanged_files(
     }
 
     Ok(())
+}
+
+fn hydrate_current_graph_projection(
+    db: &Database,
+    workspace_id: WorkspaceId,
+    warnings: &mut Vec<String>,
+) -> Result<u128> {
+    let projection = HydratedGraphProjection::hydrate(db, workspace_id)?;
+    let stats = projection.stats();
+    if !stats.freshness.is_current() {
+        warnings.push(format!(
+            "graph projection hydrated as {}: {}",
+            stats.freshness.as_str(),
+            stats.freshness_reason
+        ));
+    }
+    Ok(stats.duration_ms)
 }
 
 #[derive(Debug, Default, Clone)]

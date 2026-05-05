@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "suite_id": "benchmark-suite-hydrate-benchmark-1777634149304",
+  "generated_at_unix_ms": 1777634151527,
+  "summary": {
+    "local_evidence_statement": "Hydrate benchmark results are local evidence for this corpus and this environment only.",
+    "corpus_summary": "DH@local-working-tree (DhRepo)",
+    "environment_summary": "macos-aarch64 build_profile=debug",
+    "degraded": true,
+    "result_count": 1
+  },
+  "results": [
+    {
+      "metadata": {
+        "run_id": "hydrate-benchmark-1777634149304",
+        "benchmark_class": "hydrate_graph",
+        "suite_id": "benchmark-suite-hydrate-benchmark-1777634149304",
+        "started_at_unix_ms": 1777634149304,
+        "finished_at_unix_ms": 1777634151527,
+        "engine_version": "0.1.0",
+        "build_profile": "debug",
+        "host_os": "macos",
+        "host_arch": "aarch64",
+        "cpu_count": 8,
+        "corpus": {
+          "kind": "dh_repo",
+          "label": "DH",
+          "revision_or_snapshot": "local-working-tree",
+          "root_path": "/Users/duypham/Code/DH",
+          "query_set_label": null,
+          "mutation_set_label": null,
+          "notes": "Hydrate benchmark measures Rust in-memory graph projection construction only; it does not measure index extraction, link pass, bridge startup, or query latency."
+        },
+        "preparation": {
+          "state_label": "hydrate_graph_current_index_state",
+          "cleared_reusable_state": false,
+          "preserved_reusable_state": true,
+          "baseline_run_ref": "93c921eb-154c-4058-b3e3-d685d8ce4475",
+          "mutation_set_label": null,
+          "mutation_paths": [],
+          "query_set_label": null,
+          "notes": [
+            "Hydration samples are repeated 5 times against the index state produced by baseline_run_ref=93c921eb-154c-4058-b3e3-d685d8ce4475; repeated samples expose p50/p95/max instead of a single opaque hydrate value.",
+            "Index report graph_hydration_ms remains exposed in index_timing for index classes; this hydrate class isolates projection hydration distribution."
+          ]
+        },
+        "baseline_run_ref": "93c921eb-154c-4058-b3e3-d685d8ce4475",
+        "comparison_key": "class=HydrateGraph|corpus=DH@local-working-tree|profile=debug|prep=hydrate_graph_current_index_state|query_set=|mutation_set="
+      },
+      "status": "degraded",
+      "memory": {
+        "status": "not_measured",
+        "peak_rss_bytes": null,
+        "method": null,
+        "scope": "graph_hydration_benchmark",
+        "reason": "Peak RSS measurement is not yet instrumented for graph hydration benchmark classes."
+      },
+      "comparison": {
+        "eligible": true,
+        "baseline_run_ref": "93c921eb-154c-4058-b3e3-d685d8ce4475",
+        "comparison_key": "class=HydrateGraph|corpus=DH@local-working-tree|profile=debug|prep=hydrate_graph_current_index_state|query_set=|mutation_set=",
+        "reason": null
+      },
+      "correctness": null,
+      "index_timing": {
+        "elapsed_ms": 77966.0,
+        "link_ms": 630.0,
+        "graph_hydration_ms": 418.0,
+        "scanned_files": 353,
+        "changed_files": 11,
+        "reindexed_files": 353,
+        "deleted_files": 0,
+        "refreshed_current_files": 351,
+        "retained_current_files": 0,
+        "degraded_partial_files": 2,
+        "not_current_files": 32
+      },
+      "query_latency": null,
+      "graph_hydration": {
+        "sample_count_requested": 5,
+        "sample_count_completed": 5,
+        "p50_ms": 417.507792,
+        "p95_ms": 463.3905,
+        "max_ms": 463.3905,
+        "workspace_id": 1,
+        "node_count": 5951,
+        "persisted_edge_count": 74315,
+        "synthetic_edge_count": 11196,
+        "freshness": "partial",
+        "freshness_reason": "2 indexed file(s) have degraded partial freshness"
+      },
+      "degradation_notes": [
+        "Hydrated graph projection freshness is partial; latency remains measurable but this is not current hot-path evidence.",
+        "Baseline index report had not_current_files=32; hydrate distribution is measurable but the index state is degraded."
+      ]
+    }
+  ]
+}

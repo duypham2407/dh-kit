@@ -22,6 +22,8 @@ export const HOST_BACKED_BRIDGE_SUPPORTED_METHODS = [
   "query.definition",
   "query.relationship",
   "query.buildEvidence",
+  "query.callHierarchy",
+  "query.entryPoints",
 ] as const;
 export const HOST_BACKED_BRIDGE_SUPPORTED_RELATIONS = ["usage", "dependencies", "dependents"] as const;
 
@@ -217,6 +219,28 @@ function buildBridgeCall(input: BridgeAskRequest | BridgeSessionRunCommandReques
           limit,
         },
       };
+    case "graph_call_hierarchy":
+      return {
+        method: "query.callHierarchy",
+        params: {
+          symbol: input.symbol ?? input.query,
+          workspaceRoot: input.repoRoot,
+          filePath: input.targetPath,
+          limit,
+          maxDepth: input.maxDepth ?? 3,
+        },
+      };
+    case "graph_entry_points":
+      return {
+        method: "query.entryPoints",
+        params: {
+          symbol: input.symbol ?? input.query,
+          workspaceRoot: input.repoRoot,
+          filePath: input.targetPath,
+          limit,
+          maxDepth: input.maxDepth ?? 3,
+        },
+      };
     case "graph_build_evidence":
       return {
         method: "query.buildEvidence",
@@ -367,6 +391,12 @@ function inferQuestionClassFromCall(call: { method: BridgeDirectQueryMethod; par
   }
   if (call.method === "query.buildEvidence") {
     return "build_evidence";
+  }
+  if (call.method === "query.callHierarchy") {
+    return "call_hierarchy";
+  }
+  if (call.method === "query.entryPoints") {
+    return "entry_points";
   }
   const relation = asString(call.params.relation);
   if (relation === "usage") {

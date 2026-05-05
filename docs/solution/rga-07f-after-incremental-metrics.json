@@ -1,0 +1,406 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-01T12:03:22.165Z",
+  "taskId": "RGA-07F",
+  "measurement": "changed_incremental_temp_copy_after_optimization",
+  "corpus": {
+    "label": "DH/OpenKit official corpus",
+    "rootPath": "/Users/duypham/Code/DH",
+    "snapshot": "local-working-tree",
+    "largeCorpusTargetFiles": 3000,
+    "limitation": "Current official corpus is smaller than the 3,000-file target recorded in the approved solution; measurements remain official-corpus evidence, not large-corpus proof.",
+    "tempCopyRoot": "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG",
+    "tempCopyPolicy": "Copied from the official DH/OpenKit working tree while excluding generated dependency/build/database artifacts."
+  },
+  "baseline": {
+    "status": "measured",
+    "command": {
+      "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+      "args": [
+        "index",
+        "--workspace",
+        "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG",
+        "--force-full"
+      ],
+      "cwd": "/Users/duypham/Code/DH/rust-engine",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "durationMs": 17298.444083,
+      "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db\nrun_id: d4b175d5-790d-4b9b-bdc6-a99d6d59e676\nscanned_files: 354\nchanged_files: 354\nreindexed_files: 354\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 16200\nlink_ms: 1992\ngraph_hydration_ms: 546\nwarnings (4):\n- parsed with recoverable errors: packages/retrieval/src/query/run-retrieval.ts\n- parsed with recoverable errors: rust-engine/crates/dh-indexer/tests/fixtures/parity/syntax-error.ts\n- resolution-basis change detected; widening invalidation for workspace 1\n- graph projection hydrated as partial: 2 indexed file(s) have degraded partial freshness\n",
+      "stderr": ""
+    },
+    "parsedStdout": {
+      "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG",
+      "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db",
+      "run_id": "d4b175d5-790d-4b9b-bdc6-a99d6d59e676",
+      "scanned_files": "354",
+      "changed_files": "354",
+      "reindexed_files": "354",
+      "deleted_files": "0",
+      "queued_embeddings": "0",
+      "embedded_chunks": "0",
+      "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+      "duration_ms": "16200",
+      "link_ms": "1992",
+      "graph_hydration_ms": "546"
+    }
+  },
+  "changedOneFile": {
+    "status": "measured",
+    "sampleCount": 3,
+    "thresholdP95Ms": 500,
+    "wallMs": {
+      "p50": 282.083,
+      "p95": 306.831,
+      "max": 306.83095799999865,
+      "thresholdResult": "measured_subset_pass"
+    },
+    "engineDurationMs": {
+      "p50": 266,
+      "p95": 287,
+      "max": 287,
+      "thresholdResult": "measured_subset_pass"
+    },
+    "linkMs": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    },
+    "graphHydrationMs": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    }
+  },
+  "changedTenFiles": {
+    "status": "measured",
+    "sampleCount": 3,
+    "thresholdP95Ms": 2000,
+    "wallMs": {
+      "p50": 1656.504,
+      "p95": 1850.926,
+      "max": 1850.9259160000001,
+      "thresholdResult": "measured_subset_pass"
+    },
+    "engineDurationMs": {
+      "p50": 1642,
+      "p95": 1831,
+      "max": 1831,
+      "thresholdResult": "measured_subset_pass"
+    },
+    "linkMs": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    },
+    "graphHydrationMs": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0
+    }
+  },
+  "rawSamples": {
+    "oneFileSamples": [
+      {
+        "mutationSet": "changed_1_file",
+        "sampleNumber": 1,
+        "changedFileCount": 1,
+        "changedFiles": [
+          "packages/intelligence/src/graph/extract-call-edges.test.ts"
+        ],
+        "wallMs": 282.08320900000035,
+        "engineDurationMs": 264,
+        "linkMs": 0,
+        "graphHydrationMs": 0,
+        "parsedStdout": {
+          "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG",
+          "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db",
+          "run_id": "0bfef448-c9b2-4d7f-84b3-26190ba3dd73",
+          "scanned_files": "354",
+          "changed_files": "1",
+          "reindexed_files": "1",
+          "deleted_files": "0",
+          "queued_embeddings": "0",
+          "embedded_chunks": "0",
+          "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+          "duration_ms": "264",
+          "link_ms": "0",
+          "graph_hydration_ms": "0",
+          "warnings": "<none>"
+        },
+        "command": {
+          "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+          "args": [
+            "index",
+            "--workspace",
+            "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG"
+          ],
+          "cwd": "/Users/duypham/Code/DH/rust-engine",
+          "exitCode": 0,
+          "signal": null,
+          "timedOut": false,
+          "durationMs": 282.08320900000035,
+          "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db\nrun_id: 0bfef448-c9b2-4d7f-84b3-26190ba3dd73\nscanned_files: 354\nchanged_files: 1\nreindexed_files: 1\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 264\nlink_ms: 0\ngraph_hydration_ms: 0\nwarnings: <none>\n",
+          "stderr": ""
+        },
+        "status": "measured"
+      },
+      {
+        "mutationSet": "changed_1_file",
+        "sampleNumber": 2,
+        "changedFileCount": 1,
+        "changedFiles": [
+          "packages/intelligence/src/graph/extract-call-edges.test.ts"
+        ],
+        "wallMs": 280.369666999999,
+        "engineDurationMs": 266,
+        "linkMs": 0,
+        "graphHydrationMs": 0,
+        "parsedStdout": {
+          "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG",
+          "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db",
+          "run_id": "837b279e-83bc-4835-860f-becd37694157",
+          "scanned_files": "354",
+          "changed_files": "1",
+          "reindexed_files": "1",
+          "deleted_files": "0",
+          "queued_embeddings": "0",
+          "embedded_chunks": "0",
+          "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+          "duration_ms": "266",
+          "link_ms": "0",
+          "graph_hydration_ms": "0",
+          "warnings": "<none>"
+        },
+        "command": {
+          "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+          "args": [
+            "index",
+            "--workspace",
+            "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG"
+          ],
+          "cwd": "/Users/duypham/Code/DH/rust-engine",
+          "exitCode": 0,
+          "signal": null,
+          "timedOut": false,
+          "durationMs": 280.369666999999,
+          "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db\nrun_id: 837b279e-83bc-4835-860f-becd37694157\nscanned_files: 354\nchanged_files: 1\nreindexed_files: 1\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 266\nlink_ms: 0\ngraph_hydration_ms: 0\nwarnings: <none>\n",
+          "stderr": ""
+        },
+        "status": "measured"
+      },
+      {
+        "mutationSet": "changed_1_file",
+        "sampleNumber": 3,
+        "changedFileCount": 1,
+        "changedFiles": [
+          "packages/intelligence/src/graph/extract-call-edges.test.ts"
+        ],
+        "wallMs": 306.83095799999865,
+        "engineDurationMs": 287,
+        "linkMs": 0,
+        "graphHydrationMs": 0,
+        "parsedStdout": {
+          "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG",
+          "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db",
+          "run_id": "e82d68af-75f9-40f4-9107-58120315ddb0",
+          "scanned_files": "354",
+          "changed_files": "1",
+          "reindexed_files": "1",
+          "deleted_files": "0",
+          "queued_embeddings": "0",
+          "embedded_chunks": "0",
+          "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+          "duration_ms": "287",
+          "link_ms": "0",
+          "graph_hydration_ms": "0",
+          "warnings": "<none>"
+        },
+        "command": {
+          "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+          "args": [
+            "index",
+            "--workspace",
+            "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG"
+          ],
+          "cwd": "/Users/duypham/Code/DH/rust-engine",
+          "exitCode": 0,
+          "signal": null,
+          "timedOut": false,
+          "durationMs": 306.83095799999865,
+          "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db\nrun_id: e82d68af-75f9-40f4-9107-58120315ddb0\nscanned_files: 354\nchanged_files: 1\nreindexed_files: 1\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 287\nlink_ms: 0\ngraph_hydration_ms: 0\nwarnings: <none>\n",
+          "stderr": ""
+        },
+        "status": "measured"
+      }
+    ],
+    "tenFileSamples": [
+      {
+        "mutationSet": "changed_10_file",
+        "sampleNumber": 1,
+        "changedFileCount": 10,
+        "changedFiles": [
+          "packages/intelligence/src/graph/extract-call-edges.test.ts",
+          "packages/intelligence/src/graph/extract-call-edges.ts",
+          "packages/intelligence/src/graph/extract-call-graph.test.ts",
+          "packages/intelligence/src/graph/extract-call-graph.ts",
+          "packages/intelligence/src/graph/extract-call-sites.test.ts",
+          "packages/intelligence/src/graph/extract-call-sites.ts",
+          "packages/intelligence/src/graph/extract-import-edges.test.ts",
+          "packages/intelligence/src/graph/extract-import-edges.ts",
+          "packages/intelligence/src/graph/graph-indexer.benchmark.test.ts",
+          "packages/intelligence/src/graph/graph-indexer.test.ts"
+        ],
+        "wallMs": 1850.9259160000001,
+        "engineDurationMs": 1831,
+        "linkMs": 0,
+        "graphHydrationMs": 0,
+        "parsedStdout": {
+          "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG",
+          "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db",
+          "run_id": "48024f3f-0d36-494f-bacb-c1af502268a9",
+          "scanned_files": "354",
+          "changed_files": "10",
+          "reindexed_files": "10",
+          "deleted_files": "0",
+          "queued_embeddings": "0",
+          "embedded_chunks": "0",
+          "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+          "duration_ms": "1831",
+          "link_ms": "0",
+          "graph_hydration_ms": "0",
+          "warnings": "<none>"
+        },
+        "command": {
+          "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+          "args": [
+            "index",
+            "--workspace",
+            "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG"
+          ],
+          "cwd": "/Users/duypham/Code/DH/rust-engine",
+          "exitCode": 0,
+          "signal": null,
+          "timedOut": false,
+          "durationMs": 1850.9259160000001,
+          "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db\nrun_id: 48024f3f-0d36-494f-bacb-c1af502268a9\nscanned_files: 354\nchanged_files: 10\nreindexed_files: 10\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 1831\nlink_ms: 0\ngraph_hydration_ms: 0\nwarnings: <none>\n",
+          "stderr": ""
+        },
+        "status": "measured"
+      },
+      {
+        "mutationSet": "changed_10_file",
+        "sampleNumber": 2,
+        "changedFileCount": 10,
+        "changedFiles": [
+          "packages/intelligence/src/graph/extract-call-edges.test.ts",
+          "packages/intelligence/src/graph/extract-call-edges.ts",
+          "packages/intelligence/src/graph/extract-call-graph.test.ts",
+          "packages/intelligence/src/graph/extract-call-graph.ts",
+          "packages/intelligence/src/graph/extract-call-sites.test.ts",
+          "packages/intelligence/src/graph/extract-call-sites.ts",
+          "packages/intelligence/src/graph/extract-import-edges.test.ts",
+          "packages/intelligence/src/graph/extract-import-edges.ts",
+          "packages/intelligence/src/graph/graph-indexer.benchmark.test.ts",
+          "packages/intelligence/src/graph/graph-indexer.test.ts"
+        ],
+        "wallMs": 1656.5037080000002,
+        "engineDurationMs": 1642,
+        "linkMs": 0,
+        "graphHydrationMs": 0,
+        "parsedStdout": {
+          "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG",
+          "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db",
+          "run_id": "95e5f804-870c-4727-aabc-c280b95f3d28",
+          "scanned_files": "354",
+          "changed_files": "10",
+          "reindexed_files": "10",
+          "deleted_files": "0",
+          "queued_embeddings": "0",
+          "embedded_chunks": "0",
+          "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+          "duration_ms": "1642",
+          "link_ms": "0",
+          "graph_hydration_ms": "0",
+          "warnings": "<none>"
+        },
+        "command": {
+          "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+          "args": [
+            "index",
+            "--workspace",
+            "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG"
+          ],
+          "cwd": "/Users/duypham/Code/DH/rust-engine",
+          "exitCode": 0,
+          "signal": null,
+          "timedOut": false,
+          "durationMs": 1656.5037080000002,
+          "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db\nrun_id: 95e5f804-870c-4727-aabc-c280b95f3d28\nscanned_files: 354\nchanged_files: 10\nreindexed_files: 10\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 1642\nlink_ms: 0\ngraph_hydration_ms: 0\nwarnings: <none>\n",
+          "stderr": ""
+        },
+        "status": "measured"
+      },
+      {
+        "mutationSet": "changed_10_file",
+        "sampleNumber": 3,
+        "changedFileCount": 10,
+        "changedFiles": [
+          "packages/intelligence/src/graph/extract-call-edges.test.ts",
+          "packages/intelligence/src/graph/extract-call-edges.ts",
+          "packages/intelligence/src/graph/extract-call-graph.test.ts",
+          "packages/intelligence/src/graph/extract-call-graph.ts",
+          "packages/intelligence/src/graph/extract-call-sites.test.ts",
+          "packages/intelligence/src/graph/extract-call-sites.ts",
+          "packages/intelligence/src/graph/extract-import-edges.test.ts",
+          "packages/intelligence/src/graph/extract-import-edges.ts",
+          "packages/intelligence/src/graph/graph-indexer.benchmark.test.ts",
+          "packages/intelligence/src/graph/graph-indexer.test.ts"
+        ],
+        "wallMs": 1644.7312090000014,
+        "engineDurationMs": 1628,
+        "linkMs": 0,
+        "graphHydrationMs": 0,
+        "parsedStdout": {
+          "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG",
+          "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db",
+          "run_id": "10db3de1-f955-4882-bd26-905db7aefe6e",
+          "scanned_files": "354",
+          "changed_files": "10",
+          "reindexed_files": "10",
+          "deleted_files": "0",
+          "queued_embeddings": "0",
+          "embedded_chunks": "0",
+          "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+          "duration_ms": "1628",
+          "link_ms": "0",
+          "graph_hydration_ms": "0",
+          "warnings": "<none>"
+        },
+        "command": {
+          "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+          "args": [
+            "index",
+            "--workspace",
+            "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG"
+          ],
+          "cwd": "/Users/duypham/Code/DH/rust-engine",
+          "exitCode": 0,
+          "signal": null,
+          "timedOut": false,
+          "durationMs": 1644.7312090000014,
+          "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07f-corpus-ZGlQfG/dh-index.db\nrun_id: 10db3de1-f955-4882-bd26-905db7aefe6e\nscanned_files: 354\nchanged_files: 10\nreindexed_files: 10\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 1628\nlink_ms: 0\ngraph_hydration_ms: 0\nwarnings: <none>\n",
+          "stderr": ""
+        },
+        "status": "measured"
+      }
+    ]
+  },
+  "limitations": [
+    "Mutation benchmarks ran in a temporary copy to avoid destructive repository mutation.",
+    "The temporary copy excludes generated dependency/build/database artifacts, so this is source-corpus evidence rather than an exact byte-for-byte working tree benchmark.",
+    "p95 is computed from three samples per mutation set to match the RGA-07B attempt artifact shape; this is weaker than a statistically rigorous benchmark run.",
+    "Benchmarks use the debug dh-engine binary because RGA-07B used the debug binary; results are comparable to RGA-07B but are not release-profile SLA proof."
+  ]
+}

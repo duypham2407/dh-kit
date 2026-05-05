@@ -1,8 +1,8 @@
 //! Bounded graph-backed query engine for supported question classes.
 
 use anyhow::Result;
-use dh_graph::{EdgeResolution, GraphService, NodeId};
-use dh_storage::{ChunkRepository, Database, EmbeddingRepository, FileRepository, GraphRepository, GraphEdgeRepository};
+use dh_graph::{EdgeResolution, GraphService, HydratedGraphProjection, NodeId};
+use dh_storage::{ChunkRepository, Database, EmbeddingRepository, FileRepository, GraphRepository};
 use dh_types::{
     AnswerState, EvidenceBounds, EvidenceConfidence, EvidenceEntry, EvidenceKind, EvidencePacket,
     EvidenceSource, FileId, FreshnessState, LanguageCapability, LanguageCapabilityEntry,
@@ -138,6 +138,51 @@ pub struct DefinitionResult {
     pub line_start: u32,
     pub line_end: u32,
     pub evidence: EvidencePacket,
+}
+
+#[derive(Debug, Clone)]
+struct QueryProjection {
+    projection: HydratedGraphProjection,
+}
+
+impl QueryProjection {
+    fn hydrate(db: &Database, workspace_id: WorkspaceId) -> Result<Self> {
+        Ok(Self {
+            projection: HydratedGraphProjection::hydrate(db, workspace_id)?,
+        })
+    }
+
+    fn freshness_gap(&self) -> Option<String> {
+        if self.projection.is_current() {
+            None
+        } else {
+            Some(format!(
+                "graph projection is {}: {}",
+                self.projection.freshness().as_str(),
+                self.projection.freshness_reason()
+            ))
+        }
+    }
+
+    fn source(&self) -> EvidenceSource {
+        if self.projection.is_current() {
+            EvidenceSource::Graph
+        } else {
+            EvidenceSource::Storage
+        }
+    }
+
+    fn confidence_for_edge(&self, edge_resolved: bool) -> EvidenceConfidence {
+        if edge_resolved && self.projection.is_current() {
+            EvidenceConfidence::Grounded
+        } else {
+            EvidenceConfidence::Partial
+        }
+    }
+
+    fn graph(&self) -> &HydratedGraphProjection {
+        &self.projection
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -870,14 +915,17 @@ impl QueryEngine for Database {
             }
 
             // FTS Match
-            if let Ok(fts_matches) = self.search_chunks_fts(query.workspace_id, target, query.max_snippets.max(1)) {
+            if let Ok(fts_matches) =
+                self.search_chunks_fts(query.workspace_id, target, query.max_snippets.max(1))
+            {
                 for (chunk, score) in fts_matches {
-                    let file_path = self.find_file_by_id(query.workspace_id, chunk.file_id)
+                    let file_path = self
+                        .find_file_by_id(query.workspace_id, chunk.file_id)
                         .ok()
                         .flatten()
                         .map(|f| f.rel_path.clone())
                         .unwrap_or_else(|| "<unknown>".into());
-                    
+
                     let chunk_key = format!(
                         "fts:{}:{}:{}",
                         file_path, chunk.span.start_line, chunk.span.end_line
@@ -915,7 +963,7 @@ impl QueryEngine for Database {
                 for ep in ep_res.entry_points {
                     let file_path = ep.node.file_path.unwrap_or_else(|| "<unknown>".into());
                     let ep_key = format!("entry_point:{}:{}", file_path, ep.node.label);
-                    
+
                     if !seen.insert(ep_key) {
                         continue;
                     }
@@ -971,7 +1019,11 @@ impl QueryEngine for Database {
                         Some(snippet),
                         format!("semantic search match (score: {:.2})", m.score),
                         EvidenceSource::Semantic,
-                        if m.score > 0.85 { EvidenceConfidence::Grounded } else { EvidenceConfidence::Partial },
+                        if m.score > 0.85 {
+                            EvidenceConfidence::Grounded
+                        } else {
+                            EvidenceConfidence::Partial
+                        },
                     ));
                 }
             }
@@ -981,7 +1033,8 @@ impl QueryEngine for Database {
         // Weights: Graph/Definition (0.40), Storage/FTS (0.35), Semantic (0.25).
         // Within each tier, Grounded > Partial confidence.
         evidence_rows.sort_by(|a, b| {
-            hybrid_evidence_score(b).partial_cmp(&hybrid_evidence_score(a))
+            hybrid_evidence_score(b)
+                .partial_cmp(&hybrid_evidence_score(a))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
@@ -1105,6 +1158,23 @@ impl QueryEngine for Database {
         }
         let symbol = symbols.remove(0);
         let file = self.find_file_by_id(query.workspace_id, symbol.file_id)?;
+        let mut gaps = Vec::new();
+        let mut answer_state = AnswerState::Grounded;
+        if let Some(file) = &file {
+            if !matches!(
+                file.freshness_state,
+                FreshnessState::RefreshedCurrent | FreshnessState::RetainedCurrent
+            ) {
+                answer_state = AnswerState::Partial;
+                gaps.push(format!(
+                    "definition file {} is not fully current: freshness state is {:?}",
+                    file.rel_path, file.freshness_state
+                ));
+            }
+        } else {
+            answer_state = AnswerState::Partial;
+            gaps.push("definition symbol points to a missing indexed file".into());
+        }
         let file_path = file
             .map(|f| f.rel_path)
             .unwrap_or_else(|| "<unknown>".into());
@@ -1116,7 +1186,7 @@ impl QueryEngine for Database {
             line_start: symbol.span.start_line,
             line_end: symbol.span.end_line,
             evidence: packet(
-                AnswerState::Grounded,
+                answer_state,
                 QuestionClass::Definition,
                 query.symbol,
                 "Definition located".into(),
@@ -1135,7 +1205,7 @@ impl QueryEngine for Database {
                     EvidenceSource::Storage,
                     EvidenceConfidence::Grounded,
                 )],
-                Vec::new(),
+                gaps,
                 EvidenceBounds {
                     hop_count: Some(0),
                     node_limit: Some(1),
@@ -1147,8 +1217,11 @@ impl QueryEngine for Database {
     }
 
     fn find_references(&self, query: FindReferencesQuery) -> Result<ReferencesQueryResult> {
+        let projection = QueryProjection::hydrate(self, query.workspace_id)?;
         let references: Vec<dh_types::GraphEdge> = if let Some(symbol_id) = query.symbol_id {
-            self.find_incoming_edges(query.workspace_id, "symbol", symbol_id as i64, query.limit)?
+            projection
+                .graph()
+                .incoming_edges(&NodeId::Symbol(symbol_id), query.limit)
                 .into_iter()
                 .filter(|e| matches!(e.kind, dh_types::EdgeKind::References))
                 .collect()
@@ -1156,7 +1229,9 @@ impl QueryEngine for Database {
             let mut refs = Vec::new();
             if let Ok(syms) = self.find_symbol_definitions(query.workspace_id, symbol, 1) {
                 if let Some(s) = syms.first() {
-                    refs = self.find_incoming_edges(query.workspace_id, "symbol", s.id as i64, query.limit)?
+                    refs = projection
+                        .graph()
+                        .incoming_edges(&NodeId::Symbol(s.id), query.limit)
                         .into_iter()
                         .filter(|e| matches!(e.kind, dh_types::EdgeKind::References))
                         .collect();
@@ -1170,6 +1245,11 @@ impl QueryEngine for Database {
         let mut out = Vec::new();
         let mut evidence = Vec::new();
         let mut unresolved_seen = false;
+        let mut gaps = Vec::new();
+        if let Some(freshness_gap) = projection.freshness_gap() {
+            unresolved_seen = true;
+            gaps.push(freshness_gap);
+        }
         let subject = query
             .symbol
             .clone()
@@ -1178,7 +1258,10 @@ impl QueryEngine for Database {
         for r in references {
             let source_file_id = match &r.from {
                 NodeId::File(id) => *id,
-                NodeId::Symbol(id) => self.find_symbol_by_id(query.workspace_id, *id)?.map(|s| s.file_id).unwrap_or(0),
+                NodeId::Symbol(id) => self
+                    .find_symbol_by_id(query.workspace_id, *id)?
+                    .map(|s| s.file_id)
+                    .unwrap_or(0),
                 _ => 0,
             };
             let source_symbol_id = match &r.from {
@@ -1216,8 +1299,8 @@ impl QueryEngine for Database {
                 r.span.as_ref().map(|s| s.end_line),
                 None,
                 r.reason.clone(),
-                EvidenceSource::Graph,
-                if resolved {
+                projection.source(),
+                if resolved && projection.graph().is_current() {
                     EvidenceConfidence::Grounded
                 } else {
                     unresolved_seen = true;
@@ -1253,12 +1336,15 @@ impl QueryEngine for Database {
                     "No references found in bounded index scope".into()
                 },
                 evidence,
-                if answer_state == AnswerState::Partial {
-                    vec!["one or more references are unresolved".into()]
-                } else if answer_state == AnswerState::Insufficient {
-                    vec!["no references found for subject".into()]
-                } else {
-                    Vec::new()
+                {
+                    if answer_state == AnswerState::Partial
+                        && !gaps.iter().any(|gap| gap.contains("unresolved"))
+                    {
+                        gaps.push("one or more references are unresolved".into());
+                    } else if answer_state == AnswerState::Insufficient {
+                        gaps.push("no references found for subject".into());
+                    }
+                    gaps
                 },
                 EvidenceBounds {
                     hop_count: Some(1),
@@ -1272,20 +1358,30 @@ impl QueryEngine for Database {
 
     fn find_dependents(&self, query: FindDependentsQuery) -> Result<DependencyTraversalResult> {
         let files = self.list_files_by_workspace(query.workspace_id)?;
+        let projection = QueryProjection::hydrate(self, query.workspace_id)?;
         let mut items = Vec::new();
         let mut evidence = Vec::new();
         let mut unresolved_seen = false;
 
         if let Some(target_file) = files.iter().find(|f| f.rel_path == query.target) {
-            let edges = self.find_incoming_edges(query.workspace_id, "file", target_file.id as i64, query.limit)?
+            let edges = projection
+                .graph()
+                .incoming_edges(&NodeId::File(target_file.id), query.limit)
                 .into_iter()
-                .filter(|e| matches!(e.kind, dh_types::EdgeKind::Imports) || matches!(e.kind, dh_types::EdgeKind::ReExports));
+                .filter(|e| {
+                    matches!(e.kind, dh_types::EdgeKind::Imports)
+                        || matches!(e.kind, dh_types::EdgeKind::ReExports)
+                });
             for imp in edges {
-                let source_file_id = match imp.from {
+                let source_file_id = match &imp.from {
                     NodeId::File(id) => id,
                     _ => continue,
                 };
-                if let Some(src) = files.iter().find(|f| f.id == source_file_id) {
+                if let Some(src) = files.iter().find(|f| f.id == *source_file_id) {
+                    let resolved = imp.resolution == EdgeResolution::Resolved;
+                    if !resolved {
+                        unresolved_seen = true;
+                    }
                     items.push(src.rel_path.clone());
                     evidence.push(entry(
                         EvidenceKind::Dependent,
@@ -1295,21 +1391,26 @@ impl QueryEngine for Database {
                         imp.span.as_ref().map(|s| s.end_line),
                         None,
                         format!("imports {}", query.target),
-                        EvidenceSource::Graph,
-                        EvidenceConfidence::Grounded,
+                        projection.source(),
+                        projection.confidence_for_edge(resolved),
                     ));
                 }
             }
         } else {
             let symbols = self.find_symbol_definitions(query.workspace_id, &query.target, 1)?;
             if let Some(target_symbol) = symbols.first() {
-                let edges = self.find_incoming_edges(query.workspace_id, "symbol", target_symbol.id as i64, query.limit)?
+                let edges = projection
+                    .graph()
+                    .incoming_edges(&NodeId::Symbol(target_symbol.id), query.limit)
                     .into_iter()
                     .filter(|e| matches!(e.kind, dh_types::EdgeKind::References));
                 for r in edges {
-                    let source_file_id = match r.from {
-                        NodeId::File(id) => id,
-                        NodeId::Symbol(id) => self.find_symbol_by_id(query.workspace_id, id)?.map(|s| s.file_id).unwrap_or(0),
+                    let source_file_id = match &r.from {
+                        NodeId::File(id) => *id,
+                        NodeId::Symbol(id) => self
+                            .find_symbol_by_id(query.workspace_id, *id)?
+                            .map(|s| s.file_id)
+                            .unwrap_or(0),
                         _ => 0,
                     };
                     if let Some(src) = files.iter().find(|f| f.id == source_file_id) {
@@ -1326,16 +1427,18 @@ impl QueryEngine for Database {
                             r.span.as_ref().map(|s| s.end_line),
                             None,
                             "reference to target symbol".into(),
-                            EvidenceSource::Graph,
-                            if resolved {
-                                EvidenceConfidence::Grounded
-                            } else {
-                                EvidenceConfidence::Partial
-                            },
+                            projection.source(),
+                            projection.confidence_for_edge(resolved),
                         ));
                     }
                 }
             }
+        }
+
+        let mut gaps = Vec::new();
+        if let Some(freshness_gap) = projection.freshness_gap() {
+            unresolved_seen = true;
+            gaps.push(freshness_gap);
         }
 
         let state = if items.is_empty() {
@@ -1362,12 +1465,15 @@ impl QueryEngine for Database {
                     "No direct dependents found in indexed facts".into()
                 },
                 evidence,
-                if state == AnswerState::Insufficient {
-                    vec!["no direct reverse import/reference edges".into()]
-                } else if state == AnswerState::Partial {
-                    vec!["one or more dependent edges are unresolved".into()]
-                } else {
-                    Vec::new()
+                {
+                    if state == AnswerState::Insufficient {
+                        gaps.push("no direct reverse import/reference edges".into());
+                    } else if state == AnswerState::Partial
+                        && !gaps.iter().any(|gap| gap.contains("unresolved"))
+                    {
+                        gaps.push("one or more dependent edges are unresolved".into());
+                    }
+                    gaps
                 },
                 EvidenceBounds {
                     hop_count: Some(1),
@@ -1404,17 +1510,31 @@ impl QueryEngine for Database {
         };
 
         let files = self.list_files_by_workspace(query.workspace_id)?;
+        let projection = QueryProjection::hydrate(self, query.workspace_id)?;
         let mut items = Vec::new();
         let mut evidence = Vec::new();
-        let imports = self.find_outgoing_edges(query.workspace_id, "file", file.id as i64, query.limit)?
+        let imports = projection
+            .graph()
+            .outgoing_edges(&NodeId::File(file.id), query.limit)
             .into_iter()
-            .filter(|e| matches!(e.kind, dh_types::EdgeKind::Imports) || matches!(e.kind, dh_types::EdgeKind::ReExports));
+            .filter(|e| {
+                matches!(e.kind, dh_types::EdgeKind::Imports)
+                    || matches!(e.kind, dh_types::EdgeKind::ReExports)
+            });
         for imp in imports {
-            let label = match imp.to {
-                NodeId::File(id) => files.iter().find(|f| f.id == id).map(|f| f.rel_path.clone()).unwrap_or_else(|| imp.reason.clone()),
-                NodeId::Symbol(id) => self.find_symbol_by_id(query.workspace_id, id)?.map(|s| s.qualified_name).unwrap_or_else(|| imp.reason.clone()),
+            let label = match &imp.to {
+                NodeId::File(id) => files
+                    .iter()
+                    .find(|f| f.id == *id)
+                    .map(|f| f.rel_path.clone())
+                    .unwrap_or_else(|| imp.reason.clone()),
+                NodeId::Symbol(id) => self
+                    .find_symbol_by_id(query.workspace_id, *id)?
+                    .map(|s| s.qualified_name)
+                    .unwrap_or_else(|| imp.reason.clone()),
                 _ => imp.reason.clone(),
             };
+            let resolved = imp.resolution == EdgeResolution::Resolved;
             items.push(label.clone());
             evidence.push(entry(
                 EvidenceKind::Dependency,
@@ -1424,20 +1544,22 @@ impl QueryEngine for Database {
                 imp.span.as_ref().map(|s| s.end_line),
                 None,
                 format!("imports {}", label),
-                EvidenceSource::Graph,
-                if imp.resolution == EdgeResolution::Resolved {
-                    EvidenceConfidence::Grounded
-                } else {
-                    EvidenceConfidence::Partial
-                },
+                projection.source(),
+                projection.confidence_for_edge(resolved),
             ));
+        }
+
+        let mut gaps = Vec::new();
+        if let Some(freshness_gap) = projection.freshness_gap() {
+            gaps.push(freshness_gap);
         }
 
         let state = if items.is_empty() {
             AnswerState::Insufficient
-        } else if evidence
-            .iter()
-            .all(|e| matches!(e.confidence, EvidenceConfidence::Grounded))
+        } else if gaps.is_empty()
+            && evidence
+                .iter()
+                .all(|e| matches!(e.confidence, EvidenceConfidence::Grounded))
         {
             AnswerState::Grounded
         } else {
@@ -1454,10 +1576,11 @@ impl QueryEngine for Database {
                 "Dependency lookup".into(),
                 "Collected direct dependencies".into(),
                 evidence,
-                if state == AnswerState::Partial {
-                    vec!["unresolved import(s) present".into()]
-                } else {
-                    Vec::new()
+                {
+                    if state == AnswerState::Partial && gaps.is_empty() {
+                        gaps.push("unresolved import(s) present".into());
+                    }
+                    gaps
                 },
                 EvidenceBounds {
                     hop_count: Some(1),
@@ -1495,41 +1618,73 @@ impl QueryEngine for Database {
         };
 
         let node_id = NodeId::Symbol(subject.id as i64);
+        let projection = QueryProjection::hydrate(self, query.workspace_id)?;
 
-        let callers = self.find_callers(query.workspace_id, &node_id, query.max_depth).unwrap_or_default();
-        let callees = self.find_callees(query.workspace_id, &node_id, query.max_depth).unwrap_or_default();
+        let mut callers =
+            projection
+                .graph()
+                .find_callers(query.workspace_id, &node_id, query.max_depth)?;
+        let mut callees =
+            projection
+                .graph()
+                .find_callees(query.workspace_id, &node_id, query.max_depth)?;
+        callers.truncate(query.limit);
+        callees.truncate(query.limit);
 
         let mut evidence = Vec::new();
         for caller in &callers {
             evidence.push(entry(
                 EvidenceKind::Call,
-                caller.node.file_path.clone().unwrap_or_else(|| "<unknown>".into()),
+                caller
+                    .node
+                    .file_path
+                    .clone()
+                    .unwrap_or_else(|| "<unknown>".into()),
                 Some(caller.node.label.clone()),
                 None,
                 None,
                 None,
                 format!("caller edge (depth {})", caller.call_depth),
-                EvidenceSource::Graph,
-                EvidenceConfidence::Grounded,
+                projection.source(),
+                if projection.graph().is_current() {
+                    EvidenceConfidence::Grounded
+                } else {
+                    EvidenceConfidence::Partial
+                },
             ));
         }
 
         for callee in &callees {
             evidence.push(entry(
                 EvidenceKind::Call,
-                callee.node.file_path.clone().unwrap_or_else(|| "<unknown>".into()),
+                callee
+                    .node
+                    .file_path
+                    .clone()
+                    .unwrap_or_else(|| "<unknown>".into()),
                 Some(callee.node.label.clone()),
                 None,
                 None,
                 None,
                 format!("callee edge (depth {})", callee.call_depth),
-                EvidenceSource::Graph,
-                EvidenceConfidence::Grounded,
+                projection.source(),
+                if projection.graph().is_current() {
+                    EvidenceConfidence::Grounded
+                } else {
+                    EvidenceConfidence::Partial
+                },
             ));
+        }
+
+        let mut gaps = Vec::new();
+        if let Some(freshness_gap) = projection.freshness_gap() {
+            gaps.push(freshness_gap);
         }
 
         let state = if callers.is_empty() && callees.is_empty() {
             AnswerState::Insufficient
+        } else if !gaps.is_empty() {
+            AnswerState::Partial
         } else {
             AnswerState::Grounded
         };
@@ -1543,9 +1698,9 @@ impl QueryEngine for Database {
                 QuestionClass::CallHierarchy,
                 query.symbol,
                 "Call hierarchy".into(),
-                "Multi-hop caller/callee edges via CTE".into(),
+                "Multi-hop caller/callee edges via hydrated graph projection".into(),
                 evidence,
-                vec![],
+                gaps,
                 EvidenceBounds {
                     hop_count: Some(query.max_depth),
                     node_limit: Some(query.limit),
@@ -1581,26 +1736,45 @@ impl QueryEngine for Database {
         };
 
         let node_id = NodeId::Symbol(subject.id as i64);
+        let projection = QueryProjection::hydrate(self, query.workspace_id)?;
 
-        let entry_points = self.find_entry_points(query.workspace_id, &node_id, query.max_depth).unwrap_or_default();
+        let mut entry_points =
+            projection
+                .graph()
+                .find_entry_points(query.workspace_id, &node_id, query.max_depth)?;
+        entry_points.truncate(query.limit);
 
         let mut evidence = Vec::new();
         for ep in &entry_points {
             evidence.push(entry(
                 EvidenceKind::Call,
-                ep.node.file_path.clone().unwrap_or_else(|| "<unknown>".into()),
+                ep.node
+                    .file_path
+                    .clone()
+                    .unwrap_or_else(|| "<unknown>".into()),
                 Some(ep.node.label.clone()),
                 None,
                 None,
                 None,
                 format!("entry point (depth {})", ep.call_depth),
-                EvidenceSource::Graph,
-                EvidenceConfidence::Grounded,
+                projection.source(),
+                if projection.graph().is_current() {
+                    EvidenceConfidence::Grounded
+                } else {
+                    EvidenceConfidence::Partial
+                },
             ));
+        }
+
+        let mut gaps = Vec::new();
+        if let Some(freshness_gap) = projection.freshness_gap() {
+            gaps.push(freshness_gap);
         }
 
         let state = if entry_points.is_empty() {
             AnswerState::Insufficient
+        } else if !gaps.is_empty() {
+            AnswerState::Partial
         } else {
             AnswerState::Grounded
         };
@@ -1613,9 +1787,9 @@ impl QueryEngine for Database {
                 QuestionClass::CallHierarchy,
                 query.symbol,
                 "Entry points".into(),
-                "Entry points via CTE".into(),
+                "Entry points via hydrated graph projection".into(),
                 evidence,
-                vec![],
+                gaps,
                 EvidenceBounds {
                     hop_count: Some(query.max_depth),
                     node_limit: Some(query.limit),
@@ -1874,7 +2048,11 @@ impl QueryEngine for Database {
                         qualified_name: s.qualified_name.clone(),
                         file_path,
                         category,
-                        hop_distance: if direct_set.contains(&symbol_id) { 1 } else { 2 },
+                        hop_distance: if direct_set.contains(&symbol_id) {
+                            1
+                        } else {
+                            2
+                        },
                     });
                 }
             }
@@ -1945,7 +2123,12 @@ impl QueryEngine for Database {
 
         let mut matches: Vec<(dh_types::ChunkId, f32)> = records
             .iter()
-            .map(|r| (r.chunk_id, cosine_similarity(&query.query_vector, &r.vector)))
+            .map(|r| {
+                (
+                    r.chunk_id,
+                    cosine_similarity(&query.query_vector, &r.vector),
+                )
+            })
             .filter(|&(_, score)| score >= query.min_score)
             .collect();
 
@@ -1955,7 +2138,8 @@ impl QueryEngine for Database {
         let mut result_matches = Vec::new();
         for (chunk_id, score) in matches {
             if let Ok(Some(chunk)) = self.find_chunk_by_id(query.workspace_id, chunk_id) {
-                let file_path = self.find_file_by_id(query.workspace_id, chunk.file_id)
+                let file_path = self
+                    .find_file_by_id(query.workspace_id, chunk.file_id)
                     .ok()
                     .flatten()
                     .map(|f| f.rel_path.clone())
@@ -1983,11 +2167,19 @@ impl QueryEngine for Database {
                 snippet: None,
                 reason: format!("Semantic match score: {:.3}", m.score),
                 source: EvidenceSource::Semantic,
-                confidence: if m.score > 0.85 { EvidenceConfidence::Grounded } else { EvidenceConfidence::Partial },
+                confidence: if m.score > 0.85 {
+                    EvidenceConfidence::Grounded
+                } else {
+                    EvidenceConfidence::Partial
+                },
             });
         }
 
-        let answer_state = if result_matches.is_empty() { AnswerState::Insufficient } else { AnswerState::Grounded };
+        let answer_state = if result_matches.is_empty() {
+            AnswerState::Insufficient
+        } else {
+            AnswerState::Grounded
+        };
         let entry_count = evidence_entries.len();
 
         Ok(SemanticSearchResult {
@@ -2228,27 +2420,28 @@ fn bounded_snippet(content: &str, max_chars: usize) -> String {
 /// Grounded confidence gets a +0.1 bonus over Partial.
 fn hybrid_evidence_score(entry: &EvidenceEntry) -> f32 {
     let source_weight = match entry.source {
-        EvidenceSource::Graph  => 0.40,
-        EvidenceSource::Query  => 0.40, // treat Query the same as Graph (structural)
+        EvidenceSource::Graph => 0.40,
+        EvidenceSource::Query => 0.40, // treat Query the same as Graph (structural)
         EvidenceSource::Storage => 0.35,
         EvidenceSource::Semantic => 0.25,
     };
     let confidence_bonus = match entry.confidence {
         EvidenceConfidence::Grounded => 0.10,
-        EvidenceConfidence::Partial  => 0.0,
+        EvidenceConfidence::Partial => 0.0,
     };
     source_weight + confidence_bonus
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dh_storage::{ChunkRepository, Database, FileRepository, SymbolRepository, GraphEdgeRepository};
+    use dh_storage::{
+        ChunkRepository, Database, FileRepository, GraphEdgeRepository, IndexStateRepository,
+        SymbolRepository,
+    };
     use dh_types::{
-        Chunk, ChunkKind, EmbeddingStatus, File, FreshnessReason,
-        FreshnessState, LanguageId, ParseStatus,
-        Span, Symbol, SymbolKind, Visibility,
+        Chunk, ChunkKind, EmbeddingStatus, File, FreshnessReason, FreshnessState, IndexRunStatus,
+        IndexState, LanguageId, ParseStatus, Span, Symbol, SymbolKind, Visibility,
     };
     use tempfile::NamedTempFile;
 
@@ -2366,35 +2559,62 @@ mod tests {
             },
         ])?;
 
-        db.insert_edges(&[
-            dh_types::GraphEdge {
-                kind: dh_types::EdgeKind::Imports,
-                from: dh_types::NodeId::File(1),
-                to: dh_types::NodeId::File(2),
-                resolution: dh_types::EdgeResolution::Resolved,
-                confidence: dh_types::EdgeConfidence::Direct,
-                span: Some(Span { start_byte: 0, end_byte: 1, start_line: 1, start_column: 0, end_line: 1, end_column: 1 }),
-                reason: "import".into(),
-            },
-            dh_types::GraphEdge {
-                kind: dh_types::EdgeKind::References,
-                from: dh_types::NodeId::Symbol(10),
-                to: dh_types::NodeId::Symbol(11),
-                resolution: dh_types::EdgeResolution::Resolved,
-                confidence: dh_types::EdgeConfidence::Direct,
-                span: Some(Span { start_byte: 0, end_byte: 1, start_line: 2, start_column: 0, end_line: 2, end_column: 1 }),
-                reason: "reference".into(),
-            },
-            dh_types::GraphEdge {
-                kind: dh_types::EdgeKind::Calls,
-                from: dh_types::NodeId::Symbol(10),
-                to: dh_types::NodeId::Symbol(11),
-                resolution: dh_types::EdgeResolution::Resolved,
-                confidence: dh_types::EdgeConfidence::Direct,
-                span: Some(Span { start_byte: 0, end_byte: 1, start_line: 2, start_column: 0, end_line: 2, end_column: 1 }),
-                reason: "call".into(),
-            }
-        ], 1)?;
+        db.insert_edges(
+            &[
+                dh_types::GraphEdge {
+                    kind: dh_types::EdgeKind::Imports,
+                    from: dh_types::NodeId::File(1),
+                    to: dh_types::NodeId::File(2),
+                    resolution: dh_types::EdgeResolution::Resolved,
+                    confidence: dh_types::EdgeConfidence::Direct,
+                    span: Some(Span {
+                        start_byte: 0,
+                        end_byte: 1,
+                        start_line: 1,
+                        start_column: 0,
+                        end_line: 1,
+                        end_column: 1,
+                    }),
+                    reason: "import".into(),
+                    payload_json: None,
+                },
+                dh_types::GraphEdge {
+                    kind: dh_types::EdgeKind::References,
+                    from: dh_types::NodeId::Symbol(10),
+                    to: dh_types::NodeId::Symbol(11),
+                    resolution: dh_types::EdgeResolution::Resolved,
+                    confidence: dh_types::EdgeConfidence::Direct,
+                    span: Some(Span {
+                        start_byte: 0,
+                        end_byte: 1,
+                        start_line: 2,
+                        start_column: 0,
+                        end_line: 2,
+                        end_column: 1,
+                    }),
+                    reason: "reference".into(),
+                    payload_json: None,
+                },
+                dh_types::GraphEdge {
+                    kind: dh_types::EdgeKind::Calls,
+                    from: dh_types::NodeId::Symbol(10),
+                    to: dh_types::NodeId::Symbol(11),
+                    resolution: dh_types::EdgeResolution::Resolved,
+                    confidence: dh_types::EdgeConfidence::Direct,
+                    span: Some(Span {
+                        start_byte: 0,
+                        end_byte: 1,
+                        start_line: 2,
+                        start_column: 0,
+                        end_line: 2,
+                        end_column: 1,
+                    }),
+                    reason: "call".into(),
+                    payload_json: None,
+                },
+            ],
+            1,
+        )?;
 
         db.insert_chunks(&[
             Chunk {
@@ -2450,10 +2670,31 @@ mod tests {
         Ok(())
     }
 
+    fn mark_index_completed(db: &Database) -> anyhow::Result<()> {
+        db.update_state(&IndexState {
+            workspace_id: 1,
+            schema_version: 1,
+            index_version: 42,
+            status: IndexRunStatus::Completed,
+            active_run_id: None,
+            total_files: 2,
+            indexed_files: 2,
+            dirty_files: 0,
+            deleted_files: 0,
+            last_scan_started_at_unix_ms: Some(1),
+            last_scan_finished_at_unix_ms: Some(2),
+            last_successful_index_at_unix_ms: Some(2),
+            queued_embeddings: 0,
+            last_error: None,
+        })?;
+        Ok(())
+    }
+
     #[test]
     fn supports_grounded_definition_and_references() -> anyhow::Result<()> {
         let db = setup_db()?;
         seed(&db)?;
+        mark_index_completed(&db)?;
 
         let def = db.goto_definition(GotoDefinitionQuery {
             workspace_id: 1,
@@ -2488,6 +2729,7 @@ mod tests {
     {
         let db = setup_db()?;
         seed(&db)?;
+        mark_index_completed(&db)?;
 
         let deps = db.find_dependencies(FindDependenciesQuery {
             workspace_id: 1,
@@ -2507,21 +2749,98 @@ mod tests {
     }
 
     #[test]
+    fn call_hierarchy_uses_current_hydrated_projection() -> anyhow::Result<()> {
+        let db = setup_db()?;
+        seed(&db)?;
+        mark_index_completed(&db)?;
+
+        let hierarchy = db.call_hierarchy(CallHierarchyQuery {
+            workspace_id: 1,
+            symbol: "run".into(),
+            limit: 10,
+            max_depth: 3,
+        })?;
+
+        assert_eq!(hierarchy.answer_state, AnswerState::Grounded);
+        assert!(hierarchy
+            .callees
+            .iter()
+            .any(|node| node.node.label == "helper"));
+        assert!(hierarchy.evidence.gaps.is_empty());
+        assert!(hierarchy
+            .evidence
+            .conclusion
+            .contains("hydrated graph projection"));
+        Ok(())
+    }
+
+    #[test]
+    fn graph_queries_expose_stale_projection_as_partial() -> anyhow::Result<()> {
+        let db = setup_db()?;
+        seed(&db)?;
+        db.update_state(&IndexState {
+            workspace_id: 1,
+            schema_version: 1,
+            index_version: 43,
+            status: IndexRunStatus::Parsing,
+            active_run_id: Some("run-active".into()),
+            total_files: 2,
+            indexed_files: 1,
+            dirty_files: 1,
+            deleted_files: 0,
+            last_scan_started_at_unix_ms: Some(3),
+            last_scan_finished_at_unix_ms: None,
+            last_successful_index_at_unix_ms: Some(2),
+            queued_embeddings: 0,
+            last_error: None,
+        })?;
+
+        let deps = db.find_dependencies(FindDependenciesQuery {
+            workspace_id: 1,
+            file_path: "src/main.ts".into(),
+            limit: 10,
+        })?;
+
+        assert_eq!(deps.answer_state, AnswerState::Partial);
+        assert!(deps
+            .evidence
+            .gaps
+            .iter()
+            .any(|gap| gap.contains("graph projection is stale")));
+        assert!(deps
+            .evidence
+            .evidence
+            .iter()
+            .all(|entry| entry.confidence == EvidenceConfidence::Partial));
+        Ok(())
+    }
+
+    #[test]
     fn references_are_partial_when_unresolved_rows_exist() -> anyhow::Result<()> {
         let db = setup_db()?;
         seed(&db)?;
+        mark_index_completed(&db)?;
 
-        db.insert_edges(&[
-            dh_types::GraphEdge {
+        db.insert_edges(
+            &[dh_types::GraphEdge {
                 kind: dh_types::EdgeKind::References,
                 from: dh_types::NodeId::Symbol(10),
                 to: dh_types::NodeId::Symbol(11),
                 resolution: dh_types::EdgeResolution::Unresolved,
                 confidence: dh_types::EdgeConfidence::BestEffort,
-                span: Some(Span { start_byte: 0, end_byte: 1, start_line: 3, start_column: 0, end_line: 3, end_column: 1 }),
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 3,
+                    start_column: 0,
+                    end_line: 3,
+                    end_column: 1,
+                }),
                 reason: "reference".into(),
-            }
-        ], 1)?;
+                payload_json: None,
+            }],
+            1,
+        )?;
 
         let refs = db.find_references(FindReferencesQuery {
             workspace_id: 1,
@@ -2547,18 +2866,28 @@ mod tests {
     fn dependents_are_partial_when_unresolved_references_contribute() -> anyhow::Result<()> {
         let db = setup_db()?;
         seed(&db)?;
+        mark_index_completed(&db)?;
 
-        db.insert_edges(&[
-            dh_types::GraphEdge {
+        db.insert_edges(
+            &[dh_types::GraphEdge {
                 kind: dh_types::EdgeKind::References,
                 from: dh_types::NodeId::Symbol(10),
                 to: dh_types::NodeId::Symbol(11),
                 resolution: dh_types::EdgeResolution::Unresolved,
                 confidence: dh_types::EdgeConfidence::BestEffort,
-                span: Some(Span { start_byte: 0, end_byte: 1, start_line: 4, start_column: 0, end_line: 4, end_column: 1 }),
+                span: Some(Span {
+                    start_byte: 0,
+                    end_byte: 1,
+                    start_line: 4,
+                    start_column: 0,
+                    end_line: 4,
+                    end_column: 1,
+                }),
                 reason: "reference".into(),
-            }
-        ], 1)?;
+                payload_json: None,
+            }],
+            1,
+        )?;
 
         let dependents = db.find_dependents(FindDependentsQuery {
             workspace_id: 1,
@@ -2605,7 +2934,8 @@ mod tests {
         let db = setup_db()?;
         seed(&db)?;
 
-        let grounded = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
+        let grounded = db.build_evidence(BuildEvidenceQuery {
+            semantic_vector: None,
             workspace_id: 1,
             query: "how does helper work?".into(),
             intent: "explain".into(),
@@ -2624,7 +2954,8 @@ mod tests {
         assert!(!grounded.evidence.evidence.is_empty());
         assert!(grounded.evidence.bounds.traversal_scope.as_deref() == Some("build_evidence"));
 
-        let insufficient = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
+        let insufficient = db.build_evidence(BuildEvidenceQuery {
+            semantic_vector: None,
             workspace_id: 1,
             query: "how does definitely_missing_subject work?".into(),
             intent: "explain".into(),
@@ -2649,7 +2980,8 @@ mod tests {
             .iter()
             .any(|gap| gap.contains("no indexed evidence")));
 
-        let unsupported = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
+        let unsupported = db.build_evidence(BuildEvidenceQuery {
+            semantic_vector: None,
             workspace_id: 1,
             query: "trace flow through the entire subsystem".into(),
             intent: "explain".into(),
@@ -2698,7 +3030,8 @@ mod tests {
                 "call-hierarchy requests",
             ),
         ] {
-            let out_of_scope = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
+            let out_of_scope = db.build_evidence(BuildEvidenceQuery {
+                semantic_vector: None,
                 workspace_id: 1,
                 query: query_text.into(),
                 intent: "explain".into(),
@@ -2737,7 +3070,8 @@ mod tests {
         let db = setup_db()?;
         seed(&db)?;
 
-        let partial = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
+        let partial = db.build_evidence(BuildEvidenceQuery {
+            semantic_vector: None,
             workspace_id: 1,
             query: "how does run work?".into(),
             intent: "explain".into(),
@@ -2770,7 +3104,8 @@ mod tests {
         seed(&db)?;
 
         for intent in ["trace", "impact", "call_hierarchy", "arbitrary"] {
-            let unsupported = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
+            let unsupported = db.build_evidence(BuildEvidenceQuery {
+                semantic_vector: None,
                 workspace_id: 1,
                 query: "how does helper work?".into(),
                 intent: intent.into(),
@@ -2807,7 +3142,8 @@ mod tests {
         let db = setup_db()?;
         seed(&db)?;
 
-        let partial = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
+        let partial = db.build_evidence(BuildEvidenceQuery {
+            semantic_vector: None,
             workspace_id: 1,
             query: "how do helper and run work?".into(),
             intent: "explain".into(),
@@ -2863,7 +3199,8 @@ mod tests {
             last_freshness_run_id: Some("run-query-stale".into()),
         })?;
 
-        let partial = db.build_evidence(BuildEvidenceQuery { semantic_vector: None,
+        let partial = db.build_evidence(BuildEvidenceQuery {
+            semantic_vector: None,
             workspace_id: 1,
             query: "how does helper work?".into(),
             intent: "explain".into(),

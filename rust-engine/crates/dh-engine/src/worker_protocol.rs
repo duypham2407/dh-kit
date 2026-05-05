@@ -6,6 +6,8 @@ use std::io::{BufRead, BufReader, Read, Write};
 
 pub const WORKER_PROTOCOL_VERSION: &str = "1";
 pub const WORKER_PROTOCOL_TRANSPORT: &str = "jsonrpc_stdio_content_length";
+pub const QUERY_CALL_HIERARCHY_METHOD: &str = "query.callHierarchy";
+pub const QUERY_ENTRY_POINTS_METHOD: &str = "query.entryPoints";
 pub const QUERY_BUILD_EVIDENCE_METHOD: &str = "query.buildEvidence";
 pub const BUILD_EVIDENCE_DEFAULT_MAX_FILES: usize = 5;
 pub const BUILD_EVIDENCE_DEFAULT_MAX_SYMBOLS: usize = 8;
@@ -34,21 +36,25 @@ pub const HOST_TO_WORKER_REQUEST_METHODS: [&str; 4] = [
     "session.cancel",
     "dh.shutdown",
 ];
-pub const WORKER_TO_HOST_QUERY_METHODS: [&str; 4] = [
+pub const WORKER_TO_HOST_QUERY_METHODS: [&str; 6] = [
     "query.search",
     "query.definition",
     "query.relationship",
     QUERY_BUILD_EVIDENCE_METHOD,
+    QUERY_CALL_HIERARCHY_METHOD,
+    QUERY_ENTRY_POINTS_METHOD,
 ];
 pub const WORKER_TO_HOST_NOTIFICATIONS: [&str; 3] =
     ["dh.ready", "event.output.delta", "event.warning"];
 pub const QUERY_RELATIONSHIPS: [&str; 3] = ["usage", "dependencies", "dependents"];
-pub const BRIDGE_INITIALIZE_METHODS: [&str; 5] = [
+pub const BRIDGE_INITIALIZE_METHODS: [&str; 7] = [
     "dh.initialize",
     "query.search",
     "query.definition",
     "query.relationship",
     QUERY_BUILD_EVIDENCE_METHOD,
+    QUERY_CALL_HIERARCHY_METHOD,
+    QUERY_ENTRY_POINTS_METHOD,
 ];
 pub const BRIDGE_LIFECYCLE_CONTROL_METHODS: [&str; 5] = [
     "dh.initialized",
@@ -272,7 +278,9 @@ mod tests {
                 "query.search",
                 "query.definition",
                 "query.relationship",
-                "query.buildEvidence"
+                "query.buildEvidence",
+                "query.callHierarchy",
+                "query.entryPoints"
             ])
         );
         assert_eq!(
@@ -354,9 +362,12 @@ mod tests {
         assert!(is_worker_to_host_query_method("query.definition"));
         assert!(is_worker_to_host_query_method("query.relationship"));
         assert!(is_worker_to_host_query_method("query.buildEvidence"));
+        assert!(is_worker_to_host_query_method("query.callHierarchy"));
+        assert!(is_worker_to_host_query_method("query.entryPoints"));
         assert!(!is_worker_to_host_query_method("query.trace"));
+        assert!(!is_worker_to_host_query_method("query.traceFlow"));
         assert!(!is_worker_to_host_query_method("query.impactAnalysis"));
-        assert!(!is_worker_to_host_query_method("query.callHierarchy"));
+        assert!(!is_worker_to_host_query_method("query.semanticSearch"));
         assert!(!is_worker_to_host_query_method("tool.execute"));
         assert!(!is_worker_to_host_query_method("arbitrary.forward"));
     }

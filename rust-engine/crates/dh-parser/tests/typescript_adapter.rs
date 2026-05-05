@@ -26,6 +26,10 @@ fn parse_with_adapter<'a>(
         file_id: 42,
         rel_path,
         source,
+        abs_path: None,
+        workspace_root: None,
+        workspace_roots: Vec::new(),
+        package_roots: Vec::new(),
     };
 
     (parse_output, ctx)

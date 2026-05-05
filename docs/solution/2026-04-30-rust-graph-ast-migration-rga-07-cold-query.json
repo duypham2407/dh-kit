@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "suite_id": "benchmark-suite-query-benchmark-1777614831003",
+  "generated_at_unix_ms": 1777614831095,
+  "summary": {
+    "local_evidence_statement": "Benchmark results are local evidence for this corpus and this environment only.",
+    "corpus_summary": "DH@local-working-tree (DhRepo)",
+    "environment_summary": "macos-aarch64 build_profile=debug",
+    "degraded": false,
+    "result_count": 1
+  },
+  "results": [
+    {
+      "metadata": {
+        "run_id": "query-benchmark-1777614831003",
+        "benchmark_class": "cold_query",
+        "suite_id": "benchmark-suite-query-benchmark-1777614831003",
+        "started_at_unix_ms": 1777614831003,
+        "finished_at_unix_ms": 1777614831095,
+        "engine_version": "0.1.0",
+        "build_profile": "debug",
+        "host_os": "macos",
+        "host_arch": "aarch64",
+        "cpu_count": 8,
+        "corpus": {
+          "kind": "dh_repo",
+          "label": "DH",
+          "revision_or_snapshot": "local-working-tree",
+          "root_path": "/Users/duypham/Code/DH",
+          "query_set_label": "top_symbol_names",
+          "mutation_set_label": null,
+          "notes": "Bounded Rust query-engine latency only; does not measure CLI startup, bridge, or LLM latency."
+        },
+        "preparation": {
+          "state_label": "cold_query_no_warmup",
+          "cleared_reusable_state": true,
+          "preserved_reusable_state": false,
+          "baseline_run_ref": null,
+          "mutation_set_label": null,
+          "mutation_paths": [],
+          "query_set_label": "top_symbol_names",
+          "notes": [
+            "Query benchmark latency is reported as sample distribution (p50/p95) and sample counts.",
+            "This benchmark is local evidence only and does not imply end-to-end answer latency guarantees."
+          ]
+        },
+        "baseline_run_ref": null,
+        "comparison_key": "class=ColdQuery|corpus=DH@local-working-tree|profile=debug|prep=cold_query_no_warmup|query_set=top_symbol_names|mutation_set="
+      },
+      "status": "complete",
+      "memory": {
+        "status": "not_measured",
+        "peak_rss_bytes": null,
+        "method": null,
+        "scope": "query_series_benchmark",
+        "reason": "Peak RSS measurement is not yet instrumented for query benchmark classes."
+      },
+      "comparison": {
+        "eligible": true,
+        "baseline_run_ref": null,
+        "comparison_key": "class=ColdQuery|corpus=DH@local-working-tree|profile=debug|prep=cold_query_no_warmup|query_set=top_symbol_names|mutation_set=",
+        "reason": null
+      },
+      "correctness": null,
+      "index_timing": null,
+      "query_latency": {
+        "sample_count_requested": 25,
+        "sample_count_completed": 25,
+        "p50_ms": 4.046625,
+        "p95_ms": 4.512875,
+        "query_set_label": "top_symbol_names"
+      },
+      "degradation_notes": []
+    }
+  ]
+}

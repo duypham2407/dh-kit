@@ -27,6 +27,10 @@ fn parse_with_adapter<'a, A: LanguageAdapter>(
         file_id: 41,
         rel_path,
         source,
+        abs_path: None,
+        workspace_root: None,
+        workspace_roots: Vec::new(),
+        package_roots: Vec::new(),
     };
 
     (parse_output, ctx)
@@ -292,6 +296,10 @@ fn extract_file_facts_reports_parse_status_for_new_languages() {
         file_id: 42,
         rel_path: "sample.py",
         source,
+        abs_path: None,
+        workspace_root: None,
+        workspace_roots: Vec::new(),
+        package_roots: Vec::new(),
     };
 
     let facts = dh_parser::extract_file_facts(&registry, &mut pool, LanguageId::Python, &ctx)

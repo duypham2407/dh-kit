@@ -3,7 +3,10 @@
 //! Slice 2B scope: syntax-first extraction for TS/TSX/JS/JSX with
 //! deterministic normalized facts.
 
-use crate::{ExtractionContext, LanguageAdapter, ParseOutput, TypeRelation, UnresolvedImport};
+use crate::{
+    module_resolver::{ModuleResolutionStatus, ModuleResolver},
+    ExtractionContext, LanguageAdapter, ParseOutput, TypeRelation, UnresolvedImport,
+};
 use anyhow::{anyhow, Result};
 use dh_types::{
     CallEdge, CallKind, Chunk, ChunkKind, EmbeddingStatus, ExportFact, Import, ImportKind,
@@ -699,7 +702,7 @@ impl LanguageAdapter for TypeScriptAdapter {
         let header_span = span_from_byte_range(ctx.source, 0, header_end);
 
         chunks.push(Chunk {
-            id: stable_id(&format!("chunk|header|{}", ctx.rel_path)),
+            id: stable_id(&format!("chunk|{}|header|{}", ctx.file_id, ctx.rel_path)),
             workspace_id: ctx.workspace_id,
             file_id: ctx.file_id,
             symbol_id: None,
@@ -726,8 +729,12 @@ impl LanguageAdapter for TypeScriptAdapter {
 
             chunks.push(Chunk {
                 id: stable_id(&format!(
-                    "chunk|{}|{}|{}|{}",
-                    ctx.rel_path, title_prefix, symbol.qualified_name, symbol.span.start_byte
+                    "chunk|{}|{}|{}|{}|{}",
+                    ctx.file_id,
+                    ctx.rel_path,
+                    title_prefix,
+                    symbol.qualified_name,
+                    symbol.span.start_byte
                 )),
                 workspace_id: ctx.workspace_id,
                 file_id: ctx.file_id,
@@ -771,8 +778,8 @@ impl LanguageAdapter for TypeScriptAdapter {
 
                 chunks.push(Chunk {
                     id: stable_id(&format!(
-                        "chunk|class-summary|{}|{}",
-                        ctx.rel_path, symbol.qualified_name
+                        "chunk|{}|class-summary|{}|{}",
+                        ctx.file_id, ctx.rel_path, symbol.qualified_name
                     )),
                     workspace_id: ctx.workspace_id,
                     file_id: ctx.file_id,
@@ -818,18 +825,25 @@ impl LanguageAdapter for TypeScriptAdapter {
 
     fn resolve_imports(
         &self,
-        _ctx: &ExtractionContext<'_>,
+        ctx: &ExtractionContext<'_>,
         imports: &mut [Import],
         _symbols: &[Symbol],
     ) -> Vec<UnresolvedImport> {
         let mut unresolved = Vec::new();
+        let resolver = ModuleResolver::from_extraction_context(ctx);
 
         for import in imports {
-            if import.resolved_file_id.is_none() && import.resolved_symbol_id.is_none() {
-                if import.resolution_error.is_none() {
-                    import.resolution_error =
-                        Some("unresolved import (Slice 2B syntax-first adapter stub)".to_string());
-                }
+            if import.resolved_file_id.is_some() || import.resolved_symbol_id.is_some() {
+                continue;
+            }
+
+            let resolution = resolver.resolve(&import.raw_specifier);
+            import.resolution_error = Some(resolution.to_resolution_error());
+
+            if !matches!(
+                resolution.status,
+                ModuleResolutionStatus::Resolved | ModuleResolutionStatus::External
+            ) {
                 unresolved.push(UnresolvedImport);
             }
         }

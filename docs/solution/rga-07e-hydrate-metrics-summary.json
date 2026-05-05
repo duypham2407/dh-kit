@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-01T11:09:11.527Z",
+  "taskId": "RGA-07E",
+  "sourceBenchmarkArtifact": "docs/solution/rga-07e-hydrate-graph-benchmark.json",
+  "sourceSolutionPackage": "docs/solution/2026-04-30-rust-graph-ast-migration.md",
+  "corpus": {
+    "label": "DH/OpenKit official corpus",
+    "rootPath": "/Users/duypham/Code/DH",
+    "snapshot": "local-working-tree",
+    "largeCorpusTargetFiles": 3000,
+    "measuredScannedFiles": 353,
+    "limitation": "Current official corpus is smaller than the 3,000-file target recorded in the approved solution; hydrate measurements remain official-corpus evidence, not large-corpus proof."
+  },
+  "status": "hydrate_p95_measured_degraded_delete_gate_blocked",
+  "instrumentation": {
+    "rustBenchmarkClass": "hydrate_graph",
+    "cliClass": "hydrate-graph",
+    "benchmarkJsonFieldsAdded": [
+      "results[].index_timing.link_ms",
+      "results[].index_timing.graph_hydration_ms",
+      "results[].graph_hydration.sample_count_requested",
+      "results[].graph_hydration.sample_count_completed",
+      "results[].graph_hydration.p50_ms",
+      "results[].graph_hydration.p95_ms",
+      "results[].graph_hydration.max_ms",
+      "results[].graph_hydration.node_count",
+      "results[].graph_hydration.persisted_edge_count",
+      "results[].graph_hydration.synthetic_edge_count",
+      "results[].graph_hydration.freshness",
+      "results[].graph_hydration.freshness_reason"
+    ],
+    "sampleCountRequested": 5,
+    "sampleCountCompleted": 5,
+    "notes": [
+      "Hydrate benchmark runs a normal Rust index preparation and then repeats HydratedGraphProjection::hydrate five times against the produced index state.",
+      "Index benchmark artifacts now also expose single-run link_ms and graph_hydration_ms from dh-indexer::IndexReport."
+    ]
+  },
+  "gateResults": {
+    "hydrateP95": "measured_degraded_subset_pass",
+    "hydrateMissingInstrumentation": "resolved_for_rust_benchmark_surface",
+    "officialParity": "blocked_out_of_scope_for_rga_07e_pending_rga_07g",
+    "incrementalPerformance": "blocked_out_of_scope_for_rga_07e_pending_rga_07f",
+    "rga08DeleteGate": "blocked"
+  },
+  "measuredSubset": {
+    "hydrateGraph": {
+      "status": "measured_degraded",
+      "unit": "milliseconds",
+      "sampleCountRequested": 5,
+      "sampleCountCompleted": 5,
+      "p50Ms": 417.507792,
+      "p95Ms": 463.3905,
+      "maxMs": 463.3905,
+      "thresholdP95Ms": 2000,
+      "thresholdResult": "measured_degraded_subset_pass",
+      "workspaceId": 1,
+      "nodeCount": 5951,
+      "persistedEdgeCount": 74315,
+      "syntheticEdgeCount": 11196,
+      "freshness": "partial",
+      "freshnessReason": "2 indexed file(s) have degraded partial freshness"
+    },
+    "indexPreparation": {
+      "status": "degraded",
+      "elapsedMs": 77966,
+      "linkMs": 630,
+      "graphHydrationMs": 418,
+      "scannedFiles": 353,
+      "changedFiles": 11,
+      "reindexedFiles": 353,
+      "deletedFiles": 0,
+      "refreshedCurrentFiles": 351,
+      "retainedCurrentFiles": 0,
+      "degradedPartialFiles": 2,
+      "notCurrentFiles": 32
+    }
+  },
+  "deletionGateDecision": {
+    "rga08MayProceed": false,
+    "reason": "RGA-07E resolves the missing hydrate-p95 instrumentation gap for Rust benchmark artifacts, but the captured measurement is degraded/official-corpus-only and does not address official parity (RGA-07G) or incremental performance failures (RGA-07F)."
+  },
+  "limitations": [
+    "Benchmark was run in debug profile on a local working tree; it is not a release-profile SLA.",
+    "Hydrate freshness was partial because two indexed files had degraded partial freshness and the index report had 32 not_current files.",
+    "The corpus is below the 3,000-file target, so the <=2s hydrate p95 threshold is measured only on the official DH/OpenKit corpus, not on a 3k-file corpus.",
+    "RGA-07E did not optimize incremental performance and did not produce final official parity."
+  ],
+  "artifactsWritten": [
+    "docs/solution/rga-07e-hydrate-graph-benchmark.json",
+    "docs/solution/rga-07e-hydrate-metrics-summary.json",
+    "docs/solution/2026-04-30-rust-graph-ast-migration-rga-07e-hydrate-metrics.md"
+  ]
+}

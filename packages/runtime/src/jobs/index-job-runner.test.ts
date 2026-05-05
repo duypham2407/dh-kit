@@ -6,8 +6,10 @@ import { EmbeddingsRepo } from "../../../storage/src/sqlite/repositories/embeddi
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { GRAPH_AST_ENGINE_ENV_VAR } from "../../../shared/src/utils/graph-engine-selector.js";
 
 let tmpDirs: string[] = [];
+const originalGraphAstEngine = process.env[GRAPH_AST_ENGINE_ENV_VAR];
 
 function makeTmpRepo(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dh-index-test-"));
@@ -25,6 +27,11 @@ afterEach(() => {
   }
   tmpDirs = [];
   if (original !== undefined) process.env.OPENAI_API_KEY = original;
+  if (originalGraphAstEngine === undefined) {
+    delete process.env[GRAPH_AST_ENGINE_ENV_VAR];
+  } else {
+    process.env[GRAPH_AST_ENGINE_ENV_VAR] = originalGraphAstEngine;
+  }
 });
 
 describe("runIndexWorkflow", () => {
@@ -50,14 +57,35 @@ describe("runIndexWorkflow", () => {
 
     expect(result.filesScanned).toBeGreaterThanOrEqual(1);
     expect(result.symbolsExtracted).toBeGreaterThan(0);
-    expect(result.callSitesExtracted).toBeGreaterThan(0);
+    expect(result.edgesExtracted).toBe(0);
+    expect(result.callSitesExtracted).toBe(0);
     expect(result.chunksProduced).toBeGreaterThan(0);
     expect(result.embedding).toBeDefined();
     expect(result.embedding!.embeddingsStored).toBeGreaterThan(0);
     expect(result.summary).toContain("Indexed");
+    expect(result.summary).toContain("graph=degraded(rust_indexer_report_not_available_at_runtime_job_boundary)");
+    expect(result.summary).toContain("graph_engine=rust:default_rust");
     expect(result.summary).toContain("operator-safety=");
     expect(result.diagnostics.filesDiscovered).toBeGreaterThan(0);
     expect(result.diagnostics.filesRefreshed).toBeGreaterThan(0);
+    expect(result.diagnostics.graphExtraction).toMatchObject({
+      available: false,
+      source: "degraded_unavailable_adapter",
+      reason: "rust_indexer_report_not_available_at_runtime_job_boundary",
+      counts: {
+        edgesExtracted: 0,
+        importEdgesExtracted: 0,
+        callEdgesExtracted: 0,
+        callSitesExtracted: 0,
+        referencesExtracted: 0,
+      },
+      runtimeBehavior: "rust_first_unavailable",
+      engineSelector: {
+        engine: "rust",
+        label: "default_rust",
+        runsTypeScriptExtraction: false,
+      },
+    });
     expect(result.diagnostics.operatorSafety.allowed).toBe(true);
     expect(result.diagnostics.operatorSafety.blockingCount).toBe(0);
 
@@ -82,6 +110,7 @@ describe("runIndexWorkflow", () => {
     expect(result.filesScanned).toBeGreaterThanOrEqual(1);
     expect(result.chunksProduced).toBeGreaterThan(0);
     expect(result.callSitesExtracted).toBeGreaterThanOrEqual(0);
+    expect(result.diagnostics.graphExtraction.available).toBe(false);
     expect(result.embedding).toBeUndefined();
     expect(result.summary).toContain("embeddings=skipped");
     expect(result.diagnostics.filesRefreshed).toBeGreaterThan(0);
@@ -97,6 +126,7 @@ describe("runIndexWorkflow", () => {
     expect(result.filesScanned).toBe(0);
     expect(result.symbolsExtracted).toBe(0);
     expect(result.callSitesExtracted).toBe(0);
+    expect(result.diagnostics.graphExtraction.available).toBe(false);
     expect(result.chunksProduced).toBe(0);
     expect(result.embedding).toBeUndefined();
     expect(result.diagnostics.filesDiscovered).toBe(0);
@@ -164,6 +194,71 @@ describe("runIndexWorkflow", () => {
     expect(result.filesScanned).toBeGreaterThan(0);
     expect(result.diagnostics.operatorSafety.mode).toBe("check");
     expect(result.summary).toContain("operator-safety=");
+  });
+
+  it("reports unavailable Rust graph data instead of fabricating edge counts", async () => {
+    const repo = makeTmpRepo();
+    fs.writeFileSync(
+      path.join(repo, "src", "graph.ts"),
+      [
+        "import { value } from './value';",
+        "export function callValue() { return value(); }",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(repo, "src", "value.ts"),
+      "export function value() { return 1; }\n",
+      "utf8",
+    );
+
+    const result = await runIndexWorkflow(repo, { skipEmbedding: true });
+
+    expect(result.edgesExtracted).toBe(0);
+    expect(result.callSitesExtracted).toBe(0);
+    expect(result.diagnostics.graphExtraction).toMatchObject({
+      available: false,
+      source: "degraded_unavailable_adapter",
+      reason: "rust_indexer_report_not_available_at_runtime_job_boundary",
+      runtimeBehavior: "rust_first_unavailable",
+      engineSelector: {
+        engine: "rust",
+        label: "default_rust",
+        runsTypeScriptExtraction: false,
+      },
+    });
+  });
+
+  it("labels ts selector as rollback-only and does not run legacy TypeScript graph extraction", async () => {
+    process.env[GRAPH_AST_ENGINE_ENV_VAR] = "ts";
+    const repo = makeTmpRepo();
+    fs.writeFileSync(
+      path.join(repo, "src", "graph.ts"),
+      [
+        "import { value } from './value';",
+        "export function callValue() { return value(); }",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.writeFileSync(path.join(repo, "src", "value.ts"), "export function value() { return 1; }\n", "utf8");
+
+    const result = await runIndexWorkflow(repo, { skipEmbedding: true });
+
+    expect(result.edgesExtracted).toBe(0);
+    expect(result.callSitesExtracted).toBe(0);
+    expect(result.summary).toContain("graph=degraded(ts_graph_engine_requires_explicit_rollback_rehearsal_context)");
+    expect(result.summary).toContain("graph_engine=ts:explicit_ts_rollback_only");
+    expect(result.diagnostics.graphExtraction).toMatchObject({
+      available: false,
+      degraded: true,
+      reason: "ts_graph_engine_requires_explicit_rollback_rehearsal_context",
+      runtimeBehavior: "ts_rollback_context_required",
+      engineSelector: {
+        engine: "ts",
+        label: "explicit_ts_rollback_only",
+        runsTypeScriptExtraction: false,
+      },
+    });
   });
 
   it("does not re-chunk already-indexed files unless force=true", async () => {

@@ -1,12 +1,268 @@
 use dh_indexer::{IndexPathsRequest, IndexWorkspaceRequest, Indexer, IndexerApi};
 use dh_storage::{
-    ChunkRepository, Database, FileRepository, IndexStateRepository, SymbolRepository, GraphEdgeRepository
+    ChunkRepository, Database, FileRepository, GraphEdgeRepository, IndexStateRepository,
+    SymbolRepository,
 };
-use dh_types::{FreshnessReason, FreshnessState, ParseStatus};
+use dh_types::{EdgeKind, FreshnessReason, FreshnessState, NodeId, ParseStatus};
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
+
+#[test]
+fn index_workspace_records_multiple_roots_with_distinct_root_ids() {
+    let fixture = TempDir::new().expect("create temp fixture workspace");
+    let root_a = fixture.path().join("root-a");
+    let root_b = fixture.path().join("root-b");
+
+    fs::create_dir_all(root_a.join("src")).expect("create first root src dir");
+    fs::create_dir_all(root_b.join("src")).expect("create second root src dir");
+    fs::write(
+        root_a.join("src/a.ts"),
+        r#"export function fromA(): number {
+  return 1;
+}
+"#,
+    )
+    .expect("write first root file");
+    fs::write(
+        root_b.join("src/b.ts"),
+        r#"export function fromB(): number {
+  return 2;
+}
+"#,
+    )
+    .expect("write second root file");
+
+    let db_path = fixture.path().join("dh-index.db");
+    let indexer = Indexer::new(db_path.clone());
+
+    let report = indexer
+        .index_workspace(IndexWorkspaceRequest {
+            roots: vec![root_a, root_b],
+            force_full: false,
+            max_files: None,
+            include_embeddings: false,
+        })
+        .expect("multi-root index should succeed");
+
+    assert_eq!(report.workspace_root_count, 2);
+    assert_eq!(report.package_root_count, 2);
+
+    let db = Database::new(&db_path).expect("open db");
+    db.initialize().expect("initialize db");
+    let root_ids = db
+        .list_files_by_workspace(1)
+        .expect("list indexed files by workspace")
+        .into_iter()
+        .map(|file| file.root_id)
+        .collect::<HashSet<_>>();
+    assert_eq!(root_ids.len(), 2);
+}
+
+#[test]
+fn index_workspace_allows_same_rel_path_in_different_roots() {
+    let fixture = TempDir::new().expect("create temp fixture workspace");
+    let root_a = fixture.path().join("root-a");
+    let root_b = fixture.path().join("root-b");
+
+    fs::create_dir_all(root_a.join("src")).expect("create first root src dir");
+    fs::create_dir_all(root_b.join("src")).expect("create second root src dir");
+    fs::write(
+        root_a.join("src/index.ts"),
+        r#"export function fromA(): string {
+  return "a";
+}
+"#,
+    )
+    .expect("write first root index");
+    fs::write(
+        root_b.join("src/index.ts"),
+        r#"export function fromB(): string {
+  return "b";
+}
+"#,
+    )
+    .expect("write second root index");
+
+    let db_path = fixture.path().join("dh-index.db");
+    let indexer = Indexer::new(db_path.clone());
+
+    let report = indexer
+        .index_workspace(IndexWorkspaceRequest {
+            roots: vec![root_a, root_b],
+            force_full: false,
+            max_files: None,
+            include_embeddings: false,
+        })
+        .expect("multi-root duplicate-rel-path index should succeed");
+
+    assert_eq!(report.scanned_files, 2);
+    assert_eq!(report.reindexed_files, 2);
+    assert_eq!(report.deleted_files, 0);
+
+    let db = Database::new(&db_path).expect("open db");
+    db.initialize().expect("initialize db");
+    let files = db
+        .list_files_by_workspace(1)
+        .expect("list indexed files by workspace");
+    let duplicate_rel_files = files
+        .iter()
+        .filter(|file| file.rel_path == "src/index.ts")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        duplicate_rel_files.len(),
+        2,
+        "same rel_path under different roots should persist two file rows"
+    );
+    assert_ne!(duplicate_rel_files[0].id, duplicate_rel_files[1].id);
+    assert_ne!(
+        duplicate_rel_files[0].root_id,
+        duplicate_rel_files[1].root_id
+    );
+}
+
+#[test]
+fn index_workspace_resolves_cross_root_import_to_non_primary_root() {
+    let fixture = TempDir::new().expect("create temp fixture workspace");
+    let app_root = fixture.path().join("app");
+    let shared_root = fixture.path().join("shared");
+    seed_cross_root_package_project(&app_root, &shared_root);
+
+    let db_path = fixture.path().join("dh-index.db");
+    let indexer = Indexer::new(db_path.clone());
+
+    let report = indexer
+        .index_workspace(IndexWorkspaceRequest {
+            roots: vec![app_root, shared_root],
+            force_full: false,
+            max_files: None,
+            include_embeddings: false,
+        })
+        .expect("cross-root package index should succeed");
+
+    assert_eq!(report.scanned_files, 2);
+    assert_eq!(report.linked_imports, 1);
+    assert_eq!(report.linked_cross_root_imports, 1);
+    assert_eq!(report.unresolved_imports, 0);
+
+    let db = Database::new(&db_path).expect("open db");
+    db.initialize().expect("initialize db");
+    let files = db
+        .list_files_by_workspace(1)
+        .expect("list indexed files by workspace");
+    let app_file = files
+        .iter()
+        .find(|file| file.root_id == 1 && file.rel_path == "src/main.ts")
+        .expect("app file should be under primary root");
+    let shared_file = files
+        .iter()
+        .find(|file| file.root_id == 2 && file.rel_path == "src/index.ts")
+        .expect("shared file should be under non-primary root");
+
+    let import_edge = db
+        .find_outgoing_edges(1, "file", app_file.id as i64, 100)
+        .expect("read app outgoing edges")
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Imports)
+        .expect("app import edge should persist");
+
+    assert_eq!(import_edge.resolution, dh_types::EdgeResolution::Resolved);
+    assert_eq!(import_edge.to, NodeId::File(shared_file.id));
+}
+
+#[test]
+fn index_paths_reindexes_file_under_non_primary_root() {
+    let fixture = TempDir::new().expect("create temp fixture workspace");
+    let root_a = fixture.path().join("root-a");
+    let root_b = fixture.path().join("root-b");
+
+    fs::create_dir_all(root_a.join("src")).expect("create first root src dir");
+    fs::create_dir_all(root_b.join("src")).expect("create second root src dir");
+    fs::write(
+        root_a.join("src/index.ts"),
+        r#"export function value(): string {
+  return "a";
+}
+"#,
+    )
+    .expect("write first root index");
+    fs::write(
+        root_b.join("src/index.ts"),
+        r#"export function value(): string {
+  return "b";
+}
+"#,
+    )
+    .expect("write second root index");
+
+    let db_path = fixture.path().join("dh-index.db");
+    let indexer = Indexer::new(db_path.clone());
+    indexer
+        .index_workspace(IndexWorkspaceRequest {
+            roots: vec![root_a.clone(), root_b.clone()],
+            force_full: false,
+            max_files: None,
+            include_embeddings: false,
+        })
+        .expect("initial multi-root index should succeed");
+
+    let db = Database::new(&db_path).expect("open db");
+    db.initialize().expect("initialize db");
+    let before_files = db
+        .list_files_by_workspace(1)
+        .expect("list files before path reindex");
+    let first_root_file_before = before_files
+        .iter()
+        .find(|file| file.root_id == 1 && file.rel_path == "src/index.ts")
+        .expect("first root file before reindex");
+    let second_root_file_before = before_files
+        .iter()
+        .find(|file| file.root_id == 2 && file.rel_path == "src/index.ts")
+        .expect("second root file before reindex");
+    let first_root_hash_before = first_root_file_before.content_hash.clone();
+    let second_root_id = second_root_file_before.id;
+
+    fs::write(
+        root_b.join("src/index.ts"),
+        r#"export function value(): string {
+  return "b2";
+}
+"#,
+    )
+    .expect("modify non-primary root index");
+
+    let result = indexer
+        .index_paths(IndexPathsRequest {
+            workspace_id: 1,
+            paths: vec![root_b.join("src/index.ts")],
+            expand_dependents: false,
+        })
+        .expect("path-scoped non-primary reindex should succeed");
+
+    assert!(result.reindexed_files >= 1);
+    assert_eq!(result.deleted_files, 0);
+
+    let after_files = db
+        .list_files_by_workspace(1)
+        .expect("list files after path reindex");
+    let first_root_file_after = after_files
+        .iter()
+        .find(|file| file.root_id == 1 && file.rel_path == "src/index.ts")
+        .expect("first root file after reindex");
+    let second_root_file_after = after_files
+        .iter()
+        .find(|file| file.root_id == 2 && file.rel_path == "src/index.ts")
+        .expect("second root file after reindex");
+
+    assert_eq!(first_root_file_after.content_hash, first_root_hash_before);
+    assert_eq!(second_root_file_after.id, second_root_id);
+    assert_ne!(
+        second_root_file_after.content_hash, second_root_file_before.content_hash,
+        "non-primary root file hash should refresh without colliding with primary root file"
+    );
+    assert_eq!(after_files.len(), 2);
+}
 
 #[test]
 fn indexer_pipeline_end_to_end_incremental_and_delete() {
@@ -304,7 +560,8 @@ fn indexer_persists_run_lane_command_imports_without_duplicate_ids() {
     );
     assert!(
         imports.iter().any(|edge| {
-            edge.reason.contains("../../../shared/src/constants/roles.js")
+            edge.reason
+                .contains("../../../shared/src/constants/roles.js")
                 && edge.kind == dh_types::EdgeKind::Imports
         }),
         "indexing must preserve concrete imports from the affected file"
@@ -652,7 +909,8 @@ fn public_api_change_expands_to_dependents_after_confirmation() {
     fs::write(
         workspace.join("src/util.ts"),
         r#"export function helper(v: number): number {
-  return v + 100;
+  const doubled = v * 2;
+  return v + 1 + doubled - doubled;
 }
 "#,
     )
@@ -698,6 +956,158 @@ fn public_api_change_expands_to_dependents_after_confirmation() {
     );
 }
 
+#[test]
+fn implementation_only_change_preserves_downstream_edges_without_full_relink() {
+    let fixture = TempDir::new().expect("create temp fixture workspace");
+    let workspace = fixture.path();
+
+    seed_fixture_project(workspace);
+
+    let db_path = workspace.join("dh-index.db");
+    let indexer = Indexer::new(db_path.clone());
+
+    indexer
+        .index_workspace(IndexWorkspaceRequest {
+            roots: vec![workspace.to_path_buf()],
+            force_full: false,
+            max_files: None,
+            include_embeddings: false,
+        })
+        .expect("initial index should succeed");
+
+    let db = Database::new(&db_path).expect("open db");
+    db.initialize().expect("initialize db");
+    let main = db
+        .get_file_by_path(1, "src/main.ts")
+        .expect("main file lookup should not fail")
+        .expect("main file should exist");
+    let main_imports_before = db
+        .find_outgoing_edges(1, "file", main.id as i64, 1000)
+        .expect("initial outgoing edge lookup should not fail")
+        .into_iter()
+        .filter(|edge| edge.kind == EdgeKind::Imports)
+        .collect::<Vec<_>>();
+    let main_import_targets_before = main_imports_before
+        .iter()
+        .filter_map(|edge| match edge.to {
+            dh_types::NodeId::File(id) => Some(id),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+
+    let mut util_source = fs::read_to_string(workspace.join("src/util.ts"))
+        .expect("read util.ts before implementation-only rewrite");
+    util_source.push_str("// implementation-only trailing comment\n");
+    fs::write(workspace.join("src/util.ts"), util_source)
+        .expect("rewrite util implementation only");
+
+    let incremental = indexer
+        .index_workspace(IndexWorkspaceRequest {
+            roots: vec![workspace.to_path_buf()],
+            force_full: false,
+            max_files: None,
+            include_embeddings: false,
+        })
+        .expect("implementation-only change should succeed");
+
+    assert_eq!(incremental.changed_files, 1);
+    assert_eq!(
+        incremental.reindexed_files, 1,
+        "implementation-only changes should stay path-local after confirmed hashes match public/structural fingerprints"
+    );
+    let workspace_imports_after = db
+        .find_edges_by_workspace(1)
+        .expect("workspace edge lookup after incremental should not fail")
+        .into_iter()
+        .filter(|edge| edge.kind == EdgeKind::Imports)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        workspace_imports_after.len(),
+        main_import_targets_before.len(),
+        "content-only incremental updates must not create duplicate import edges"
+    );
+    for target in &main_import_targets_before {
+        assert!(
+            workspace_imports_after.iter().any(|edge| {
+                matches!(edge.from, dh_types::NodeId::File(id) if id == main.id)
+                    && matches!(edge.to, dh_types::NodeId::File(id) if id == *target)
+            }),
+            "content-only incremental updates must preserve main import edge to target file {target}"
+        );
+    }
+}
+
+#[test]
+fn stale_symbol_edges_are_removed_when_export_is_renamed() {
+    let fixture = TempDir::new().expect("create temp fixture workspace");
+    let workspace = fixture.path();
+
+    seed_symbol_edge_project(workspace, "helper");
+
+    let db_path = workspace.join("dh-index.db");
+    let indexer = Indexer::new(db_path.clone());
+
+    indexer
+        .index_workspace(IndexWorkspaceRequest {
+            roots: vec![workspace.to_path_buf()],
+            force_full: false,
+            max_files: None,
+            include_embeddings: false,
+        })
+        .expect("initial index should succeed");
+
+    let db = Database::new(&db_path).expect("open db");
+    db.initialize().expect("initialize db");
+    let util_before = db
+        .get_file_by_path(1, "src/util.ts")
+        .expect("util lookup before rename should not fail")
+        .expect("util should exist before rename");
+    let old_symbol_ids = db
+        .find_symbols_by_file(util_before.id)
+        .expect("util symbols lookup before rename should not fail")
+        .into_iter()
+        .map(|symbol| symbol.id)
+        .collect::<HashSet<_>>();
+
+    assert!(!old_symbol_ids.is_empty(), "util.ts should export symbols");
+    assert!(
+        db.find_edges_by_workspace(1)
+            .expect("workspace edges lookup before rename should not fail")
+            .iter()
+            .any(|edge| edge_touches_any_symbol(edge, &old_symbol_ids)),
+        "initial graph should contain call/reference edges touching the exported util symbol"
+    );
+
+    fs::write(
+        workspace.join("src/util.ts"),
+        r#"export function helperRenamed(): number {
+  return 2;
+}
+"#,
+    )
+    .expect("rename util export");
+
+    let rename_result = indexer
+        .index_paths(IndexPathsRequest {
+            workspace_id: 1,
+            paths: vec![workspace.join("src/util.ts")],
+            expand_dependents: false,
+        })
+        .expect("path-scoped reindex after export rename should succeed");
+
+    assert!(
+        rename_result.reindexed_files >= 1,
+        "renaming the export should reindex util.ts"
+    );
+    assert!(
+        db.find_edges_by_workspace(1)
+            .expect("workspace edges lookup after rename should not fail")
+            .iter()
+            .all(|edge| !edge_touches_any_symbol(edge, &old_symbol_ids)),
+        "reindex must remove graph_edges with old util symbol IDs as from/to symbol endpoints"
+    );
+}
+
 fn seed_fixture_project(workspace: &Path) {
     fs::create_dir_all(workspace.join("src")).expect("create src dir");
 
@@ -733,4 +1143,69 @@ export function run(): number {
 "#,
     )
     .expect("write service.ts");
+}
+
+fn seed_cross_root_package_project(app_root: &Path, shared_root: &Path) {
+    fs::create_dir_all(app_root.join("src")).expect("create app src dir");
+    fs::create_dir_all(shared_root.join("src")).expect("create shared src dir");
+
+    fs::write(
+        shared_root.join("package.json"),
+        r#"{ "name": "@fixture/shared", "main": "src/index.ts" }"#,
+    )
+    .expect("write shared package metadata");
+    fs::write(
+        app_root.join("src/main.ts"),
+        r#"import { shared } from "@fixture/shared";
+
+export function run(): string {
+  return shared();
+}
+"#,
+    )
+    .expect("write app main");
+    fs::write(
+        shared_root.join("src/index.ts"),
+        r#"export function shared(): string {
+  return "shared";
+}
+"#,
+    )
+    .expect("write shared index");
+}
+
+fn seed_symbol_edge_project(workspace: &Path, export_name: &str) {
+    fs::create_dir_all(workspace.join("src")).expect("create src dir");
+
+    fs::write(
+        workspace.join("src/main.ts"),
+        format!(
+            r#"import {{ {export_name} }} from "./util";
+
+export function run(): number {{
+  return {export_name}();
+}}
+"#
+        ),
+    )
+    .expect("write main.ts");
+
+    fs::write(
+        workspace.join("src/util.ts"),
+        format!(
+            r#"export function {export_name}(): number {{
+  return 1;
+}}
+"#
+        ),
+    )
+    .expect("write util.ts");
+}
+
+fn edge_touches_any_symbol(
+    edge: &dh_types::GraphEdge,
+    symbol_ids: &HashSet<dh_types::SymbolId>,
+) -> bool {
+    matches!(&edge.from, NodeId::Symbol(id) if symbol_ids.contains(id))
+        || matches!(&edge.to, NodeId::Symbol(id) if symbol_ids.contains(id))
 }

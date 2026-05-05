@@ -1,0 +1,754 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-01T09:54:00.044Z",
+  "taskId": "RGA-07A",
+  "gateEligible": false,
+  "gateDecision": "delete_gate_blocked",
+  "reason": "Normalized comparison is bounded to common files because legacy TypeScript baseline tooling covered only 35 files while the Rust index covered the broader 348 files of the official corpus; Rust parity CLI also treats the workspace as a one-file root fixture set and reported degraded parity.",
+  "coverage": {
+    "tsBaselineFiles": 35,
+    "rustIndexedFiles": 348,
+    "commonFiles": 29,
+    "tsOnlyFiles": 6,
+    "rustOnlyFiles": 319,
+    "commonOverRustPct": 8.333
+  },
+  "metrics": {
+    "symbols": {
+      "expectedTs": 66,
+      "actualRust": 93,
+      "parityPct": 70.968,
+      "rustToTsRatio": 1.409
+    },
+    "imports": {
+      "expectedTs": 1,
+      "actualRust": 122,
+      "parityPct": 0.82,
+      "rustToTsRatio": 122
+    },
+    "calls": {
+      "expectedTs": 39,
+      "actualRust": 52,
+      "parityPct": 75,
+      "rustToTsRatio": 1.333
+    },
+    "references": {
+      "expectedTs": 33,
+      "actualRust": 790,
+      "parityPct": 4.177,
+      "rustToTsRatio": 23.939
+    }
+  },
+  "aggregateInputs": {
+    "tsBaseline": {
+      "files": 35,
+      "parsedOk": 35,
+      "parseErrors": 0,
+      "symbols": 66,
+      "imports": 1,
+      "calls": 39,
+      "references": 33
+    },
+    "rustIndex": {
+      "files": 348,
+      "parsed": 336,
+      "parsedWithErrors": 2,
+      "failed": 0,
+      "skipped": 10,
+      "symbols": 5283,
+      "chunks": 5675,
+      "graphEdges": 70625,
+      "imports": 2327,
+      "calls": 12789,
+      "references": 55509,
+      "resolvedImports": 1288,
+      "unresolvedImports": 1039,
+      "resolvedCalls": 4196,
+      "unresolvedCalls": 8593,
+      "resolvedReferences": 36782,
+      "unresolvedReferences": 18727
+    }
+  },
+  "blockers": [
+    "Legacy TypeScript baseline coverage is partial due detectProjects leaf-root behavior and does not cover all Rust-indexed files.",
+    "Rust parity CLI consumed only root-level JS/TS fixture files from --workspace; it produced a degraded one-case artifact rather than official-corpus parity.",
+    "The normalized common-file comparison is count-level only and is not symbol/import/call/reference identity parity."
+  ],
+  "tsOnlyPaths": [
+    ".opencode/openkit/profile-switch.js",
+    ".opencode/openkit/switch-profiles.js",
+    ".opencode/openkit/workflow-state.js",
+    ".opencode/profile-switch.js",
+    ".opencode/switch-profiles.js",
+    ".opencode/workflow-state.js"
+  ],
+  "perFile": [
+    {
+      "path": "packages/opencode-sdk/src/client/cli-client.ts",
+      "ts": {
+        "symbols": 2,
+        "imports": 0,
+        "calls": 1,
+        "references": 2,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 2,
+        "imports": 1,
+        "calls": 1,
+        "references": 16,
+        "parseStatus": "Parsed",
+        "resolvedImports": 1,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 1,
+        "resolvedReferences": 14,
+        "unresolvedReferences": 2
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/decision-writer.ts",
+      "ts": {
+        "symbols": 2,
+        "imports": 0,
+        "calls": 5,
+        "references": 1,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 3,
+        "imports": 9,
+        "calls": 5,
+        "references": 70,
+        "parseStatus": "Parsed",
+        "resolvedImports": 9,
+        "unresolvedImports": 0,
+        "resolvedCalls": 5,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 60,
+        "unresolvedReferences": 10
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/filesystem-client.ts",
+      "ts": {
+        "symbols": 2,
+        "imports": 0,
+        "calls": 0,
+        "references": 2,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 2,
+        "imports": 1,
+        "calls": 0,
+        "references": 14,
+        "parseStatus": "Parsed",
+        "resolvedImports": 1,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 10,
+        "unresolvedReferences": 4
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/ipc-stub.ts",
+      "ts": {
+        "symbols": 3,
+        "imports": 0,
+        "calls": 0,
+        "references": 1,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 3,
+        "imports": 2,
+        "calls": 0,
+        "references": 17,
+        "parseStatus": "Parsed",
+        "resolvedImports": 2,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 14,
+        "unresolvedReferences": 3
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/mcp-client.ts",
+      "ts": {
+        "symbols": 1,
+        "imports": 0,
+        "calls": 2,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 3,
+        "imports": 6,
+        "calls": 2,
+        "references": 60,
+        "parseStatus": "Parsed",
+        "resolvedImports": 6,
+        "unresolvedImports": 0,
+        "resolvedCalls": 2,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 57,
+        "unresolvedReferences": 3
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/model-client.ts",
+      "ts": {
+        "symbols": 1,
+        "imports": 0,
+        "calls": 2,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 3,
+        "imports": 5,
+        "calls": 2,
+        "references": 45,
+        "parseStatus": "Parsed",
+        "resolvedImports": 5,
+        "unresolvedImports": 0,
+        "resolvedCalls": 2,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 43,
+        "unresolvedReferences": 2
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/session-client.ts",
+      "ts": {
+        "symbols": 1,
+        "imports": 0,
+        "calls": 2,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 3,
+        "imports": 5,
+        "calls": 2,
+        "references": 54,
+        "parseStatus": "Parsed",
+        "resolvedImports": 5,
+        "unresolvedImports": 0,
+        "resolvedCalls": 2,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 50,
+        "unresolvedReferences": 4
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/client/skill-client.ts",
+      "ts": {
+        "symbols": 1,
+        "imports": 0,
+        "calls": 2,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 3,
+        "imports": 4,
+        "calls": 2,
+        "references": 40,
+        "parseStatus": "Parsed",
+        "resolvedImports": 4,
+        "unresolvedImports": 0,
+        "resolvedCalls": 2,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 38,
+        "unresolvedReferences": 2
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/compat/key-normalizer.ts",
+      "ts": {
+        "symbols": 2,
+        "imports": 0,
+        "calls": 2,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 2,
+        "imports": 1,
+        "calls": 2,
+        "references": 13,
+        "parseStatus": "Parsed",
+        "resolvedImports": 1,
+        "unresolvedImports": 0,
+        "resolvedCalls": 2,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 9,
+        "unresolvedReferences": 4
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/compat/legacy-shims.ts",
+      "ts": {
+        "symbols": 0,
+        "imports": 0,
+        "calls": 0,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 0,
+        "imports": 6,
+        "calls": 0,
+        "references": 10,
+        "parseStatus": "Parsed",
+        "resolvedImports": 6,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 10,
+        "unresolvedReferences": 0
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/index.ts",
+      "ts": {
+        "symbols": 0,
+        "imports": 0,
+        "calls": 0,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 0,
+        "imports": 52,
+        "calls": 0,
+        "references": 52,
+        "parseStatus": "Parsed",
+        "resolvedImports": 52,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 52,
+        "unresolvedReferences": 0
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/protocol/envelope-contract.ts",
+      "ts": {
+        "symbols": 2,
+        "imports": 0,
+        "calls": 2,
+        "references": 1,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 3,
+        "imports": 3,
+        "calls": 2,
+        "references": 33,
+        "parseStatus": "Parsed",
+        "resolvedImports": 3,
+        "unresolvedImports": 0,
+        "resolvedCalls": 1,
+        "unresolvedCalls": 1,
+        "resolvedReferences": 29,
+        "unresolvedReferences": 4
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/protocol/error-envelope.ts",
+      "ts": {
+        "symbols": 2,
+        "imports": 0,
+        "calls": 0,
+        "references": 1,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 2,
+        "imports": 1,
+        "calls": 0,
+        "references": 14,
+        "parseStatus": "Parsed",
+        "resolvedImports": 1,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 11,
+        "unresolvedReferences": 3
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/protocol/key-normalization.ts",
+      "ts": {
+        "symbols": 4,
+        "imports": 0,
+        "calls": 11,
+        "references": 5,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 7,
+        "imports": 0,
+        "calls": 13,
+        "references": 62,
+        "parseStatus": "Parsed",
+        "resolvedImports": 0,
+        "unresolvedImports": 0,
+        "resolvedCalls": 6,
+        "unresolvedCalls": 7,
+        "resolvedReferences": 41,
+        "unresolvedReferences": 21
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/protocol/serialization.ts",
+      "ts": {
+        "symbols": 2,
+        "imports": 0,
+        "calls": 3,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 4,
+        "imports": 0,
+        "calls": 5,
+        "references": 29,
+        "parseStatus": "Parsed",
+        "resolvedImports": 0,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 5,
+        "resolvedReferences": 17,
+        "unresolvedReferences": 12
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/protocol/versioning.ts",
+      "ts": {
+        "symbols": 0,
+        "imports": 0,
+        "calls": 0,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 1,
+        "imports": 0,
+        "calls": 0,
+        "references": 1,
+        "parseStatus": "Parsed",
+        "resolvedImports": 0,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 1,
+        "unresolvedReferences": 0
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/envelope.ts",
+      "ts": {
+        "symbols": 3,
+        "imports": 0,
+        "calls": 0,
+        "references": 1,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 3,
+        "imports": 1,
+        "calls": 0,
+        "references": 22,
+        "parseStatus": "Parsed",
+        "resolvedImports": 1,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 15,
+        "unresolvedReferences": 7
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/extension-contract.ts",
+      "ts": {
+        "symbols": 8,
+        "imports": 0,
+        "calls": 0,
+        "references": 5,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 8,
+        "imports": 0,
+        "calls": 0,
+        "references": 24,
+        "parseStatus": "Parsed",
+        "resolvedImports": 0,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 19,
+        "unresolvedReferences": 5
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/hook-decision.ts",
+      "ts": {
+        "symbols": 9,
+        "imports": 0,
+        "calls": 0,
+        "references": 4,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 9,
+        "imports": 2,
+        "calls": 0,
+        "references": 58,
+        "parseStatus": "Parsed",
+        "resolvedImports": 2,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 41,
+        "unresolvedReferences": 17
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/model.ts",
+      "ts": {
+        "symbols": 2,
+        "imports": 0,
+        "calls": 0,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 2,
+        "imports": 0,
+        "calls": 0,
+        "references": 8,
+        "parseStatus": "Parsed",
+        "resolvedImports": 0,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 3,
+        "unresolvedReferences": 5
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/protocol.ts",
+      "ts": {
+        "symbols": 1,
+        "imports": 0,
+        "calls": 0,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 1,
+        "imports": 3,
+        "calls": 0,
+        "references": 37,
+        "parseStatus": "Parsed",
+        "resolvedImports": 3,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 29,
+        "unresolvedReferences": 8
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/session.ts",
+      "ts": {
+        "symbols": 2,
+        "imports": 0,
+        "calls": 0,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 2,
+        "imports": 0,
+        "calls": 0,
+        "references": 16,
+        "parseStatus": "Parsed",
+        "resolvedImports": 0,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 6,
+        "unresolvedReferences": 10
+      }
+    },
+    {
+      "path": "packages/opencode-sdk/src/types/transport-mode.ts",
+      "ts": {
+        "symbols": 1,
+        "imports": 0,
+        "calls": 0,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 1,
+        "imports": 0,
+        "calls": 0,
+        "references": 1,
+        "parseStatus": "Parsed",
+        "resolvedImports": 0,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 1,
+        "unresolvedReferences": 0
+      }
+    },
+    {
+      "path": "rust-engine/crates/dh-indexer/tests/fixtures/parity/class-methods.ts",
+      "ts": {
+        "symbols": 2,
+        "imports": 0,
+        "calls": 0,
+        "references": 1,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 4,
+        "imports": 0,
+        "calls": 2,
+        "references": 10,
+        "parseStatus": "Parsed",
+        "resolvedImports": 0,
+        "unresolvedImports": 0,
+        "resolvedCalls": 2,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 10,
+        "unresolvedReferences": 0
+      }
+    },
+    {
+      "path": "rust-engine/crates/dh-indexer/tests/fixtures/parity/dynamic-import.ts",
+      "ts": {
+        "symbols": 1,
+        "imports": 0,
+        "calls": 2,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 2,
+        "imports": 1,
+        "calls": 2,
+        "references": 4,
+        "parseStatus": "Parsed",
+        "resolvedImports": 0,
+        "unresolvedImports": 1,
+        "resolvedCalls": 1,
+        "unresolvedCalls": 1,
+        "resolvedReferences": 4,
+        "unresolvedReferences": 0
+      }
+    },
+    {
+      "path": "rust-engine/crates/dh-indexer/tests/fixtures/parity/imports-and-exports.ts",
+      "ts": {
+        "symbols": 1,
+        "imports": 1,
+        "calls": 0,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 1,
+        "imports": 3,
+        "calls": 1,
+        "references": 12,
+        "parseStatus": "Parsed",
+        "resolvedImports": 2,
+        "unresolvedImports": 1,
+        "resolvedCalls": 1,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 8,
+        "unresolvedReferences": 4
+      }
+    },
+    {
+      "path": "rust-engine/crates/dh-indexer/tests/fixtures/parity/simple-module.ts",
+      "ts": {
+        "symbols": 1,
+        "imports": 0,
+        "calls": 0,
+        "references": 1,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 3,
+        "imports": 0,
+        "calls": 1,
+        "references": 8,
+        "parseStatus": "Parsed",
+        "resolvedImports": 0,
+        "unresolvedImports": 0,
+        "resolvedCalls": 1,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 4,
+        "unresolvedReferences": 4
+      }
+    },
+    {
+      "path": "rust-engine/crates/dh-indexer/tests/fixtures/parity/syntax-error.ts",
+      "ts": {
+        "symbols": 0,
+        "imports": 0,
+        "calls": 0,
+        "references": 0,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 0,
+        "imports": 0,
+        "calls": 0,
+        "references": 2,
+        "parseStatus": "ParsedWithErrors",
+        "resolvedImports": 0,
+        "unresolvedImports": 0,
+        "resolvedCalls": 0,
+        "unresolvedCalls": 0,
+        "resolvedReferences": 1,
+        "unresolvedReferences": 1
+      }
+    },
+    {
+      "path": "rust-engine/crates/dh-parser/tests/fixtures/sample.ts",
+      "ts": {
+        "symbols": 10,
+        "imports": 0,
+        "calls": 5,
+        "references": 8,
+        "parseStatus": "ok"
+      },
+      "rust": {
+        "symbols": 16,
+        "imports": 16,
+        "calls": 10,
+        "references": 58,
+        "parseStatus": "Parsed",
+        "resolvedImports": 0,
+        "unresolvedImports": 16,
+        "resolvedCalls": 7,
+        "unresolvedCalls": 3,
+        "resolvedReferences": 32,
+        "unresolvedReferences": 26
+      }
+    }
+  ]
+}

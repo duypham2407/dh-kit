@@ -191,6 +191,10 @@ impl ParityHarness {
                 file_id: stable_file_id(&baseline.file),
                 rel_path: &baseline.file,
                 source: &source,
+                abs_path: Some(fixture_path.clone()),
+                workspace_root: Some(self.fixture_root.clone()),
+                workspace_roots: vec![self.fixture_root.clone()],
+                package_roots: Vec::new(),
             };
 
             let extracted = extract_file_facts(registry, parser_pool, language, &context);

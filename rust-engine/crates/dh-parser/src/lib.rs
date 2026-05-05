@@ -8,6 +8,7 @@
 //! - [`TypeScriptAdapter`](adapters::typescript::TypeScriptAdapter) for TS/TSX/JS/JSX
 
 pub mod adapters;
+pub mod module_resolver;
 pub mod pool;
 pub mod registry;
 
@@ -19,7 +20,7 @@ use dh_types::{
     CallEdge, Chunk, ExportFact, FileChangeEvent, Import, IndexProgressEvent, LanguageId,
     ParseDiagnostic, ParseStatus, Reference, Symbol,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tree_sitter::{Parser, Tree};
 
 use crate::{pool::ParserPool, registry::LanguageRegistry};
@@ -58,6 +59,10 @@ pub struct ExtractionContext<'a> {
     pub file_id: i64,
     pub rel_path: &'a str,
     pub source: &'a str,
+    pub abs_path: Option<PathBuf>,
+    pub workspace_root: Option<PathBuf>,
+    pub workspace_roots: Vec<PathBuf>,
+    pub package_roots: Vec<PathBuf>,
 }
 
 pub struct ParseError;

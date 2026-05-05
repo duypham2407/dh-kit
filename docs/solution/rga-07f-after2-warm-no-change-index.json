@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "suite_id": "benchmark-suite-8779e730-2b64-4894-b465-4e3247b0f07f",
+  "generated_at_unix_ms": 1777636099194,
+  "summary": {
+    "local_evidence_statement": "Benchmark results are local evidence for this corpus and this environment only.",
+    "corpus_summary": "DH@local-working-tree (DhRepo)",
+    "environment_summary": "macos-aarch64 build_profile=debug",
+    "degraded": false,
+    "result_count": 1
+  },
+  "results": [
+    {
+      "metadata": {
+        "run_id": "8779e730-2b64-4894-b465-4e3247b0f07f",
+        "benchmark_class": "warm_no_change_index",
+        "suite_id": "benchmark-suite-8779e730-2b64-4894-b465-4e3247b0f07f",
+        "started_at_unix_ms": 1777636098073,
+        "finished_at_unix_ms": 1777636099194,
+        "engine_version": "0.1.0",
+        "build_profile": "debug",
+        "host_os": "macos",
+        "host_arch": "aarch64",
+        "cpu_count": 8,
+        "corpus": {
+          "kind": "dh_repo",
+          "label": "DH",
+          "revision_or_snapshot": "local-working-tree",
+          "root_path": "/Users/duypham/Code/DH",
+          "query_set_label": null,
+          "mutation_set_label": null,
+          "notes": "Local benchmark evidence only; results are corpus-bound and environment-bound."
+        },
+        "preparation": {
+          "state_label": "warm_no_change_reuse",
+          "cleared_reusable_state": false,
+          "preserved_reusable_state": true,
+          "baseline_run_ref": "existing-local-index-state",
+          "mutation_set_label": null,
+          "mutation_paths": [],
+          "query_set_label": null,
+          "notes": [
+            "Warm index semantics refer only to reusable local prepared state within this workspace.",
+            "Warm benchmark does not imply daemon mode, watch mode, or background warm service behavior."
+          ]
+        },
+        "baseline_run_ref": null,
+        "comparison_key": "class=WarmNoChangeIndex|corpus=DH@local-working-tree|profile=debug|prep=warm_no_change_reuse|query_set=|mutation_set="
+      },
+      "status": "complete",
+      "memory": {
+        "status": "not_measured",
+        "peak_rss_bytes": null,
+        "method": null,
+        "scope": "index_run_process",
+        "reason": "Peak RSS measurement is not yet instrumented for index benchmark classes."
+      },
+      "comparison": {
+        "eligible": true,
+        "baseline_run_ref": null,
+        "comparison_key": "class=WarmNoChangeIndex|corpus=DH@local-working-tree|profile=debug|prep=warm_no_change_reuse|query_set=|mutation_set=",
+        "reason": null
+      },
+      "correctness": null,
+      "index_timing": {
+        "elapsed_ms": 1120.893125,
+        "link_ms": 578.0,
+        "graph_hydration_ms": 397.0,
+        "scanned_files": 353,
+        "changed_files": 0,
+        "reindexed_files": 0,
+        "deleted_files": 0,
+        "refreshed_current_files": 0,
+        "retained_current_files": 351,
+        "degraded_partial_files": 0,
+        "not_current_files": 0
+      },
+      "query_latency": null,
+      "graph_hydration": null,
+      "degradation_notes": []
+    }
+  ]
+}

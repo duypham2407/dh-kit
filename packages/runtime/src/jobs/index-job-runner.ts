@@ -6,10 +6,8 @@
 
 import { detectProjects } from "../../../intelligence/src/workspace/detect-projects.js";
 import { runOperatorSafeProjectWorktreeLifecycle } from "../workspace/operator-safe-project-worktree-utils.js";
-import { extractCallEdges } from "../../../intelligence/src/graph/extract-call-edges.js";
-import { extractCallSites } from "../../../intelligence/src/graph/extract-call-sites.js";
 import { extractSymbolsFromFiles } from "../../../intelligence/src/symbols/extract-symbols.js";
-import { extractImportEdges } from "../../../intelligence/src/graph/extract-import-edges.js";
+import { loadRuntimeIndexGraphReportFromRustBridge } from "./rust-index-graph-report-adapter.js";
 import { chunkFiles } from "../../../retrieval/src/semantic/chunker.js";
 import {
   createEmbeddingProvider,
@@ -19,8 +17,9 @@ import {
 } from "../../../retrieval/src/semantic/embedding-pipeline.js";
 import { ChunksRepo } from "../../../storage/src/sqlite/repositories/chunks-repo.js";
 import { contentHash } from "../../../retrieval/src/semantic/chunker.js";
-import type { IndexedFile, IndexedSymbol, IndexedEdge, IndexedWorkspace } from "../../../shared/src/types/indexing.js";
+import type { IndexedFile, IndexedSymbol, IndexedWorkspace } from "../../../shared/src/types/indexing.js";
 import type { ScanOptions } from "../../../intelligence/src/workspace/detect-projects.js";
+import type { RuntimeIndexGraphReport } from "./rust-index-graph-report-adapter.js";
 
 export type IndexJobResult = {
   workspaces: IndexedWorkspace[];
@@ -49,6 +48,7 @@ export type IndexJobResult = {
     partialScan: boolean;
     scanStopReasons: string[];
     partialWorkspaceCount: number;
+    graphExtraction: RuntimeIndexGraphReport;
     operatorSafety: {
       mode: "check" | "dry_run" | "execute";
       allowed: boolean;
@@ -99,6 +99,7 @@ export async function runIndexWorkflow(
     knownWorkspaces: workspaces,
   });
   const files = workspaces.flatMap((ws) => ws.files);
+  const graphReport = await loadRuntimeIndexGraphReportFromRustBridge(repoRoot, files);
 
   if (files.length === 0) {
     const partialScan = workspaces.some((workspace) => workspace.scanMeta?.partial === true);
@@ -114,18 +115,19 @@ export async function runIndexWorkflow(
       partialScan,
       scanStopReasons,
       partialWorkspaceCount: countPartialWorkspaces(workspaces),
-        operatorSafety: {
-          mode: operatorSafety.preflight.mode,
-          allowed: operatorSafety.preflight.allowed,
-          warningCount: operatorSafety.preflight.warnings.length,
-          blockingCount: operatorSafety.preflight.blockingReasons.length,
-          recommendedAction: operatorSafety.preflight.recommendedAction,
-          reportId: operatorSafety.report.id,
-          reportPath: operatorSafety.reportPath,
-          outcome: operatorSafety.report.outcome,
-          failureClass: operatorSafety.report.failureClass,
-        },
-      });
+      graphExtraction: graphReport,
+      operatorSafety: {
+        mode: operatorSafety.preflight.mode,
+        allowed: operatorSafety.preflight.allowed,
+        warningCount: operatorSafety.preflight.warnings.length,
+        blockingCount: operatorSafety.preflight.blockingReasons.length,
+        recommendedAction: operatorSafety.preflight.recommendedAction,
+        reportId: operatorSafety.report.id,
+        reportPath: operatorSafety.reportPath,
+        outcome: operatorSafety.report.outcome,
+        failureClass: operatorSafety.report.failureClass,
+      },
+    });
   }
 
   const partialScan = workspaces.some((workspace) => workspace.scanMeta?.partial === true);
@@ -136,11 +138,10 @@ export async function runIndexWorkflow(
   // We always continue indexing while surfacing diagnostics for operator review.
   const symbols = await extractSymbolsFromFiles(repoRoot, files);
 
-  // ── Step 3: Extract import edges ────────────────────────────────
-  const importEdges = await extractImportEdges(repoRoot, files);
-  const callEdges = await extractCallEdges(repoRoot, files, symbols);
-  const callSites = await extractCallSites(repoRoot, files, symbols);
-  const edges = [...importEdges, ...callEdges];
+  // ── Step 3: Load Rust graph report boundary ─────────────────────
+  // The runtime package does not currently have a Rust indexer/bridge report
+  // available here. The adapter returns explicit degraded counts instead of
+  // falling back to legacy TypeScript graph extraction in production.
 
   // ── Step 4: Chunk files ─────────────────────────────────────────
   // When not forced, only re-chunk files whose chunk content has changed.
@@ -163,8 +164,8 @@ export async function runIndexWorkflow(
     workspaces,
     files.length,
     symbols.length,
-    edges.length,
-    callSites.length,
+    graphReport.counts.edgesExtracted,
+    graphReport.counts.callSitesExtracted,
     chunkInputs.length,
     embeddingResult,
     start,
@@ -179,6 +180,7 @@ export async function runIndexWorkflow(
       partialScan,
       scanStopReasons,
       partialWorkspaceCount: countPartialWorkspaces(workspaces),
+      graphExtraction: graphReport,
       operatorSafety: {
         mode: operatorSafety.preflight.mode,
         allowed: operatorSafety.preflight.allowed,
@@ -268,6 +270,10 @@ function makeResult(
     : " scan=complete";
   const safetySummary = ` operator-safety=${diagnostics.operatorSafety.allowed ? "allow" : "block"}(${diagnostics.operatorSafety.recommendedAction}/${diagnostics.operatorSafety.outcome})`;
   const workspaceSummary = ` workspaces=${diagnostics.workspaceCount}`;
+  const graphSummary = diagnostics.graphExtraction.available
+    ? ` graph=${diagnostics.graphExtraction.source}`
+    : ` graph=degraded(${diagnostics.graphExtraction.reason})`;
+  const graphEngineSummary = ` graph_engine=${diagnostics.graphExtraction.engineSelector.engine}:${diagnostics.graphExtraction.engineSelector.label}`;
 
   return {
     workspaces,
@@ -278,7 +284,7 @@ function makeResult(
     chunksProduced,
     embedding,
     durationMs,
-    summary: `Indexed ${filesScanned} files (${diagnostics.filesRefreshed} refreshed, ${diagnostics.filesUnchanged} unchanged), ${symbolsExtracted} symbols, ${edgesExtracted} edges, ${callSitesExtracted} call-sites, ${chunksProduced} chunks.${embSummary}.${scanSummary}.${safetySummary}.${workspaceSummary} (${durationMs}ms)`,
+    summary: `Indexed ${filesScanned} files (${diagnostics.filesRefreshed} refreshed, ${diagnostics.filesUnchanged} unchanged), ${symbolsExtracted} symbols, ${edgesExtracted} edges, ${callSitesExtracted} call-sites, ${chunksProduced} chunks.${graphSummary}.${graphEngineSummary}.${embSummary}.${scanSummary}.${safetySummary}.${workspaceSummary} (${durationMs}ms)`,
     diagnostics,
   };
 }

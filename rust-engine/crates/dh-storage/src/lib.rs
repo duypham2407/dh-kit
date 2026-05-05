@@ -4,9 +4,9 @@ use anyhow::{Context, Result};
 use dh_types::{
     AgentRole, Chunk, ChunkId, EmbeddingRecord, EmbeddingStatus, ExecutionEnvelope, File, FileId,
     FreshnessReason, FreshnessState, GateStatus, HookDecision, HookInvocationLog, HookName,
-    IndexRunStatus, IndexState, LanguageId, ParseStatus, SemanticMode, SessionState,
-    SessionStatus, Span, StageStatus, Symbol, SymbolId, SymbolKind, ToolEnforcementLevel,
-    Visibility, WorkflowLane, WorkflowStageState, WorkspaceId,
+    IndexRunStatus, IndexState, LanguageId, ParseStatus, SemanticMode, SessionState, SessionStatus,
+    Span, StageStatus, Symbol, SymbolId, SymbolKind, ToolEnforcementLevel, Visibility,
+    WorkflowLane, WorkflowStageState, WorkspaceId,
 };
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -125,7 +125,7 @@ impl Database {
               freshness_state TEXT NOT NULL DEFAULT 'not_current',
               freshness_reason TEXT,
               last_freshness_run_id TEXT,
-              UNIQUE(workspace_id, rel_path)
+              UNIQUE(workspace_id, root_id, rel_path)
             );
 
             CREATE TABLE IF NOT EXISTS symbols (
@@ -387,6 +387,12 @@ pub trait FileRepository {
     fn upsert_file(&self, file: &File) -> Result<FileId>;
     fn delete_file_facts(&self, file_id: FileId) -> Result<()>;
     fn get_file_by_path(&self, workspace_id: WorkspaceId, rel_path: &str) -> Result<Option<File>>;
+    fn get_file_by_root_path(
+        &self,
+        workspace_id: WorkspaceId,
+        root_id: i64,
+        rel_path: &str,
+    ) -> Result<Option<File>>;
     fn list_files_by_workspace(&self, workspace_id: WorkspaceId) -> Result<Vec<File>>;
 }
 
@@ -399,17 +405,38 @@ pub trait SymbolRepository {
 
 pub trait GraphEdgeRepository {
     fn insert_edges(&self, edges: &[dh_types::GraphEdge], source_file_id: FileId) -> Result<()>;
+    fn delete_edges_for_symbol_endpoints(&self, symbol_ids: &[SymbolId]) -> Result<usize>;
+    fn find_edges_by_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Vec<dh_types::GraphEdge>>;
     fn find_edges_by_file(&self, file_id: FileId) -> Result<Vec<dh_types::GraphEdge>>;
-    fn find_outgoing_edges(&self, workspace_id: WorkspaceId, from_kind: &str, from_id: i64, node_limit: usize) -> Result<Vec<dh_types::GraphEdge>>;
-    fn find_incoming_edges(&self, workspace_id: WorkspaceId, to_kind: &str, to_id: i64, node_limit: usize) -> Result<Vec<dh_types::GraphEdge>>;
+    fn find_outgoing_edges(
+        &self,
+        workspace_id: WorkspaceId,
+        from_kind: &str,
+        from_id: i64,
+        node_limit: usize,
+    ) -> Result<Vec<dh_types::GraphEdge>>;
+    fn find_incoming_edges(
+        &self,
+        workspace_id: WorkspaceId,
+        to_kind: &str,
+        to_id: i64,
+        node_limit: usize,
+    ) -> Result<Vec<dh_types::GraphEdge>>;
 }
-
 
 pub trait ChunkRepository {
     fn insert_chunks(&self, chunks: &[Chunk]) -> Result<()>;
     fn find_chunks_by_file(&self, file_id: FileId) -> Result<Vec<Chunk>>;
     fn find_chunks_by_workspace(&self, workspace_id: WorkspaceId) -> Result<Vec<Chunk>>;
-    fn search_chunks_fts(&self, workspace_id: WorkspaceId, query: &str, limit: usize) -> Result<Vec<(Chunk, f32)>>;
+    fn search_chunks_fts(
+        &self,
+        workspace_id: WorkspaceId,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<(Chunk, f32)>>;
 }
 
 pub trait GraphRepository {
@@ -506,10 +533,7 @@ pub trait EmbeddingRepository {
 
     /// Load all stored embeddings for a specific model. Used for in-process
     /// cosine similarity search in the query layer.
-    fn load_embeddings_for_model(
-        &self,
-        model: &str,
-    ) -> Result<Vec<EmbeddingRecord>>;
+    fn load_embeddings_for_model(&self, model: &str) -> Result<Vec<EmbeddingRecord>>;
 
     /// Delete the embedding for a chunk (e.g. when the chunk is re-indexed).
     fn delete_embedding(&self, chunk_id: ChunkId) -> Result<()>;
@@ -524,10 +548,7 @@ impl EmbeddingRepository for Database {
         content_hash: &str,
         vector: &[f32],
     ) -> Result<()> {
-        let blob: Vec<u8> = vector
-            .iter()
-            .flat_map(|v| v.to_le_bytes())
-            .collect();
+        let blob: Vec<u8> = vector.iter().flat_map(|v| v.to_le_bytes()).collect();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -551,28 +572,36 @@ impl EmbeddingRepository for Database {
             "SELECT chunk_id, model, dimensions, content_hash, vector, created_at_unix_ms
              FROM embeddings WHERE model = ?1",
         )?;
-        let records = stmt.query_map(params![model], |row| {
-            let blob: Vec<u8> = row.get(4)?;
-            Ok((row.get::<_, ChunkId>(0)?, row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?, row.get::<_, String>(3)?,
-                blob, row.get::<_, i64>(5)?))
-        })?
-        .filter_map(|r| r.ok())
-        .map(|(chunk_id, model, dimensions, content_hash, blob, created_at_unix_ms)| {
-            let vector: Vec<f32> = blob
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                .collect();
-            EmbeddingRecord {
-                chunk_id,
-                model,
-                dimensions: dimensions as usize,
-                content_hash,
-                vector,
-                created_at_unix_ms,
-            }
-        })
-        .collect();
+        let records = stmt
+            .query_map(params![model], |row| {
+                let blob: Vec<u8> = row.get(4)?;
+                Ok((
+                    row.get::<_, ChunkId>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    blob,
+                    row.get::<_, i64>(5)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .map(
+                |(chunk_id, model, dimensions, content_hash, blob, created_at_unix_ms)| {
+                    let vector: Vec<f32> = blob
+                        .chunks_exact(4)
+                        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                        .collect();
+                    EmbeddingRecord {
+                        chunk_id,
+                        model,
+                        dimensions: dimensions as usize,
+                        content_hash,
+                        vector,
+                        created_at_unix_ms,
+                    }
+                },
+            )
+            .collect();
         Ok(records)
     }
 
@@ -584,7 +613,6 @@ impl EmbeddingRepository for Database {
         Ok(())
     }
 }
-
 
 impl FileRepository for Database {
     fn upsert_file(&self, file: &File) -> Result<FileId> {
@@ -648,24 +676,17 @@ impl FileRepository for Database {
     fn delete_file_facts(&self, file_id: FileId) -> Result<()> {
         self.conn
             .execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
+
         self.conn.execute(
-            "DELETE FROM graph_edges WHERE source_file_id = ?1",
+            "
+            INSERT INTO chunk_fts(chunk_fts, rowid, title, content, rel_path, language)
+            SELECT 'delete', c.id, c.title, c.content, COALESCE(f.rel_path, ''), c.language
+              FROM chunks c
+              LEFT JOIN files f ON f.id = c.file_id
+             WHERE c.file_id = ?1
+            ",
             params![file_id],
         )?;
-
-        let rel_path: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT rel_path FROM files WHERE id = ?1",
-                params![file_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-
-        if let Some(path) = rel_path {
-            self.conn
-                .execute("DELETE FROM chunk_fts WHERE rel_path = ?1", params![path])?;
-        }
 
         self.conn
             .execute("DELETE FROM chunks WHERE file_id = ?1", params![file_id])?;
@@ -683,8 +704,34 @@ impl FileRepository for Database {
                        freshness_state, freshness_reason, last_freshness_run_id
                   FROM files
                  WHERE workspace_id = ?1 AND rel_path = ?2
+                 ORDER BY root_id ASC
+                 LIMIT 1
                 ",
                 params![workspace_id, rel_path],
+                map_file,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn get_file_by_root_path(
+        &self,
+        workspace_id: WorkspaceId,
+        root_id: i64,
+        rel_path: &str,
+    ) -> Result<Option<File>> {
+        self.conn
+            .query_row(
+                "
+                SELECT id, workspace_id, root_id, package_id, rel_path, language, size_bytes,
+                       mtime_unix_ms, content_hash, structure_hash, public_api_hash, parse_status,
+                       parse_error, symbol_count, chunk_count, is_barrel,
+                       last_indexed_at_unix_ms, deleted_at_unix_ms,
+                       freshness_state, freshness_reason, last_freshness_run_id
+                  FROM files
+                 WHERE workspace_id = ?1 AND root_id = ?2 AND rel_path = ?3
+                ",
+                params![workspace_id, root_id, rel_path],
                 map_file,
             )
             .optional()
@@ -814,7 +861,6 @@ impl SymbolRepository for Database {
     }
 }
 
-
 impl ChunkRepository for Database {
     fn insert_chunks(&self, chunks: &[Chunk]) -> Result<()> {
         let mut chunk_stmt = self.conn.prepare(
@@ -914,7 +960,12 @@ impl ChunkRepository for Database {
         Ok(out)
     }
 
-    fn search_chunks_fts(&self, workspace_id: WorkspaceId, query: &str, limit: usize) -> Result<Vec<(Chunk, f32)>> {
+    fn search_chunks_fts(
+        &self,
+        workspace_id: WorkspaceId,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<(Chunk, f32)>> {
         let mut stmt = self.conn.prepare(
             "
             SELECT c.id, c.workspace_id, c.file_id, c.symbol_id, c.parent_symbol_id, c.kind, c.language,
@@ -931,7 +982,7 @@ impl ChunkRepository for Database {
 
         let rows = stmt.query_map(params![query, workspace_id, limit], |row| {
             let chunk = map_chunk(row)?;
-            let score: f64 = row.get(18)?; 
+            let score: f64 = row.get(18)?;
             // bm25 is more negative for better matches, we'll return its absolute value so higher is better
             Ok((chunk, score.abs() as f32))
         })?;
@@ -943,7 +994,6 @@ impl ChunkRepository for Database {
         Ok(out)
     }
 }
-
 
 impl IndexStateRepository for Database {
     fn get_state(&self, workspace_id: WorkspaceId) -> Result<Option<IndexState>> {
@@ -1207,7 +1257,12 @@ impl GraphRepository for Database {
             "#,
         )?;
 
-        let mut rows = stmt.query(params![file_id as i64, hop_limit, workspace_id as i64, node_limit as i64])?;
+        let mut rows = stmt.query(params![
+            file_id as i64,
+            hop_limit,
+            workspace_id as i64,
+            node_limit as i64
+        ])?;
         let mut result = Vec::new();
         while let Some(row) = rows.next()? {
             let id: i64 = row.get(0)?;
@@ -1244,7 +1299,12 @@ impl GraphRepository for Database {
             "#,
         )?;
 
-        let mut rows = stmt.query(params![symbol_id as i64, hop_limit, workspace_id as i64, node_limit as i64])?;
+        let mut rows = stmt.query(params![
+            symbol_id as i64,
+            hop_limit,
+            workspace_id as i64,
+            node_limit as i64
+        ])?;
         let mut result = Vec::new();
         while let Some(row) = rows.next()? {
             let id: i64 = row.get(0)?;
@@ -1281,10 +1341,19 @@ impl GraphRepository for Database {
             "#,
         )?;
 
-        let edge_path_str: Option<String> = stmt.query_row(
-            params![from_kind, from_id, to_kind, to_id, workspace_id as i64, max_hops],
-            |row| row.get(0),
-        ).optional()?;
+        let edge_path_str: Option<String> = stmt
+            .query_row(
+                params![
+                    from_kind,
+                    from_id,
+                    to_kind,
+                    to_id,
+                    workspace_id as i64,
+                    max_hops
+                ],
+                |row| row.get(0),
+            )
+            .optional()?;
 
         let edge_path_str = match edge_path_str {
             Some(s) => s,
@@ -1318,7 +1387,12 @@ impl GraphRepository for Database {
             edges_with_id.push(row?);
         }
 
-        edges_with_id.sort_by_key(|(id, _)| edge_ids.iter().position(|eid| eid == id).unwrap_or(usize::MAX));
+        edges_with_id.sort_by_key(|(id, _)| {
+            edge_ids
+                .iter()
+                .position(|eid| eid == id)
+                .unwrap_or(usize::MAX)
+        });
 
         Ok(Some(edges_with_id.into_iter().map(|(_, e)| e).collect()))
     }
@@ -1336,7 +1410,11 @@ impl GraphRepository for Database {
             if kinds.is_empty() {
                 "AND 1=0".to_string()
             } else {
-                let quoted = kinds.iter().map(|k| format!("'{}'", k)).collect::<Vec<_>>().join(",");
+                let quoted = kinds
+                    .iter()
+                    .map(|k| format!("'{}'", k))
+                    .collect::<Vec<_>>()
+                    .join(",");
                 format!("AND e.kind IN ({})", quoted)
             }
         } else {
@@ -1368,14 +1446,20 @@ impl GraphRepository for Database {
         );
 
         let mut stmt = self.conn.prepare_cached(&query)?;
-        let mut rows = stmt.query(params![seed_kind, seed_id, max_hops, workspace_id as i64, node_limit as i64])?;
-        
+        let mut rows = stmt.query(params![
+            seed_kind,
+            seed_id,
+            max_hops,
+            workspace_id as i64,
+            node_limit as i64
+        ])?;
+
         let mut result = Vec::new();
         while let Some(row) = rows.next()? {
             let kind: String = row.get(0)?;
             let id: i64 = row.get(1)?;
             let depth: u32 = row.get(2)?;
-            
+
             let node_id = match kind.as_str() {
                 "file" => dh_types::NodeId::File(id as _),
                 "symbol" => dh_types::NodeId::Symbol(id as _),
@@ -1384,7 +1468,7 @@ impl GraphRepository for Database {
             };
             result.push((node_id, depth));
         }
-        
+
         Ok(result)
     }
 
@@ -1402,7 +1486,11 @@ impl GraphRepository for Database {
             if kinds.is_empty() {
                 "AND 1=0".to_string()
             } else {
-                let quoted = kinds.iter().map(|k| format!("'{}'", k)).collect::<Vec<_>>().join(",");
+                let quoted = kinds
+                    .iter()
+                    .map(|k| format!("'{}'", k))
+                    .collect::<Vec<_>>()
+                    .join(",");
                 format!("AND e.kind IN ({})", quoted)
             }
         } else {
@@ -1410,19 +1498,25 @@ impl GraphRepository for Database {
         };
 
         let recursive_step = if direction == "outgoing" {
-            format!(r#"
+            format!(
+                r#"
                 SELECT e.to_node_kind, e.to_node_id, r.depth + 1
                 FROM graph_edges e
                 JOIN reachable r ON e.from_node_kind = r.node_kind AND e.from_node_id = r.node_id
                 WHERE r.depth < ?3 AND e.workspace_id = ?4 {}
-            "#, filter_clause)
+            "#,
+                filter_clause
+            )
         } else if direction == "incoming" {
-            format!(r#"
+            format!(
+                r#"
                 SELECT e.from_node_kind, e.from_node_id, r.depth + 1
                 FROM graph_edges e
                 JOIN reachable r ON e.to_node_kind = r.node_kind AND e.to_node_id = r.node_id
                 WHERE r.depth < ?3 AND e.workspace_id = ?4 {}
-            "#, filter_clause)
+            "#,
+                filter_clause
+            )
         } else {
             // Fallback just in case, though it shouldn't happen.
             return Ok(Vec::new());
@@ -1445,14 +1539,20 @@ impl GraphRepository for Database {
         );
 
         let mut stmt = self.conn.prepare_cached(&query)?;
-        let mut rows = stmt.query(params![seed_kind, seed_id, max_hops, workspace_id as i64, node_limit as i64])?;
-        
+        let mut rows = stmt.query(params![
+            seed_kind,
+            seed_id,
+            max_hops,
+            workspace_id as i64,
+            node_limit as i64
+        ])?;
+
         let mut result = Vec::new();
         while let Some(row) = rows.next()? {
             let kind: String = row.get(0)?;
             let id: i64 = row.get(1)?;
             let depth: u32 = row.get(2)?;
-            
+
             let node_id = match kind.as_str() {
                 "file" => dh_types::NodeId::File(id as _),
                 "symbol" => dh_types::NodeId::Symbol(id as _),
@@ -1461,7 +1561,7 @@ impl GraphRepository for Database {
             };
             result.push((node_id, depth));
         }
-        
+
         Ok(result)
     }
 }
@@ -1494,7 +1594,12 @@ impl GraphEdgeRepository for Database {
             let to_i_opt = Some(to_i);
 
             let (sl, sc, el, ec) = if let Some(span) = &edge.span {
-                (Some(span.start_line as i64), Some(span.start_column as i64), Some(span.end_line as i64), Some(span.end_column as i64))
+                (
+                    Some(span.start_line as i64),
+                    Some(span.start_column as i64),
+                    Some(span.end_line as i64),
+                    Some(span.end_column as i64),
+                )
             } else {
                 (None, None, None, None)
             };
@@ -1514,11 +1619,53 @@ impl GraphEdgeRepository for Database {
                 el,
                 ec,
                 edge.reason,
-                rusqlite::types::Null
+                edge.payload_json
             ])?;
         }
 
         Ok(())
+    }
+
+    fn delete_edges_for_symbol_endpoints(&self, symbol_ids: &[SymbolId]) -> Result<usize> {
+        if symbol_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let mut deleted = 0;
+        let mut stmt = self.conn.prepare_cached(
+            "
+            DELETE FROM graph_edges
+             WHERE (from_node_kind = 'symbol' AND from_node_id = ?1)
+                OR (to_node_kind = 'symbol' AND to_node_id = ?1)
+            ",
+        )?;
+
+        for symbol_id in symbol_ids {
+            deleted += stmt.execute(params![symbol_id])?;
+        }
+
+        Ok(deleted)
+    }
+
+    fn find_edges_by_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Vec<dh_types::GraphEdge>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, workspace_id, source_file_id, kind, from_node_kind, from_node_id, to_node_kind, to_node_id,
+                   resolution, confidence, start_line, start_column, end_line, end_column, reason, payload_json
+              FROM graph_edges
+             WHERE workspace_id = ?1
+             ORDER BY id ASC
+            ",
+        )?;
+        let rows = stmt.query_map(params![workspace_id], map_graph_edge)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
     }
 
     fn find_edges_by_file(&self, file_id: FileId) -> Result<Vec<dh_types::GraphEdge>> {
@@ -1539,7 +1686,13 @@ impl GraphEdgeRepository for Database {
         Ok(out)
     }
 
-    fn find_outgoing_edges(&self, workspace_id: WorkspaceId, from_kind: &str, from_id: i64, node_limit: usize) -> Result<Vec<dh_types::GraphEdge>> {
+    fn find_outgoing_edges(
+        &self,
+        workspace_id: WorkspaceId,
+        from_kind: &str,
+        from_id: i64,
+        node_limit: usize,
+    ) -> Result<Vec<dh_types::GraphEdge>> {
         let mut stmt = self.conn.prepare(
             "
             SELECT id, workspace_id, source_file_id, kind, from_node_kind, from_node_id, to_node_kind, to_node_id,
@@ -1550,7 +1703,10 @@ impl GraphEdgeRepository for Database {
              LIMIT ?4
             ",
         )?;
-        let rows = stmt.query_map(params![workspace_id, from_kind, from_id, node_limit as i64], map_graph_edge)?;
+        let rows = stmt.query_map(
+            params![workspace_id, from_kind, from_id, node_limit as i64],
+            map_graph_edge,
+        )?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -1558,7 +1714,13 @@ impl GraphEdgeRepository for Database {
         Ok(out)
     }
 
-    fn find_incoming_edges(&self, workspace_id: WorkspaceId, to_kind: &str, to_id: i64, node_limit: usize) -> Result<Vec<dh_types::GraphEdge>> {
+    fn find_incoming_edges(
+        &self,
+        workspace_id: WorkspaceId,
+        to_kind: &str,
+        to_id: i64,
+        node_limit: usize,
+    ) -> Result<Vec<dh_types::GraphEdge>> {
         let mut stmt = self.conn.prepare(
             "
             SELECT id, workspace_id, source_file_id, kind, from_node_kind, from_node_id, to_node_kind, to_node_id,
@@ -1569,7 +1731,10 @@ impl GraphEdgeRepository for Database {
              LIMIT ?4
             ",
         )?;
-        let rows = stmt.query_map(params![workspace_id, to_kind, to_id, node_limit as i64], map_graph_edge)?;
+        let rows = stmt.query_map(
+            params![workspace_id, to_kind, to_id, node_limit as i64],
+            map_graph_edge,
+        )?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -1686,8 +1851,11 @@ fn map_index_state(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexState> {
 fn map_graph_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<dh_types::GraphEdge> {
     Ok(dh_types::GraphEdge {
         kind: edge_kind_from_str(&row.get::<_, String>(3)?).map_err(to_sqlite_err)?,
-        from: node_id_from_db(&row.get::<_, String>(4)?, row.get::<_, i64>(5)?).map_err(to_sqlite_err)?,
-        to: node_id_from_db_opt(&row.get::<_, String>(6)?, row.get::<_, Option<i64>>(7)?).map_err(to_sqlite_err)?.unwrap_or(dh_types::NodeId::Symbol(0)),
+        from: node_id_from_db(&row.get::<_, String>(4)?, row.get::<_, i64>(5)?)
+            .map_err(to_sqlite_err)?,
+        to: node_id_from_db_opt(&row.get::<_, String>(6)?, row.get::<_, Option<i64>>(7)?)
+            .map_err(to_sqlite_err)?
+            .unwrap_or(dh_types::NodeId::Symbol(0)),
         resolution: resolution_from_str(&row.get::<_, String>(8)?).map_err(to_sqlite_err)?,
         confidence: confidence_from_str(&row.get::<_, String>(9)?).map_err(to_sqlite_err)?,
         span: if let Ok(start_line) = row.get::<_, i64>(10) {
@@ -1703,6 +1871,7 @@ fn map_graph_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<dh_types::GraphEd
             None
         },
         reason: row.get(14)?,
+        payload_json: row.get(15)?,
     })
 }
 
@@ -1719,11 +1888,17 @@ fn node_id_from_db(kind: &str, id: i64) -> std::result::Result<dh_types::NodeId,
         "file" => Ok(dh_types::NodeId::File(id)),
         "symbol" => Ok(dh_types::NodeId::Symbol(id)),
         "chunk" => Ok(dh_types::NodeId::Chunk(id)),
-        _ => Err(StorageError::InvalidEnumValue { field: "node_kind", value: kind.to_string() }),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "node_kind",
+            value: kind.to_string(),
+        }),
     }
 }
 
-fn node_id_from_db_opt(kind: &str, id: Option<i64>) -> std::result::Result<Option<dh_types::NodeId>, StorageError> {
+fn node_id_from_db_opt(
+    kind: &str,
+    id: Option<i64>,
+) -> std::result::Result<Option<dh_types::NodeId>, StorageError> {
     if let Some(id) = id {
         node_id_from_db(kind, id).map(Some)
     } else {
@@ -1760,7 +1935,10 @@ fn edge_kind_from_str(value: &str) -> std::result::Result<dh_types::EdgeKind, St
         "implements" => Ok(dh_types::EdgeKind::Implements),
         "type_references" => Ok(dh_types::EdgeKind::TypeReferences),
         "exports" => Ok(dh_types::EdgeKind::Exports),
-        _ => Err(StorageError::InvalidEnumValue { field: "edge_kind", value: value.to_string() }),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "edge_kind",
+            value: value.to_string(),
+        }),
     }
 }
 
@@ -1775,7 +1953,10 @@ fn resolution_from_str(value: &str) -> std::result::Result<dh_types::EdgeResolut
     match value {
         "resolved" => Ok(dh_types::EdgeResolution::Resolved),
         "unresolved" => Ok(dh_types::EdgeResolution::Unresolved),
-        _ => Err(StorageError::InvalidEnumValue { field: "resolution", value: value.to_string() }),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "resolution",
+            value: value.to_string(),
+        }),
     }
 }
 
@@ -1790,7 +1971,10 @@ fn confidence_from_str(value: &str) -> std::result::Result<dh_types::EdgeConfide
     match value {
         "direct" => Ok(dh_types::EdgeConfidence::Direct),
         "best_effort" => Ok(dh_types::EdgeConfidence::BestEffort),
-        _ => Err(StorageError::InvalidEnumValue { field: "confidence", value: value.to_string() }),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "confidence",
+            value: value.to_string(),
+        }),
     }
 }
 
@@ -2106,7 +2290,10 @@ fn str_to_session_status(s: &str) -> std::result::Result<SessionStatus, StorageE
         "completed" => Ok(SessionStatus::Completed),
         "failed" => Ok(SessionStatus::Failed),
         "cancelled" => Ok(SessionStatus::Cancelled),
-        _ => Err(StorageError::InvalidEnumValue { field: "session_status", value: s.to_string() }),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "session_status",
+            value: s.to_string(),
+        }),
     }
 }
 
@@ -2123,7 +2310,10 @@ fn str_to_semantic_mode(s: &str) -> std::result::Result<SemanticMode, StorageErr
         "always" => Ok(SemanticMode::Always),
         "on_demand" => Ok(SemanticMode::OnDemand),
         "off" => Ok(SemanticMode::Off),
-        _ => Err(StorageError::InvalidEnumValue { field: "semantic_mode", value: s.to_string() }),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "semantic_mode",
+            value: s.to_string(),
+        }),
     }
 }
 
@@ -2142,7 +2332,10 @@ fn str_to_enforcement(s: &str) -> std::result::Result<ToolEnforcementLevel, Stor
         "hard" => Ok(ToolEnforcementLevel::Hard),
         "soft" => Ok(ToolEnforcementLevel::Soft),
         "off" => Ok(ToolEnforcementLevel::Off),
-        _ => Err(StorageError::InvalidEnumValue { field: "tool_enforcement_level", value: s.to_string() }),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "tool_enforcement_level",
+            value: s.to_string(),
+        }),
     }
 }
 
@@ -2165,7 +2358,10 @@ fn str_to_stage_status(s: &str) -> std::result::Result<StageStatus, StorageError
         "failed" => Ok(StageStatus::Failed),
         "blocked" => Ok(StageStatus::Blocked),
         "skipped" => Ok(StageStatus::Skipped),
-        _ => Err(StorageError::InvalidEnumValue { field: "stage_status", value: s.to_string() }),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "stage_status",
+            value: s.to_string(),
+        }),
     }
 }
 
@@ -2184,7 +2380,10 @@ fn str_to_gate_status(s: &str) -> std::result::Result<GateStatus, StorageError> 
         "passed" => Ok(GateStatus::Passed),
         "failed" => Ok(GateStatus::Failed),
         "waived" => Ok(GateStatus::Waived),
-        _ => Err(StorageError::InvalidEnumValue { field: "gate_status", value: s.to_string() }),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "gate_status",
+            value: s.to_string(),
+        }),
     }
 }
 
@@ -2200,7 +2399,10 @@ fn str_to_hook_name(s: &str) -> std::result::Result<HookName, StorageError> {
         "skill_activation" => Ok(HookName::SkillActivation),
         "mcp_routing" => Ok(HookName::McpRouting),
         "session_state_injection" => Ok(HookName::SessionStateInjection),
-        _ => Err(StorageError::InvalidEnumValue { field: "hook_name", value: s.to_string() }),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "hook_name",
+            value: s.to_string(),
+        }),
     }
 }
 
@@ -2219,7 +2421,10 @@ fn str_to_hook_decision(s: &str) -> std::result::Result<HookDecision, StorageErr
         "block" => Ok(HookDecision::Block),
         "modify" => Ok(HookDecision::Modify),
         "passthrough" => Ok(HookDecision::Passthrough),
-        _ => Err(StorageError::InvalidEnumValue { field: "hook_decision", value: s.to_string() }),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "hook_decision",
+            value: s.to_string(),
+        }),
     }
 }
 
@@ -2236,7 +2441,10 @@ fn str_to_agent_role(s: &str) -> std::result::Result<AgentRole, StorageError> {
         "code_reviewer" => Ok(AgentRole::CodeReviewer),
         "qa_agent" => Ok(AgentRole::QaAgent),
         "quick_agent" => Ok(AgentRole::QuickAgent),
-        _ => Err(StorageError::InvalidEnumValue { field: "agent_role", value: s.to_string() }),
+        _ => Err(StorageError::InvalidEnumValue {
+            field: "agent_role",
+            value: s.to_string(),
+        }),
     }
 }
 
@@ -2253,14 +2461,26 @@ pub trait SessionRepository {
 pub trait WorkflowStageRepository {
     fn insert_stage(&self, state: &WorkflowStageState) -> Result<()>;
     fn get_current_stage(&self, session_id: &str) -> Result<Option<WorkflowStageState>>;
-    fn update_stage_status(&self, session_id: &str, stage: &str, status: StageStatus, gate: GateStatus, now_ms: i64) -> Result<()>;
+    fn update_stage_status(
+        &self,
+        session_id: &str,
+        stage: &str,
+        status: StageStatus,
+        gate: GateStatus,
+        now_ms: i64,
+    ) -> Result<()>;
     fn list_stages(&self, session_id: &str) -> Result<Vec<WorkflowStageState>>;
 }
 
 pub trait HookLogRepository {
     fn insert_hook_log(&self, log: &HookInvocationLog) -> Result<()>;
     fn list_hook_logs(&self, session_id: &str, limit: usize) -> Result<Vec<HookInvocationLog>>;
-    fn list_hook_logs_by_name(&self, session_id: &str, hook: HookName, limit: usize) -> Result<Vec<HookInvocationLog>>;
+    fn list_hook_logs_by_name(
+        &self,
+        session_id: &str,
+        hook: HookName,
+        limit: usize,
+    ) -> Result<Vec<HookInvocationLog>>;
 }
 
 pub trait ExecutionEnvelopeRepository {
@@ -2347,15 +2567,36 @@ impl SessionRepository for Database {
              FROM sessions WHERE status = ?1 ORDER BY created_at_unix_ms DESC",
         )?;
         let rows = stmt.query_map(params![session_status_to_str(status)], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
-                row.get::<_, i32>(3)?, row.get::<_, String>(4)?, row.get::<_, String>(5)?,
-                row.get::<_, String>(6)?, row.get::<_, String>(7)?, row.get::<_, i64>(8)?, row.get::<_, i64>(9)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i32>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+            ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (id, repo_root, lane_str, locked, stage, status_str, sm_str, te_str, created, updated) = row?;
+            let (
+                id,
+                repo_root,
+                lane_str,
+                locked,
+                stage,
+                status_str,
+                sm_str,
+                te_str,
+                created,
+                updated,
+            ) = row?;
             out.push(SessionState {
-                id, repo_root,
+                id,
+                repo_root,
                 lane: str_to_lane(&lane_str)?,
                 lane_locked: locked != 0,
                 current_stage: stage,
@@ -2414,7 +2655,14 @@ impl WorkflowStageRepository for Database {
         .transpose()
     }
 
-    fn update_stage_status(&self, session_id: &str, stage: &str, status: StageStatus, gate: GateStatus, now_ms: i64) -> Result<()> {
+    fn update_stage_status(
+        &self,
+        session_id: &str,
+        stage: &str,
+        status: StageStatus,
+        gate: GateStatus,
+        now_ms: i64,
+    ) -> Result<()> {
         self.conn.execute(
             "UPDATE workflow_stages SET stage_status = ?1, gate_status = ?2, updated_at_unix_ms = ?3
              WHERE session_id = ?4 AND stage = ?5",
@@ -2429,9 +2677,15 @@ impl WorkflowStageRepository for Database {
              FROM workflow_stages WHERE session_id = ?1 ORDER BY id ASC",
         )?;
         let rows = stmt.query_map(params![session_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?, row.get::<_, Option<String>>(4)?,
-                row.get::<_, String>(5)?, row.get::<_, i64>(6)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
         })?;
         let mut out = Vec::new();
         for row in rows {
@@ -2486,12 +2740,20 @@ impl HookLogRepository for Database {
         Ok(out)
     }
 
-    fn list_hook_logs_by_name(&self, session_id: &str, hook: HookName, limit: usize) -> Result<Vec<HookInvocationLog>> {
+    fn list_hook_logs_by_name(
+        &self,
+        session_id: &str,
+        hook: HookName,
+        limit: usize,
+    ) -> Result<Vec<HookInvocationLog>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_id, envelope_id, hook_name, input_json, output_json, decision, reason, duration_ms, created_at_unix_ms
              FROM hook_invocation_logs WHERE session_id = ?1 AND hook_name = ?2 ORDER BY created_at_unix_ms DESC LIMIT ?3",
         )?;
-        let rows = stmt.query_map(params![session_id, hook_name_to_str(hook), limit as i64], map_hook_log)?;
+        let rows = stmt.query_map(
+            params![session_id, hook_name_to_str(hook), limit as i64],
+            map_hook_log,
+        )?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row??);
@@ -2523,7 +2785,10 @@ fn map_hook_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<HookInvocati
 
 impl ExecutionEnvelopeRepository for Database {
     fn insert_envelope(&self, e: &ExecutionEnvelope) -> Result<()> {
-        let model_json = e.resolved_model.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default());
+        let model_json = e
+            .resolved_model
+            .as_ref()
+            .map(|m| serde_json::to_string(m).unwrap_or_default());
         let skills_json = serde_json::to_string(&e.active_skills)?;
         let mcps_json = serde_json::to_string(&e.active_mcps)?;
         self.conn.execute(
@@ -2913,71 +3178,77 @@ mod tests {
             },
         ])?;
 
-        db.insert_edges(&[
-            dh_types::GraphEdge {
-                kind: dh_types::EdgeKind::Imports,
-                from: dh_types::NodeId::File(10),
-                to: dh_types::NodeId::File(11),
-                resolution: dh_types::EdgeResolution::Resolved,
-                confidence: dh_types::EdgeConfidence::Direct,
-                span: Some(Span {
-                    start_byte: 0,
-                    end_byte: 1,
-                    start_line: 1,
-                    start_column: 0,
-                    end_line: 1,
-                    end_column: 1,
-                }),
-                reason: "./b".to_string(),
-            },
-            dh_types::GraphEdge {
-                kind: dh_types::EdgeKind::References,
-                from: dh_types::NodeId::Symbol(100),
-                to: dh_types::NodeId::Symbol(101),
-                resolution: dh_types::EdgeResolution::Resolved,
-                confidence: dh_types::EdgeConfidence::Direct,
-                span: Some(Span {
-                    start_byte: 0,
-                    end_byte: 1,
-                    start_line: 2,
-                    start_column: 0,
-                    end_line: 2,
-                    end_column: 1,
-                }),
-                reason: "bar".to_string(),
-            },
-            dh_types::GraphEdge {
-                kind: dh_types::EdgeKind::Calls,
-                from: dh_types::NodeId::Symbol(100),
-                to: dh_types::NodeId::Symbol(101),
-                resolution: dh_types::EdgeResolution::Resolved,
-                confidence: dh_types::EdgeConfidence::Direct,
-                span: Some(Span {
-                    start_byte: 0,
-                    end_byte: 1,
-                    start_line: 2,
-                    start_column: 0,
-                    end_line: 2,
-                    end_column: 1,
-                }),
-                reason: "bar".to_string(),
-            }
-        ], 10)?;
+        db.insert_edges(
+            &[
+                dh_types::GraphEdge {
+                    kind: dh_types::EdgeKind::Imports,
+                    from: dh_types::NodeId::File(10),
+                    to: dh_types::NodeId::File(11),
+                    resolution: dh_types::EdgeResolution::Resolved,
+                    confidence: dh_types::EdgeConfidence::Direct,
+                    span: Some(Span {
+                        start_byte: 0,
+                        end_byte: 1,
+                        start_line: 1,
+                        start_column: 0,
+                        end_line: 1,
+                        end_column: 1,
+                    }),
+                    reason: "./b".to_string(),
+                    payload_json: None,
+                },
+                dh_types::GraphEdge {
+                    kind: dh_types::EdgeKind::References,
+                    from: dh_types::NodeId::Symbol(100),
+                    to: dh_types::NodeId::Symbol(101),
+                    resolution: dh_types::EdgeResolution::Resolved,
+                    confidence: dh_types::EdgeConfidence::Direct,
+                    span: Some(Span {
+                        start_byte: 0,
+                        end_byte: 1,
+                        start_line: 2,
+                        start_column: 0,
+                        end_line: 2,
+                        end_column: 1,
+                    }),
+                    reason: "bar".to_string(),
+                    payload_json: None,
+                },
+                dh_types::GraphEdge {
+                    kind: dh_types::EdgeKind::Calls,
+                    from: dh_types::NodeId::Symbol(100),
+                    to: dh_types::NodeId::Symbol(101),
+                    resolution: dh_types::EdgeResolution::Resolved,
+                    confidence: dh_types::EdgeConfidence::Direct,
+                    span: Some(Span {
+                        start_byte: 0,
+                        end_byte: 1,
+                        start_line: 2,
+                        start_column: 0,
+                        end_line: 2,
+                        end_column: 1,
+                    }),
+                    reason: "bar".to_string(),
+                    payload_json: None,
+                },
+            ],
+            10,
+        )?;
 
         let defs = db.find_symbol_definitions(1, "foo", 10)?;
         assert_eq!(defs.len(), 1);
         assert!(db.find_symbol_by_id(1, 100)?.is_some());
         assert!(db.find_file_by_id(1, 10)?.is_some());
-        
+
         let file_outgoing = db.find_outgoing_edges(1, "file", 10, 10)?;
         assert_eq!(file_outgoing.len(), 1);
-        
+
         let file_incoming = db.find_incoming_edges(1, "file", 11, 10)?;
         assert_eq!(file_incoming.len(), 1);
-        
+
         let symbol_outgoing = db.find_outgoing_edges(1, "symbol", 100, 10)?;
         assert_eq!(symbol_outgoing.len(), 2);
-        
+
         let symbol_incoming = db.find_incoming_edges(1, "symbol", 101, 10)?;
         assert_eq!(symbol_incoming.len(), 2);
         assert!(!db.bounded_file_neighborhood(1, 10, 2, 8)?.is_empty());

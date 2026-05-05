@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-02T00:51:55.784Z",
+  "taskId": "RGA-07G",
+  "gateEligible": false,
+  "gateDecision": "delete_gate_blocked",
+  "thresholds": {
+    "required": {
+      "symbolsPct": 99,
+      "importsDependenciesIncludingCrossRootPct": 99,
+      "callsReferencesPct": 95,
+      "criticalFixtureQueriesPct": 100
+    },
+    "summary": {
+      "symbols": false,
+      "importsDependenciesIncludingCrossRoot": false,
+      "callsReferences": false,
+      "criticalFixtureQueries": "validated_by_external_cargo_test"
+    },
+    "metrics": {
+      "symbols": {
+        "expectedTs": 1605,
+        "actualRust": 5819,
+        "absoluteDelta": 4214,
+        "parityPct": 27.582,
+        "rustToTsRatio": 3.626,
+        "thresholdPct": 99,
+        "thresholdMet": false
+      },
+      "imports": {
+        "expectedTs": 1440,
+        "actualRust": 2406,
+        "absoluteDelta": 966,
+        "parityPct": 59.85,
+        "rustToTsRatio": 1.671,
+        "thresholdPct": 99,
+        "thresholdMet": false
+      },
+      "resolvedImports": {
+        "expectedTs": 32,
+        "actualRust": 1311,
+        "absoluteDelta": 1279,
+        "parityPct": 2.441,
+        "rustToTsRatio": 40.969,
+        "thresholdPct": 99,
+        "thresholdMet": false
+      },
+      "crossRootResolvedImports": {
+        "expectedTs": 0,
+        "actualRust": 38,
+        "absoluteDelta": 38,
+        "parityPct": 0,
+        "rustToTsRatio": null,
+        "thresholdPct": 99,
+        "thresholdMet": false
+      },
+      "calls": {
+        "expectedTs": 5146,
+        "actualRust": 13941,
+        "absoluteDelta": 8795,
+        "parityPct": 36.913,
+        "rustToTsRatio": 2.709,
+        "thresholdPct": 95,
+        "thresholdMet": false
+      },
+      "references": {
+        "expectedTs": 2343,
+        "actualRust": 60727,
+        "absoluteDelta": 58384,
+        "parityPct": 3.858,
+        "rustToTsRatio": 25.918,
+        "thresholdPct": 95,
+        "thresholdMet": false
+      }
+    }
+  },
+  "coverage": {
+    "rustIndexedFilesAll": 355,
+    "rustJsLikeFiles": 345,
+    "tsBaselineFiles": 345,
+    "commonFiles": 345,
+    "tsOnlyFiles": 0,
+    "rustOnlyFiles": 0,
+    "commonOverRustJsLikePct": 100,
+    "commonOverRustAllPct": 97.183
+  },
+  "gapClassification": {
+    "blocking": [
+      "symbols_below_99_count_parity",
+      "imports_below_99_count_parity",
+      "cross_root_imports_below_99_count_parity",
+      "calls_below_95_count_parity",
+      "references_below_95_count_parity",
+      "identity_level_parity_unavailable"
+    ],
+    "truePositiveGaps": [
+      "legacy TS baseline and Rust extractor emit different symbol/reference models",
+      "legacy TS import resolver does not model all Rust resolver/package-export/cross-root metadata",
+      "Rust records resolved/unresolved graph edges and comprehensive references that legacy TS GraphIndexer did not expose as equivalent identity facts"
+    ],
+    "nonBlockingNoise": [
+      "The DH/OpenKit official corpus remains below the 3,000-file large-corpus target; it is still the approved official phase-one corpus."
+    ],
+    "falsePositive": [],
+    "followUp": [
+      "Add or expose an official TS baseline mode that covers the same file set and identity keys, or replace threshold comparison with approved Rust-owned golden fixtures.",
+      "Extend parity tooling to compare stable identity keys for symbols, dependencies, calls, and references instead of count-only aggregates."
+    ],
+    "unclassified": []
+  },
+  "blockers": [
+    "Approved parity thresholds are not met by normalized count comparison.",
+    "Current parity tooling still does not provide identity-level parity for symbols/imports/calls/references.",
+    "RGA-08 must remain blocked unless the user explicitly approves a documented exception; no exception is approved by this artifact."
+  ],
+  "criticalFixtureQueries": {
+    "requiredPassPct": 100,
+    "validationCommand": "cargo test -p dh-indexer --test parity_harness_test",
+    "artifactStatus": "external_command_evidence_required"
+  }
+}

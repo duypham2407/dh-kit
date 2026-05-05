@@ -228,7 +228,7 @@ pub fn build_basic_chunks(
     }
 
     chunks.push(Chunk {
-        id: stable_id(&format!("chunk|header|{}", ctx.rel_path)),
+        id: stable_id(&format!("chunk|{}|header|{}", ctx.file_id, ctx.rel_path)),
         workspace_id: ctx.workspace_id,
         file_id: ctx.file_id,
         symbol_id: None,
@@ -249,8 +249,8 @@ pub fn build_basic_chunks(
         let content = text_by_byte_range(ctx.source, symbol.span.start_byte, symbol.span.end_byte);
         chunks.push(Chunk {
             id: stable_id(&format!(
-                "chunk|symbol|{}|{}|{}",
-                ctx.rel_path, symbol.qualified_name, symbol.span.start_byte
+                "chunk|{}|symbol|{}|{}|{}",
+                ctx.file_id, ctx.rel_path, symbol.qualified_name, symbol.span.start_byte
             )),
             workspace_id: ctx.workspace_id,
             file_id: ctx.file_id,

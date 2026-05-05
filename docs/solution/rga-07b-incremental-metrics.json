@@ -1,0 +1,502 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-01T10:14:51.778Z",
+  "taskId": "RGA-07B",
+  "measurement": "changed_incremental_temp_copy",
+  "corpus": {
+    "label": "DH/OpenKit official corpus",
+    "rootPath": "/Users/duypham/Code/DH",
+    "snapshot": "local-working-tree",
+    "largeCorpusTargetFiles": 3000,
+    "limitation": "Current official corpus is smaller than the 3,000-file target recorded in the approved solution; measurements remain official-corpus evidence, not large-corpus proof.",
+    "tempCopyRoot": "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ",
+    "tempCopyPolicy": "Copied from the official DH/OpenKit working tree while excluding generated dependency/build/database artifacts."
+  },
+  "baseline": {
+    "status": "measured",
+    "command": {
+      "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+      "args": [
+        "index",
+        "--workspace",
+        "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ",
+        "--force-full"
+      ],
+      "cwd": "/Users/duypham/Code/DH/rust-engine",
+      "exitCode": 0,
+      "signal": null,
+      "timedOut": false,
+      "durationMs": 25402.383083,
+      "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db\nrun_id: 3c40a4ca-d2fd-40fb-bafb-9b0c8049cad5\nscanned_files: 350\nchanged_files: 350\nreindexed_files: 350\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 25382\nwarnings (4):\n- parsed with recoverable errors: packages/retrieval/src/query/run-retrieval.ts\n- parsed with recoverable errors: rust-engine/crates/dh-indexer/tests/fixtures/parity/syntax-error.ts\n- resolution-basis change detected; widening invalidation for workspace 1\n- graph projection hydrated as stale: index run is not complete (status=Parsing, active_run_id=Some(\"3c40a4ca-d2fd-40fb-bafb-9b0c8049cad5\"))\n",
+      "stderr": "",
+      "rss": {
+        "status": "measured",
+        "method": "sampled via ps -o rss= -p <pid>",
+        "pid": 88857,
+        "sampleCount": 253,
+        "peakRssBytes": 222887936,
+        "p50RssBytes": 61177856,
+        "p95RssBytes": 127844352,
+        "maxRssBytes": 222887936,
+        "failures": []
+      },
+      "eventLoop": {
+        "status": "measured",
+        "method": "node:perf_hooks monitorEventLoopDelay",
+        "resolutionMs": 10,
+        "p50Ms": 11.043,
+        "p95Ms": 11.616,
+        "maxMs": 83.034,
+        "meanMs": 11.056
+      }
+    },
+    "parsedStdout": {
+      "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ",
+      "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db",
+      "run_id": "3c40a4ca-d2fd-40fb-bafb-9b0c8049cad5",
+      "scanned_files": "350",
+      "changed_files": "350",
+      "reindexed_files": "350",
+      "deleted_files": "0",
+      "queued_embeddings": "0",
+      "embedded_chunks": "0",
+      "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+      "duration_ms": "25382"
+    }
+  },
+  "changedOneFile": {
+    "status": "measured",
+    "sampleCount": 3,
+    "thresholdP95Ms": 500,
+    "wallMs": {
+      "p50": 2986.891,
+      "p95": 3110.447,
+      "max": 3110.447,
+      "thresholdResult": "measured_subset_fail"
+    },
+    "engineDurationMs": {
+      "p50": 2972,
+      "p95": 3098,
+      "max": 3098,
+      "thresholdResult": "measured_subset_fail"
+    },
+    "peakRssBytes": {
+      "max": 196935680,
+      "method": "max of externally sampled per-process peak RSS values"
+    }
+  },
+  "changedTenFiles": {
+    "status": "measured",
+    "sampleCount": 3,
+    "thresholdP95Ms": 2000,
+    "wallMs": {
+      "p50": 4837.651,
+      "p95": 4948.998,
+      "max": 4948.998,
+      "thresholdResult": "measured_subset_fail"
+    },
+    "engineDurationMs": {
+      "p50": 4820,
+      "p95": 4935,
+      "max": 4935,
+      "thresholdResult": "measured_subset_fail"
+    },
+    "peakRssBytes": {
+      "max": 208289792,
+      "method": "max of externally sampled per-process peak RSS values"
+    }
+  },
+  "rawSamples": {
+    "oneFileSamples": [
+      {
+        "mutationSet": "changed_1_file",
+        "sampleNumber": 1,
+        "changedFileCount": 1,
+        "changedFiles": [
+          "packages/intelligence/src/graph/extract-call-edges.test.ts"
+        ],
+        "wallMs": 2986.891125000002,
+        "engineDurationMs": 2972,
+        "parsedStdout": {
+          "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ",
+          "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db",
+          "run_id": "7bf6ea96-bdad-4472-bde0-414d840ca137",
+          "scanned_files": "350",
+          "changed_files": "1",
+          "reindexed_files": "1",
+          "deleted_files": "0",
+          "queued_embeddings": "0",
+          "embedded_chunks": "0",
+          "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+          "duration_ms": "2972"
+        },
+        "command": {
+          "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+          "args": [
+            "index",
+            "--workspace",
+            "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ"
+          ],
+          "cwd": "/Users/duypham/Code/DH/rust-engine",
+          "exitCode": 0,
+          "signal": null,
+          "timedOut": false,
+          "durationMs": 2986.891125000002,
+          "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db\nrun_id: 7bf6ea96-bdad-4472-bde0-414d840ca137\nscanned_files: 350\nchanged_files: 1\nreindexed_files: 1\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 2972\nwarnings (1):\n- graph projection hydrated as stale: index run is not complete (status=Parsing, active_run_id=Some(\"7bf6ea96-bdad-4472-bde0-414d840ca137\"))\n",
+          "stderr": "",
+          "rss": {
+            "status": "measured",
+            "method": "sampled via ps -o rss= -p <pid>",
+            "pid": 91966,
+            "sampleCount": 30,
+            "peakRssBytes": 196935680,
+            "p50RssBytes": 121405440,
+            "p95RssBytes": 175292416,
+            "maxRssBytes": 196935680,
+            "failures": []
+          },
+          "eventLoop": {
+            "status": "measured",
+            "method": "node:perf_hooks monitorEventLoopDelay",
+            "resolutionMs": 10,
+            "p50Ms": 11.043,
+            "p95Ms": 11.526,
+            "maxMs": 13.402,
+            "meanMs": 10.969
+          }
+        },
+        "status": "measured"
+      },
+      {
+        "mutationSet": "changed_1_file",
+        "sampleNumber": 2,
+        "changedFileCount": 1,
+        "changedFiles": [
+          "packages/intelligence/src/graph/extract-call-edges.test.ts"
+        ],
+        "wallMs": 3110.4472079999978,
+        "engineDurationMs": 3098,
+        "parsedStdout": {
+          "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ",
+          "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db",
+          "run_id": "278f47f6-a82d-4196-a75e-f7aa50ef3dd8",
+          "scanned_files": "350",
+          "changed_files": "1",
+          "reindexed_files": "1",
+          "deleted_files": "0",
+          "queued_embeddings": "0",
+          "embedded_chunks": "0",
+          "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+          "duration_ms": "3098"
+        },
+        "command": {
+          "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+          "args": [
+            "index",
+            "--workspace",
+            "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ"
+          ],
+          "cwd": "/Users/duypham/Code/DH/rust-engine",
+          "exitCode": 0,
+          "signal": null,
+          "timedOut": false,
+          "durationMs": 3110.4472079999978,
+          "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db\nrun_id: 278f47f6-a82d-4196-a75e-f7aa50ef3dd8\nscanned_files: 350\nchanged_files: 1\nreindexed_files: 1\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 3098\nwarnings (1):\n- graph projection hydrated as stale: index run is not complete (status=Parsing, active_run_id=Some(\"278f47f6-a82d-4196-a75e-f7aa50ef3dd8\"))\n",
+          "stderr": "",
+          "rss": {
+            "status": "measured",
+            "method": "sampled via ps -o rss= -p <pid>",
+            "pid": 92331,
+            "sampleCount": 31,
+            "peakRssBytes": 190070784,
+            "p50RssBytes": 118128640,
+            "p95RssBytes": 168361984,
+            "maxRssBytes": 190070784,
+            "failures": []
+          },
+          "eventLoop": {
+            "status": "measured",
+            "method": "node:perf_hooks monitorEventLoopDelay",
+            "resolutionMs": 10,
+            "p50Ms": 11.043,
+            "p95Ms": 11.272,
+            "maxMs": 13.558,
+            "meanMs": 10.947
+          }
+        },
+        "status": "measured"
+      },
+      {
+        "mutationSet": "changed_1_file",
+        "sampleNumber": 3,
+        "changedFileCount": 1,
+        "changedFiles": [
+          "packages/intelligence/src/graph/extract-call-edges.test.ts"
+        ],
+        "wallMs": 2909.6700830000045,
+        "engineDurationMs": 2897,
+        "parsedStdout": {
+          "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ",
+          "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db",
+          "run_id": "5d93345b-4a09-4a45-b87f-de605e163dd3",
+          "scanned_files": "350",
+          "changed_files": "1",
+          "reindexed_files": "1",
+          "deleted_files": "0",
+          "queued_embeddings": "0",
+          "embedded_chunks": "0",
+          "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+          "duration_ms": "2897"
+        },
+        "command": {
+          "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+          "args": [
+            "index",
+            "--workspace",
+            "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ"
+          ],
+          "cwd": "/Users/duypham/Code/DH/rust-engine",
+          "exitCode": 0,
+          "signal": null,
+          "timedOut": false,
+          "durationMs": 2909.6700830000045,
+          "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db\nrun_id: 5d93345b-4a09-4a45-b87f-de605e163dd3\nscanned_files: 350\nchanged_files: 1\nreindexed_files: 1\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 2897\nwarnings (1):\n- graph projection hydrated as stale: index run is not complete (status=Parsing, active_run_id=Some(\"5d93345b-4a09-4a45-b87f-de605e163dd3\"))\n",
+          "stderr": "",
+          "rss": {
+            "status": "measured",
+            "method": "sampled via ps -o rss= -p <pid>",
+            "pid": 92722,
+            "sampleCount": 29,
+            "peakRssBytes": 190939136,
+            "p50RssBytes": 121241600,
+            "p95RssBytes": 168542208,
+            "maxRssBytes": 190939136,
+            "failures": []
+          },
+          "eventLoop": {
+            "status": "measured",
+            "method": "node:perf_hooks monitorEventLoopDelay",
+            "resolutionMs": 10,
+            "p50Ms": 11.035,
+            "p95Ms": 11.076,
+            "maxMs": 20.021,
+            "meanMs": 10.968
+          }
+        },
+        "status": "measured"
+      }
+    ],
+    "tenFileSamples": [
+      {
+        "mutationSet": "changed_10_file",
+        "sampleNumber": 1,
+        "changedFileCount": 10,
+        "changedFiles": [
+          "packages/intelligence/src/graph/extract-call-edges.test.ts",
+          "packages/intelligence/src/graph/extract-call-edges.ts",
+          "packages/intelligence/src/graph/extract-call-graph.test.ts",
+          "packages/intelligence/src/graph/extract-call-graph.ts",
+          "packages/intelligence/src/graph/extract-call-sites.test.ts",
+          "packages/intelligence/src/graph/extract-call-sites.ts",
+          "packages/intelligence/src/graph/extract-import-edges.test.ts",
+          "packages/intelligence/src/graph/extract-import-edges.ts",
+          "packages/intelligence/src/graph/graph-indexer.benchmark.test.ts",
+          "packages/intelligence/src/graph/graph-indexer.test.ts"
+        ],
+        "wallMs": 4948.997707999995,
+        "engineDurationMs": 4935,
+        "parsedStdout": {
+          "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ",
+          "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db",
+          "run_id": "d276ec5b-f7bf-445e-8a44-d20095422b1c",
+          "scanned_files": "350",
+          "changed_files": "10",
+          "reindexed_files": "10",
+          "deleted_files": "0",
+          "queued_embeddings": "0",
+          "embedded_chunks": "0",
+          "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+          "duration_ms": "4935"
+        },
+        "command": {
+          "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+          "args": [
+            "index",
+            "--workspace",
+            "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ"
+          ],
+          "cwd": "/Users/duypham/Code/DH/rust-engine",
+          "exitCode": 0,
+          "signal": null,
+          "timedOut": false,
+          "durationMs": 4948.997707999995,
+          "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db\nrun_id: d276ec5b-f7bf-445e-8a44-d20095422b1c\nscanned_files: 350\nchanged_files: 10\nreindexed_files: 10\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 4935\nwarnings (1):\n- graph projection hydrated as stale: index run is not complete (status=Parsing, active_run_id=Some(\"d276ec5b-f7bf-445e-8a44-d20095422b1c\"))\n",
+          "stderr": "",
+          "rss": {
+            "status": "measured",
+            "method": "sampled via ps -o rss= -p <pid>",
+            "pid": 93071,
+            "sampleCount": 50,
+            "peakRssBytes": 208289792,
+            "p50RssBytes": 98172928,
+            "p95RssBytes": 145293312,
+            "maxRssBytes": 208289792,
+            "failures": []
+          },
+          "eventLoop": {
+            "status": "measured",
+            "method": "node:perf_hooks monitorEventLoopDelay",
+            "resolutionMs": 10,
+            "p50Ms": 11.043,
+            "p95Ms": 11.379,
+            "maxMs": 19.022,
+            "meanMs": 10.967
+          }
+        },
+        "status": "measured"
+      },
+      {
+        "mutationSet": "changed_10_file",
+        "sampleNumber": 2,
+        "changedFileCount": 10,
+        "changedFiles": [
+          "packages/intelligence/src/graph/extract-call-edges.test.ts",
+          "packages/intelligence/src/graph/extract-call-edges.ts",
+          "packages/intelligence/src/graph/extract-call-graph.test.ts",
+          "packages/intelligence/src/graph/extract-call-graph.ts",
+          "packages/intelligence/src/graph/extract-call-sites.test.ts",
+          "packages/intelligence/src/graph/extract-call-sites.ts",
+          "packages/intelligence/src/graph/extract-import-edges.test.ts",
+          "packages/intelligence/src/graph/extract-import-edges.ts",
+          "packages/intelligence/src/graph/graph-indexer.benchmark.test.ts",
+          "packages/intelligence/src/graph/graph-indexer.test.ts"
+        ],
+        "wallMs": 4837.650834,
+        "engineDurationMs": 4820,
+        "parsedStdout": {
+          "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ",
+          "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db",
+          "run_id": "d931ef04-a235-449c-b9e7-433b1ceb22cc",
+          "scanned_files": "350",
+          "changed_files": "10",
+          "reindexed_files": "10",
+          "deleted_files": "0",
+          "queued_embeddings": "0",
+          "embedded_chunks": "0",
+          "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+          "duration_ms": "4820"
+        },
+        "command": {
+          "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+          "args": [
+            "index",
+            "--workspace",
+            "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ"
+          ],
+          "cwd": "/Users/duypham/Code/DH/rust-engine",
+          "exitCode": 0,
+          "signal": null,
+          "timedOut": false,
+          "durationMs": 4837.650834,
+          "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db\nrun_id: d931ef04-a235-449c-b9e7-433b1ceb22cc\nscanned_files: 350\nchanged_files: 10\nreindexed_files: 10\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 4820\nwarnings (1):\n- graph projection hydrated as stale: index run is not complete (status=Parsing, active_run_id=Some(\"d931ef04-a235-449c-b9e7-433b1ceb22cc\"))\n",
+          "stderr": "",
+          "rss": {
+            "status": "measured",
+            "method": "sampled via ps -o rss= -p <pid>",
+            "pid": 93675,
+            "sampleCount": 49,
+            "peakRssBytes": 204210176,
+            "p50RssBytes": 93143040,
+            "p95RssBytes": 159416320,
+            "maxRssBytes": 204210176,
+            "failures": []
+          },
+          "eventLoop": {
+            "status": "measured",
+            "method": "node:perf_hooks monitorEventLoopDelay",
+            "resolutionMs": 10,
+            "p50Ms": 11.043,
+            "p95Ms": 11.1,
+            "maxMs": 12.198,
+            "meanMs": 10.926
+          }
+        },
+        "status": "measured"
+      },
+      {
+        "mutationSet": "changed_10_file",
+        "sampleNumber": 3,
+        "changedFileCount": 10,
+        "changedFiles": [
+          "packages/intelligence/src/graph/extract-call-edges.test.ts",
+          "packages/intelligence/src/graph/extract-call-edges.ts",
+          "packages/intelligence/src/graph/extract-call-graph.test.ts",
+          "packages/intelligence/src/graph/extract-call-graph.ts",
+          "packages/intelligence/src/graph/extract-call-sites.test.ts",
+          "packages/intelligence/src/graph/extract-call-sites.ts",
+          "packages/intelligence/src/graph/extract-import-edges.test.ts",
+          "packages/intelligence/src/graph/extract-import-edges.ts",
+          "packages/intelligence/src/graph/graph-indexer.benchmark.test.ts",
+          "packages/intelligence/src/graph/graph-indexer.test.ts"
+        ],
+        "wallMs": 4790.607583999998,
+        "engineDurationMs": 4778,
+        "parsedStdout": {
+          "workspace": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ",
+          "database": "/private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db",
+          "run_id": "466103af-344a-4693-ab98-5329d83798ec",
+          "scanned_files": "350",
+          "changed_files": "10",
+          "reindexed_files": "10",
+          "deleted_files": "0",
+          "queued_embeddings": "0",
+          "embedded_chunks": "0",
+          "embedding_provider": "stub (set OPENAI_API_KEY to enable)",
+          "duration_ms": "4778"
+        },
+        "command": {
+          "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+          "args": [
+            "index",
+            "--workspace",
+            "/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ"
+          ],
+          "cwd": "/Users/duypham/Code/DH/rust-engine",
+          "exitCode": 0,
+          "signal": null,
+          "timedOut": false,
+          "durationMs": 4790.607583999998,
+          "stdout": "index complete\nworkspace: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ\ndatabase: /private/var/folders/yb/q95996d56fz63xb3hypl4p580000gn/T/rga-07b-corpus-TJFFEQ/dh-index.db\nrun_id: 466103af-344a-4693-ab98-5329d83798ec\nscanned_files: 350\nchanged_files: 10\nreindexed_files: 10\ndeleted_files: 0\nqueued_embeddings: 0\nembedded_chunks: 0\nembedding_provider: stub (set OPENAI_API_KEY to enable)\nduration_ms: 4778\nwarnings (1):\n- graph projection hydrated as stale: index run is not complete (status=Parsing, active_run_id=Some(\"466103af-344a-4693-ab98-5329d83798ec\"))\n",
+          "stderr": "",
+          "rss": {
+            "status": "measured",
+            "method": "sampled via ps -o rss= -p <pid>",
+            "pid": 94283,
+            "sampleCount": 48,
+            "peakRssBytes": 199360512,
+            "p50RssBytes": 102023168,
+            "p95RssBytes": 156368896,
+            "maxRssBytes": 199360512,
+            "failures": []
+          },
+          "eventLoop": {
+            "status": "measured",
+            "method": "node:perf_hooks monitorEventLoopDelay",
+            "resolutionMs": 10,
+            "p50Ms": 11.043,
+            "p95Ms": 11.092,
+            "maxMs": 19.268,
+            "meanMs": 10.951
+          }
+        },
+        "status": "measured"
+      }
+    ]
+  },
+  "limitations": [
+    "Mutation benchmarks ran in a temporary copy to avoid destructive repository mutation.",
+    "The temporary copy excludes generated dependency/build/database artifacts, so this is source-corpus evidence rather than an exact byte-for-byte working tree benchmark.",
+    "p95 is computed from three samples per mutation set; this is enough for an attempt artifact but weaker than a statistically rigorous benchmark run.",
+    "Peak RSS is externally sampled for each dh-engine index process via ps and may miss short spikes between samples."
+  ]
+}

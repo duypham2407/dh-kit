@@ -59,6 +59,7 @@ fn benchmark_cli_parity_outputs_structured_artifact() {
     assert!(artifact["results"][0]["correctness"].is_object());
     assert!(artifact["results"][0]["index_timing"].is_object());
     assert!(artifact["results"][0]["query_latency"].is_null());
+    assert!(artifact["results"][0]["graph_hydration"].is_null());
     assert_eq!(artifact["results"][0]["memory"]["status"], "not_measured");
 }
 
@@ -116,6 +117,59 @@ export function run(): number {
             .unwrap_or(0)
             > 0
     );
+}
+
+#[test]
+fn benchmark_cli_hydrate_graph_reports_hydration_distribution() {
+    let workspace = tempdir().expect("temporary workspace should be created");
+    fs::create_dir_all(workspace.path().join("src")).expect("src directory should be created");
+    fs::write(
+        workspace.path().join("src/main.ts"),
+        r#"export function helper(v: number): number {
+  return v + 1;
+}
+
+export function run(): number {
+  return helper(1);
+}
+"#,
+    )
+    .expect("fixture TypeScript file should be written");
+
+    let temp = tempdir().expect("temporary output directory should be created");
+    let output_path = temp.path().join("hydrate-graph-benchmark.json");
+
+    let (stdout, _) = run_engine(
+        &["benchmark", "--class", "hydrate-graph"],
+        workspace.path(),
+        &output_path,
+    );
+
+    assert!(stdout.contains("class=hydrate_graph"));
+    assert!(stdout.contains("graph_hydration_ms"));
+
+    let artifact: Value = serde_json::from_str(
+        &fs::read_to_string(&output_path).expect("benchmark output JSON should be readable"),
+    )
+    .expect("benchmark output JSON should parse");
+
+    assert_eq!(
+        artifact["results"][0]["metadata"]["benchmark_class"],
+        "hydrate_graph"
+    );
+    assert!(artifact["results"][0]["graph_hydration"].is_object());
+    assert_eq!(
+        artifact["results"][0]["graph_hydration"]["sample_count_requested"],
+        5
+    );
+    assert!(
+        artifact["results"][0]["graph_hydration"]["sample_count_completed"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
+    );
+    assert!(artifact["results"][0]["index_timing"].is_object());
+    assert!(artifact["results"][0]["query_latency"].is_null());
 }
 
 #[test]

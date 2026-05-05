@@ -668,7 +668,7 @@ impl WorkerSupervisor {
         loop {
             let now = Instant::now();
             let health_timeout = self.config.health_timeout;
-            
+
             if now.saturating_duration_since(self.last_message_received_at) > health_timeout {
                 let should_ping = match self.last_ping_sent_at {
                     Some(last_ping) => now.saturating_duration_since(last_ping) > health_timeout,
@@ -678,9 +678,17 @@ impl WorkerSupervisor {
                     self.missed_heartbeats += 1;
                     if self.missed_heartbeats >= 2 {
                         let failure = ReceiveFailure::HeartbeatFailed;
-                        return Err(self.classify_receive_failure(failure, failure_phase, timeout_class));
+                        return Err(self.classify_receive_failure(
+                            failure,
+                            failure_phase,
+                            timeout_class,
+                        ));
                     }
-                    let _ = self.send_notification("runtime.ping", json!({ "ts": format!("{:?}", now) }), failure_phase);
+                    let _ = self.send_notification(
+                        "runtime.ping",
+                        json!({ "ts": format!("{:?}", now) }),
+                        failure_phase,
+                    );
                     self.last_ping_sent_at = Some(now);
                 }
             }
@@ -697,12 +705,16 @@ impl WorkerSupervisor {
                     self.missed_heartbeats = 0;
                     self.last_ping_sent_at = None;
                     msg
-                },
+                }
                 Err(ReceiveFailure::Timeout) => {
                     if Instant::now() >= deadline {
-                        let _ = self.send_notification("session.cancel", json!({ "reason": "timeout" }), failure_phase);
+                        let _ = self.send_notification(
+                            "session.cancel",
+                            json!({ "reason": "timeout" }),
+                            failure_phase,
+                        );
                         let grace_deadline = Instant::now() + Duration::from_millis(500);
-                        
+
                         let mut final_msg = None;
                         while Instant::now() < grace_deadline {
                             match self.recv_message_before(grace_deadline) {
@@ -711,23 +723,31 @@ impl WorkerSupervisor {
                                         final_msg = Some(msg);
                                         break;
                                     }
-                                },
+                                }
                                 Err(_) => break,
                             }
                         }
-                        
+
                         if let Some(msg) = final_msg {
                             msg
                         } else {
                             let _ = self.force_cleanup(timeout_class);
-                            return Err(self.classify_receive_failure(ReceiveFailure::Timeout, failure_phase, timeout_class));
+                            return Err(self.classify_receive_failure(
+                                ReceiveFailure::Timeout,
+                                failure_phase,
+                                timeout_class,
+                            ));
                         }
                     } else {
                         continue;
                     }
-                },
+                }
                 Err(failure) => {
-                    return Err(self.classify_receive_failure(failure, failure_phase, timeout_class));
+                    return Err(self.classify_receive_failure(
+                        failure,
+                        failure_phase,
+                        timeout_class,
+                    ));
                 }
             };
 

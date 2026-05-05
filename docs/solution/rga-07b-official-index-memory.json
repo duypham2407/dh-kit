@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-01T10:13:52.752Z",
+  "taskId": "RGA-07B",
+  "measurement": "official_warm_index_memory",
+  "corpus": {
+    "label": "DH/OpenKit official corpus",
+    "rootPath": "/Users/duypham/Code/DH",
+    "snapshot": "local-working-tree",
+    "largeCorpusTargetFiles": 3000,
+    "limitation": "Current official corpus is smaller than the 3,000-file target recorded in the approved solution; measurements remain official-corpus evidence, not large-corpus proof."
+  },
+  "command": {
+    "command": "/Users/duypham/Code/DH/rust-engine/target/debug/dh-engine",
+    "args": [
+      "benchmark",
+      "--class",
+      "warm-no-change-index",
+      "--workspace",
+      "/Users/duypham/Code/DH",
+      "--output",
+      "/Users/duypham/Code/DH/docs/solution/rga-07b-official-warm-index-benchmark.json"
+    ],
+    "cwd": "/Users/duypham/Code/DH/rust-engine",
+    "exitCode": 0,
+    "signal": null,
+    "timedOut": false,
+    "durationMs": 5103.253250000001,
+    "stdout": "Benchmark summary\nscope: Benchmark results are local evidence for this corpus and this environment only.\ncorpus: DH@local-working-tree (DhRepo)\nenvironment: macos-aarch64 build_profile=debug\nsuite_status: degraded\nresult_count: 1\n- class=warm_no_change_index status=degraded corpus=DH@local-working-tree\n  index_timing_ms: elapsed=5078.099 scanned=350 changed=1 reindexed=1 deleted=0 refreshed=1 retained=347 degraded=0 not_current=0\n  memory: not_measured reason=Peak RSS measurement is not yet instrumented for index benchmark classes.\n  degraded_note: warm_no_change_index detected changed_files=1 and cannot be marked complete no-change evidence.\nreport_json: /Users/duypham/Code/DH/docs/solution/rga-07b-official-warm-index-benchmark.json\n",
+    "stderr": "",
+    "rss": {
+      "status": "measured",
+      "method": "sampled via ps -o rss= -p <pid>",
+      "pid": 87418,
+      "sampleCount": 51,
+      "peakRssBytes": 200638464,
+      "p50RssBytes": 104562688,
+      "p95RssBytes": 160055296,
+      "maxRssBytes": 200638464,
+      "failures": []
+    },
+    "eventLoop": {
+      "status": "measured",
+      "method": "node:perf_hooks monitorEventLoopDelay",
+      "resolutionMs": 10,
+      "p50Ms": 11.035,
+      "p95Ms": 11.117,
+      "maxMs": 14.754,
+      "meanMs": 10.943
+    }
+  },
+  "outputArtifactPath": "/Users/duypham/Code/DH/docs/solution/rga-07b-official-warm-index-benchmark.json",
+  "outputArtifactRepoPath": "docs/solution/rga-07b-official-warm-index-benchmark.json",
+  "status": "measured",
+  "memory": {
+    "status": "measured",
+    "method": "sampled via ps -o rss= -p <pid>",
+    "pid": 87418,
+    "sampleCount": 51,
+    "peakRssBytes": 200638464,
+    "p50RssBytes": 104562688,
+    "p95RssBytes": 160055296,
+    "maxRssBytes": 200638464,
+    "failures": []
+  },
+  "limitations": [
+    "This wraps the Rust CLI process from TypeScript and samples OS RSS externally; it is not an internal Rust allocator profile.",
+    "The benchmark class is warm-no-change-index; it may become degraded if local index state detects newly changed files.",
+    "This does not provide hydrate p95 because current benchmark JSON does not serialize graph_hydration_ms."
+  ]
+}

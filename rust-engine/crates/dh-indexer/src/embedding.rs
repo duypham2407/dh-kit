@@ -91,7 +91,12 @@ impl OpenAiEmbeddingClient {
             .trim_end_matches('/');
         let endpoint = format!("{}{}", base_url, OPENAI_EMBED_PATH);
 
-        Ok(Self { config, http, endpoint, api_key })
+        Ok(Self {
+            config,
+            http,
+            endpoint,
+            api_key,
+        })
     }
 
     /// Attempt to create from environment variables. Returns `None` if no API key.
@@ -151,11 +156,13 @@ impl OpenAiEmbeddingClient {
             );
         }
 
-        let parsed: EmbedResponse = resp
-            .json()
-            .context("deserialize embeddings API response")?;
+        let parsed: EmbedResponse = resp.json().context("deserialize embeddings API response")?;
 
-        Ok(parsed.data.into_iter().map(|d| (d.index, d.embedding)).collect())
+        Ok(parsed
+            .data
+            .into_iter()
+            .map(|d| (d.index, d.embedding))
+            .collect())
     }
 }
 

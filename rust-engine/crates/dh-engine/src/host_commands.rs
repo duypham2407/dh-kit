@@ -74,7 +74,6 @@ pub struct RustHostedKnowledgeReport {
     pub rust_host_notes: Vec<String>,
 }
 
-
 pub fn run_hosted_knowledge_command(
     request: HostKnowledgeCommandRequest,
 ) -> Result<RustHostedKnowledgeReport> {
@@ -514,7 +513,6 @@ fn session_run_lane_params(request: &HostLaneCommandRequest, workspace: &Path) -
     }
     params
 }
-
 
 fn route_worker_to_host_message(message: &Value, router: &BridgeRpcRouter<'_>) -> Option<Value> {
     let id = jsonrpc_message_id(message)?;

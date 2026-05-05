@@ -107,6 +107,8 @@ export type BridgeAskQueryClass =
   | "graph_relationship_usage"
   | "graph_relationship_dependencies"
   | "graph_relationship_dependents"
+  | "graph_call_hierarchy"
+  | "graph_entry_points"
   | "graph_build_evidence";
 
 export type BridgeBuildEvidenceIntent = "explain";
@@ -121,13 +123,20 @@ export type BridgeBuildEvidenceBudget = {
 
 export type BridgeDelegatedSessionQueryClass = BridgeAskQueryClass;
 
-export type BridgeSessionDelegatedMethod = "query.search" | "query.definition" | "query.relationship" | "query.buildEvidence";
+export type BridgeSessionDelegatedMethod =
+  | "query.search"
+  | "query.definition"
+  | "query.relationship"
+  | "query.buildEvidence"
+  | "query.callHierarchy"
+  | "query.entryPoints";
 
 export type BridgeSessionRunCommandRequest = {
   query: string;
   repoRoot: string;
   queryClass: BridgeDelegatedSessionQueryClass;
   limit?: number;
+  maxDepth?: number;
   symbol?: string;
   targetPath?: string;
   intent?: BridgeBuildEvidenceIntent;
@@ -140,7 +149,9 @@ export type BridgeDirectQueryMethod =
   | "query.search"
   | "query.definition"
   | "query.relationship"
-  | "query.buildEvidence";
+  | "query.buildEvidence"
+  | "query.callHierarchy"
+  | "query.entryPoints";
 
 type BridgeQueryMethod = BridgeDirectQueryMethod;
 
@@ -149,6 +160,7 @@ export type BridgeAskRequest = {
   repoRoot: string;
   queryClass: BridgeAskQueryClass;
   limit?: number;
+  maxDepth?: number;
   symbol?: string;
   targetPath?: string;
   intent?: BridgeBuildEvidenceIntent;
@@ -183,6 +195,8 @@ function isDelegatedSessionQueryClass(
     || queryClass === "graph_relationship_usage"
     || queryClass === "graph_relationship_dependencies"
     || queryClass === "graph_relationship_dependents"
+    || queryClass === "graph_call_hierarchy"
+    || queryClass === "graph_entry_points"
     || queryClass === "graph_build_evidence";
 }
 
@@ -250,7 +264,7 @@ type JsonRpcResponse = JsonRpcSuccess | JsonRpcFailure;
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const V2_PROTOCOL_VERSION = "1";
-const V2_METHODS = ["dh.initialize", "query.search", "query.definition", "query.relationship", "query.buildEvidence", "runtime.ping"] as const;
+const V2_METHODS = ["dh.initialize", "query.search", "query.definition", "query.relationship", "query.buildEvidence", "query.callHierarchy", "query.entryPoints", "runtime.ping"] as const;
 const V2_RELATIONS = ["usage", "dependencies", "dependents"] as const;
 
 export function createDhJsonRpcStdioClient(
@@ -325,6 +339,7 @@ class DhJsonRpcStdioClient implements BridgeClient {
       repoRoot: input.repoRoot,
       queryClass: input.queryClass,
       limit: input.limit,
+      maxDepth: input.maxDepth,
       symbol: input.symbol,
       targetPath: input.targetPath,
       intent: input.intent,
@@ -487,6 +502,7 @@ class DhJsonRpcStdioClient implements BridgeClient {
     repoRoot: string;
     queryClass: BridgeDirectQueryClass;
     limit?: number;
+    maxDepth?: number;
     symbol?: string;
     targetPath?: string;
     intent?: BridgeBuildEvidenceIntent;
@@ -552,6 +568,30 @@ class DhJsonRpcStdioClient implements BridgeClient {
             target: input.targetPath ?? input.query,
             workspaceRoot: input.repoRoot,
             limit,
+          },
+          requestId,
+        };
+      case "graph_call_hierarchy":
+        return {
+          method: "query.callHierarchy",
+          params: {
+            symbol: input.symbol ?? input.query,
+            workspaceRoot: input.repoRoot,
+            filePath: input.targetPath,
+            limit,
+            maxDepth: input.maxDepth ?? 3,
+          },
+          requestId,
+        };
+      case "graph_entry_points":
+        return {
+          method: "query.entryPoints",
+          params: {
+            symbol: input.symbol ?? input.query,
+            workspaceRoot: input.repoRoot,
+            filePath: input.targetPath,
+            limit,
+            maxDepth: input.maxDepth ?? 3,
           },
           requestId,
         };
@@ -1176,6 +1216,12 @@ function inferQuestionClassFromCall(call: {
   }
   if (call.method === "query.buildEvidence") {
     return "build_evidence";
+  }
+  if (call.method === "query.callHierarchy") {
+    return "call_hierarchy";
+  }
+  if (call.method === "query.entryPoints") {
+    return "entry_points";
   }
 
   const relation = asString(call.params.relation);

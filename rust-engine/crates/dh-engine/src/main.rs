@@ -1,15 +1,17 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use dh_indexer::{embedding::build_embedding_client_from_env, IndexWorkspaceRequest, Indexer, IndexerApi};
+use dh_indexer::{
+    embedding::build_embedding_client_from_env, IndexWorkspaceRequest, Indexer, IndexerApi,
+};
 use dh_storage::{Database, IndexStateRepository};
 use dh_types::{BenchmarkClass, IndexRunStatus, IndexState, WorkflowLane};
 use std::path::PathBuf;
 
 mod benchmark;
 mod bridge;
+mod hooks;
 mod host_commands;
 mod host_lifecycle;
-mod hooks;
 mod runtime_launch;
 mod session_manager;
 mod worker_protocol;
@@ -172,7 +174,6 @@ struct LaneCommandArgs {
     json: bool,
 }
 
-
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum BenchmarkClassArg {
     ColdFullIndex,
@@ -180,6 +181,7 @@ enum BenchmarkClassArg {
     IncrementalReindex,
     ColdQuery,
     WarmQuery,
+    HydrateGraph,
     ParityBenchmark,
 }
 
@@ -191,6 +193,7 @@ impl From<BenchmarkClassArg> for BenchmarkClass {
             BenchmarkClassArg::IncrementalReindex => BenchmarkClass::IncrementalReindex,
             BenchmarkClassArg::ColdQuery => BenchmarkClass::ColdQuery,
             BenchmarkClassArg::WarmQuery => BenchmarkClass::WarmQuery,
+            BenchmarkClassArg::HydrateGraph => BenchmarkClass::HydrateGraph,
             BenchmarkClassArg::ParityBenchmark => BenchmarkClass::ParityBenchmark,
         }
     }
@@ -377,8 +380,17 @@ fn main() -> Result<()> {
             println!("deleted_files: {}", report.deleted_files);
             println!("queued_embeddings: {}", report.queued_embeddings);
             println!("embedded_chunks: {}", embedded_count);
-            println!("embedding_provider: {}", if embed_client.is_real() { embed_client.config().model.as_str() } else { "stub (set OPENAI_API_KEY to enable)" });
+            println!(
+                "embedding_provider: {}",
+                if embed_client.is_real() {
+                    embed_client.config().model.as_str()
+                } else {
+                    "stub (set OPENAI_API_KEY to enable)"
+                }
+            );
             println!("duration_ms: {}", report.duration_ms);
+            println!("link_ms: {}", report.link_ms);
+            println!("graph_hydration_ms: {}", report.graph_hydration_ms);
             if report.warnings.is_empty() {
                 println!("warnings: <none>");
             } else {
@@ -488,15 +500,9 @@ fn main() -> Result<()> {
         Commands::Trace(args) => {
             run_knowledge_command(host_commands::HostKnowledgeCommandKind::Trace, args)?
         }
-        Commands::Quick(args) => {
-            run_lane_command(WorkflowLane::Quick, args)?
-        }
-        Commands::Delivery(args) => {
-            run_lane_command(WorkflowLane::Delivery, args)?
-        }
-        Commands::Migrate(args) => {
-            run_lane_command(WorkflowLane::Migration, args)?
-        }
+        Commands::Quick(args) => run_lane_command(WorkflowLane::Quick, args)?,
+        Commands::Delivery(args) => run_lane_command(WorkflowLane::Delivery, args)?,
+        Commands::Migrate(args) => run_lane_command(WorkflowLane::Migration, args)?,
         Commands::Serve { workspace } => {
             let workspace = workspace.canonicalize()?;
             bridge::run_bridge_server(workspace)?;
@@ -507,7 +513,7 @@ fn main() -> Result<()> {
             worker_entry,
         } => {
             println!("== DH Engine Doctor ==");
-            
+
             // 1. Environment
             println!("\n[1] Environment");
             println!("OS: {}", std::env::consts::OS);
@@ -539,28 +545,40 @@ fn main() -> Result<()> {
                     Err(e) => println!("ERROR: Failed to open DB: {}", e),
                 }
             } else {
-                println!("Database File: {} (not found, run `dh index`)", db_path.display());
+                println!(
+                    "Database File: {} (not found, run `dh index`)",
+                    db_path.display()
+                );
             }
 
             // 3. TS Worker
             println!("\n[3] TS Worker Health");
             let worker_path = worker_entry.unwrap_or_else(|| {
-                std::env::current_dir().unwrap().join("dist").join("ts-worker").join("worker.mjs")
+                std::env::current_dir()
+                    .unwrap()
+                    .join("dist")
+                    .join("ts-worker")
+                    .join("worker.mjs")
             });
             println!("Node Runtime: {}", node_runtime.display());
             println!("Worker Entry: {}", worker_path.display());
             if !worker_path.exists() {
                 println!("ERROR: Worker entry file not found!");
             } else {
-                let launch_request = crate::runtime_launch::RuntimeLaunchRequest::new(&node_runtime, &worker_path);
-                let launchability = crate::runtime_launch::check_worker_launchability(&launch_request);
+                let launch_request =
+                    crate::runtime_launch::RuntimeLaunchRequest::new(&node_runtime, &worker_path);
+                let launchability =
+                    crate::runtime_launch::check_worker_launchability(&launch_request);
                 if !launchability.is_launchable() {
                     println!("ERROR: Worker is not launchable: {:?}", launchability.issue);
                 } else {
                     println!("Worker is launchable. Testing supervisor startup...");
-                    let config = crate::worker_supervisor::WorkerSupervisorConfig::new(launch_request, workspace.clone());
+                    let config = crate::worker_supervisor::WorkerSupervisorConfig::new(
+                        launch_request,
+                        workspace.clone(),
+                    );
                     let mut supervisor = crate::worker_supervisor::WorkerSupervisor::new(config);
-                    
+
                     let start = std::time::Instant::now();
                     match supervisor.launch() {
                         Ok(report) => {
@@ -576,7 +594,7 @@ fn main() -> Result<()> {
                     let _ = supervisor.shutdown();
                 }
             }
-            
+
             // 4. Configuration
             println!("\n[4] API Configurations");
             let api_keys = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "PROXYPAL_API_KEY"];
@@ -584,7 +602,7 @@ fn main() -> Result<()> {
                 match std::env::var(key) {
                     Ok(val) => {
                         let masked = if val.len() > 4 {
-                            format!("{}...{}", &val[0..4], &val[val.len()-4..])
+                            format!("{}...{}", &val[0..4], &val[val.len() - 4..])
                         } else {
                             "***".to_string()
                         };
@@ -616,67 +634,65 @@ fn main() -> Result<()> {
             }
             println!("\nDoctor check complete.");
         }
-        Commands::Session { action } => {
-            match action {
-                SessionAction::Create { lane, workspace } => {
-                    let db_path = workspace.join(DEFAULT_DB_NAME);
-                    let db = Database::new(&db_path)?;
-                    db.initialize()?;
-                    let session_mgr = session_manager::SessionManager::new(&db);
-                    
-                    let id = format!("session-{}", chrono::Utc::now().timestamp_millis());
-                    let session = session_mgr.create_session(
-                        &id,
-                        &workspace.to_string_lossy(),
-                        lane.into(),
-                    )?;
-                    session_mgr.activate_session(&session.id)?;
-                    
-                    println!("{}", serde_json::to_string_pretty(&session)?);
-                }
-                SessionAction::Resume { id, workspace } => {
-                    let db_path = workspace.join(DEFAULT_DB_NAME);
-                    let db = Database::new(&db_path)?;
-                    db.initialize()?;
-                    let session_mgr = session_manager::SessionManager::new(&db);
-                    
-                    let session = session_mgr.resume_session(&id)?
-                        .context("session not found")?;
-                    session_mgr.activate_session(&session.id)?;
-                    
-                    println!("{}", serde_json::to_string_pretty(&session)?);
-                }
-                SessionAction::Status { id, workspace } => {
-                    let db_path = workspace.join(DEFAULT_DB_NAME);
-                    let db = Database::new(&db_path)?;
-                    db.initialize()?;
-                    let session_mgr = session_manager::SessionManager::new(&db);
-                    
-                    let session = session_mgr.resume_session(&id)?
-                        .context("session not found")?;
-                    let history = session_mgr.stage_history(&id)?;
-                    
-                    let status_payload = serde_json::json!({
-                        "session": session,
-                        "history": history,
-                    });
-                    
-                    println!("{}", serde_json::to_string_pretty(&status_payload)?);
-                }
-                SessionAction::Complete { id, workspace } => {
-                    let db_path = workspace.join(DEFAULT_DB_NAME);
-                    let db = Database::new(&db_path)?;
-                    db.initialize()?;
-                    let session_mgr = session_manager::SessionManager::new(&db);
-                    
-                    session_mgr.complete_session(&id)?;
-                    let session = session_mgr.resume_session(&id)?
-                        .context("session not found")?;
-                        
-                    println!("{}", serde_json::to_string_pretty(&session)?);
-                }
+        Commands::Session { action } => match action {
+            SessionAction::Create { lane, workspace } => {
+                let db_path = workspace.join(DEFAULT_DB_NAME);
+                let db = Database::new(&db_path)?;
+                db.initialize()?;
+                let session_mgr = session_manager::SessionManager::new(&db);
+
+                let id = format!("session-{}", chrono::Utc::now().timestamp_millis());
+                let session =
+                    session_mgr.create_session(&id, &workspace.to_string_lossy(), lane.into())?;
+                session_mgr.activate_session(&session.id)?;
+
+                println!("{}", serde_json::to_string_pretty(&session)?);
             }
-        }
+            SessionAction::Resume { id, workspace } => {
+                let db_path = workspace.join(DEFAULT_DB_NAME);
+                let db = Database::new(&db_path)?;
+                db.initialize()?;
+                let session_mgr = session_manager::SessionManager::new(&db);
+
+                let session = session_mgr
+                    .resume_session(&id)?
+                    .context("session not found")?;
+                session_mgr.activate_session(&session.id)?;
+
+                println!("{}", serde_json::to_string_pretty(&session)?);
+            }
+            SessionAction::Status { id, workspace } => {
+                let db_path = workspace.join(DEFAULT_DB_NAME);
+                let db = Database::new(&db_path)?;
+                db.initialize()?;
+                let session_mgr = session_manager::SessionManager::new(&db);
+
+                let session = session_mgr
+                    .resume_session(&id)?
+                    .context("session not found")?;
+                let history = session_mgr.stage_history(&id)?;
+
+                let status_payload = serde_json::json!({
+                    "session": session,
+                    "history": history,
+                });
+
+                println!("{}", serde_json::to_string_pretty(&status_payload)?);
+            }
+            SessionAction::Complete { id, workspace } => {
+                let db_path = workspace.join(DEFAULT_DB_NAME);
+                let db = Database::new(&db_path)?;
+                db.initialize()?;
+                let session_mgr = session_manager::SessionManager::new(&db);
+
+                session_mgr.complete_session(&id)?;
+                let session = session_mgr
+                    .resume_session(&id)?
+                    .context("session not found")?;
+
+                println!("{}", serde_json::to_string_pretty(&session)?);
+            }
+        },
     }
 
     Ok(())
@@ -766,10 +782,7 @@ fn run_knowledge_command(
     std::process::exit(exit_code);
 }
 
-fn run_lane_command(
-    lane: WorkflowLane,
-    args: LaneCommandArgs,
-) -> Result<()> {
+fn run_lane_command(lane: WorkflowLane, args: LaneCommandArgs) -> Result<()> {
     let worker_bundle = runtime_launch::resolve_worker_bundle_paths(
         args.worker_entry,
         args.worker_manifest,

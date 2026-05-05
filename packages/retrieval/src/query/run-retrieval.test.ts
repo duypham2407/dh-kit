@@ -6,8 +6,11 @@ import { createId } from "../../../shared/src/utils/ids.js";
 import { runRetrieval } from "./run-retrieval.js";
 import { closeDhDatabase } from "../../../storage/src/sqlite/db.js";
 import { buildEvidencePackets } from "./build-evidence-packets.js";
+import { readTelemetryEvents } from "../semantic/telemetry-collector.js";
+import { GRAPH_AST_ENGINE_ENV_VAR } from "../../../shared/src/utils/graph-engine-selector.js";
 
 const originalOpenAiKey = process.env.OPENAI_API_KEY;
+const originalGraphAstEngine = process.env[GRAPH_AST_ENGINE_ENV_VAR];
 let tmpDirs: string[] = [];
 
 function makeTmpRepo(): string {
@@ -23,6 +26,11 @@ afterEach(() => {
     delete process.env.OPENAI_API_KEY;
   } else {
     process.env.OPENAI_API_KEY = originalOpenAiKey;
+  }
+  if (originalGraphAstEngine === undefined) {
+    delete process.env[GRAPH_AST_ENGINE_ENV_VAR];
+  } else {
+    process.env[GRAPH_AST_ENGINE_ENV_VAR] = originalGraphAstEngine;
   }
   for (const dir of tmpDirs) {
     closeDhDatabase(dir);
@@ -62,6 +70,66 @@ describe("runRetrieval", () => {
     expect(result.results.length).toBeGreaterThan(0);
     expect(result.evidencePackets.length).toBeGreaterThan(0);
     expect(result.scanMeta.reducedCoverage).toBe(false);
+  });
+
+  it("does not run legacy TypeScript graph extraction when dependency graph is unavailable", async () => {
+    const repo = makeTmpRepo();
+    fs.writeFileSync(path.join(repo, "src", "auth.ts"), "export function login() { return 'ok'; }\n", "utf8");
+    fs.writeFileSync(path.join(repo, "src", "dashboard.ts"), "import { login } from './auth';\nexport function dashboard() { return login(); }\n", "utf8");
+
+    const result = await runRetrieval({
+      repoRoot: repo,
+      query: "explain auth module",
+      mode: "explain",
+      semanticMode: "off",
+    });
+
+    expect(result.dependencyGraph).toMatchObject({
+      available: false,
+      reason: "rust_bridge_api_not_available_at_retrieval_boundary",
+      source: "degraded_unavailable_adapter",
+      runtimeBehavior: "rust_first_unavailable",
+      engineSelector: {
+        engine: "rust",
+        label: "default_rust",
+        runsTypeScriptExtraction: false,
+      },
+    });
+    expect(result.edges).toHaveLength(0);
+    expect(result.results.length).toBeGreaterThan(0);
+
+    const telemetryEvents = readTelemetryEvents(repo);
+    expect(telemetryEvents.some((event) => event.kind === "retrieval_dependency_graph_unavailable")).toBe(true);
+    expect(telemetryEvents.some((event) => event.kind === "retrieval_dependency_graph_unavailable" && event.details["selectorLabel"] === "default_rust")).toBe(true);
+  });
+
+  it("labels ts selector as rollback-only and does not run legacy TypeScript graph extraction", async () => {
+    process.env[GRAPH_AST_ENGINE_ENV_VAR] = "ts";
+    const repo = makeTmpRepo();
+    fs.writeFileSync(path.join(repo, "src", "auth.ts"), "export function login() { return 'ok'; }\n", "utf8");
+
+    const result = await runRetrieval({
+      repoRoot: repo,
+      query: "explain auth module",
+      mode: "explain",
+      semanticMode: "off",
+    });
+
+    expect(result.dependencyGraph).toMatchObject({
+      available: false,
+      degraded: true,
+      reason: "ts_graph_engine_requires_explicit_rollback_rehearsal_context",
+      runtimeBehavior: "ts_rollback_context_required",
+      engineSelector: {
+        engine: "ts",
+        label: "explicit_ts_rollback_only",
+        runsTypeScriptExtraction: false,
+      },
+    });
+    expect(result.edges).toHaveLength(0);
+
+    const telemetryEvents = readTelemetryEvents(repo);
+    expect(telemetryEvents.some((event) => event.kind === "retrieval_dependency_graph_unavailable" && event.details["runtimeBehavior"] === "ts_rollback_context_required")).toBe(true);
   });
 
   it("runs semantic retrieval path in always mode", async () => {

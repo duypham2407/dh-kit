@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-01T10:14:52.022Z",
+  "taskId": "RGA-07B",
+  "corpus": {
+    "label": "DH/OpenKit official corpus",
+    "rootPath": "/Users/duypham/Code/DH",
+    "snapshot": "local-working-tree",
+    "largeCorpusTargetFiles": 3000,
+    "limitation": "Current official corpus is smaller than the 3,000-file target recorded in the approved solution; measurements remain official-corpus evidence, not large-corpus proof."
+  },
+  "status": "measured_subset_delete_gate_blocked",
+  "gateResults": {
+    "payload": "measured_subset_pass",
+    "nodeEventLoop": "measured_subset_pass",
+    "bridgeQueryPeakRss": "measured",
+    "officialWarmIndexPeakRss": "measured",
+    "changedOneFileIncremental": "measured_subset_fail",
+    "changedTenFileIncremental": "measured_subset_fail",
+    "buildEvidenceP95": "measured_subset_pass",
+    "hydrateP95": "blocked_not_instrumented",
+    "tsBaselineComparison": "blocked_by_rga_07a_partial_baseline",
+    "rollbackRehearsal": "blocked_out_of_scope_for_rga_07b_pending_rga_07c"
+  },
+  "measuredSubset": {
+    "payload": {
+      "status": "measured",
+      "unit": "bytes",
+      "sampleCount": 45,
+      "p50": 853,
+      "p95": 15171,
+      "max": 15171,
+      "threshold": {
+        "p95Bytes": 262144,
+        "maxBytes": 1048576
+      },
+      "thresholdResult": "measured_subset_pass"
+    },
+    "eventLoop": {
+      "status": "measured",
+      "method": "node:perf_hooks monitorEventLoopDelay",
+      "resolutionMs": 10,
+      "p50Ms": 11.035,
+      "p95Ms": 11.231,
+      "maxMs": 24.15,
+      "meanMs": 10.943,
+      "threshold": {
+        "p95Ms": 20,
+        "maxMs": 100
+      },
+      "thresholdResult": "measured_subset_pass"
+    },
+    "buildEvidence": {
+      "status": "measured",
+      "sampleCount": 5,
+      "p50Ms": 454.828,
+      "p95Ms": 529.007,
+      "maxMs": 529.007,
+      "thresholdP95Ms": 1000,
+      "thresholdResult": "measured_subset_pass"
+    },
+    "bridgeQueryMemory": {
+      "status": "measured",
+      "method": "sampled via ps -o rss= -p <pid>",
+      "pid": 88041,
+      "sampleCount": 66,
+      "peakRssBytes": 289161216,
+      "p50RssBytes": 233422848,
+      "p95RssBytes": 284049408,
+      "maxRssBytes": 289161216,
+      "failures": []
+    },
+    "officialWarmIndexMemory": {
+      "status": "measured",
+      "method": "sampled via ps -o rss= -p <pid>",
+      "pid": 87418,
+      "sampleCount": 51,
+      "peakRssBytes": 200638464,
+      "p50RssBytes": 104562688,
+      "p95RssBytes": 160055296,
+      "maxRssBytes": 200638464,
+      "failures": []
+    },
+    "officialWarmIndexEventLoop": {
+      "status": "measured",
+      "method": "node:perf_hooks monitorEventLoopDelay",
+      "resolutionMs": 10,
+      "p50Ms": 11.035,
+      "p95Ms": 11.117,
+      "maxMs": 14.754,
+      "meanMs": 10.943
+    },
+    "changedOneFileIncremental": {
+      "status": "measured",
+      "sampleCount": 3,
+      "thresholdP95Ms": 500,
+      "wallMs": {
+        "p50": 2986.891,
+        "p95": 3110.447,
+        "max": 3110.447,
+        "thresholdResult": "measured_subset_fail"
+      },
+      "engineDurationMs": {
+        "p50": 2972,
+        "p95": 3098,
+        "max": 3098,
+        "thresholdResult": "measured_subset_fail"
+      },
+      "peakRssBytes": {
+        "max": 196935680,
+        "method": "max of externally sampled per-process peak RSS values"
+      }
+    },
+    "changedTenFileIncremental": {
+      "status": "measured",
+      "sampleCount": 3,
+      "thresholdP95Ms": 2000,
+      "wallMs": {
+        "p50": 4837.651,
+        "p95": 4948.998,
+        "max": 4948.998,
+        "thresholdResult": "measured_subset_fail"
+      },
+      "engineDurationMs": {
+        "p50": 4820,
+        "p95": 4935,
+        "max": 4935,
+        "thresholdResult": "measured_subset_fail"
+      },
+      "peakRssBytes": {
+        "max": 208289792,
+        "method": "max of externally sampled per-process peak RSS values"
+      }
+    }
+  },
+  "deletionGateDecision": {
+    "rga08MayProceed": false,
+    "reason": "RGA-07B measured a useful subset, but hydrate p95 remains uninstrumented, RGA-07A parity remains delete-gate blocked, TS baseline comparison remains unavailable, and rollback rehearsal belongs to pending RGA-07C."
+  },
+  "limitations": [
+    "No production TypeScript graph code was deleted or modified.",
+    "No production Rust code was modified; measurements are captured by this env-gated docs test/tool artifact.",
+    "Hydrate p95 remains unavailable because current CLI/benchmark JSON does not expose graph_hydration_ms distributions.",
+    "Official-corpus memory is external RSS sampling, not allocator-level profiling.",
+    "Changed incremental benchmarks mutate a temporary copy, not the repository working tree."
+  ],
+  "artifactsWritten": [
+    "docs/solution/rga-07b-tooling-inspection.json",
+    "docs/solution/rga-07b-official-index-memory.json",
+    "docs/solution/rga-07b-official-warm-index-benchmark.json",
+    "docs/solution/rga-07b-bridge-query-metrics.json",
+    "docs/solution/rga-07b-incremental-metrics.json",
+    "docs/solution/rga-07b-measurement-summary.json"
+  ]
+}

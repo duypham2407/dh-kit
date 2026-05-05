@@ -37,7 +37,7 @@ export type KnowledgeAskEvidenceEntry = {
   kind?: string;
   snippet?: string;
   symbol?: string;
-  relationship?: "usage" | "dependencies" | "dependents";
+  relationship?: "usage" | "dependencies" | "dependents" | "call_hierarchy" | "entry_points";
   score?: number;
 };
 
@@ -82,6 +82,8 @@ export type KnowledgeCommandReport = {
     | "graph_relationship_usage"
     | "graph_relationship_dependencies"
     | "graph_relationship_dependents"
+    | "graph_call_hierarchy"
+    | "graph_entry_points"
     | "graph_build_evidence"
     | "unsupported";
   languageCapabilitySummary?: BridgeLanguageCapabilitySummary | null;
@@ -716,7 +718,9 @@ function mapBridgeMethodToIntent(method: BridgeAskResult["method"]):
   | "bridge_query_search"
   | "bridge_query_definition"
   | "bridge_query_relationship"
-  | "bridge_query_build_evidence" {
+  | "bridge_query_build_evidence"
+  | "bridge_query_call_hierarchy"
+  | "bridge_query_entry_points" {
   if (method === "query.definition") {
     return "bridge_query_definition";
   }
@@ -725,6 +729,12 @@ function mapBridgeMethodToIntent(method: BridgeAskResult["method"]):
   }
   if (method === "query.buildEvidence") {
     return "bridge_query_build_evidence";
+  }
+  if (method === "query.callHierarchy") {
+    return "bridge_query_call_hierarchy";
+  }
+  if (method === "query.entryPoints") {
+    return "bridge_query_entry_points";
   }
   return "bridge_query_search";
 }
@@ -856,6 +866,8 @@ function isFirstWaveDelegatedQuestionClass(queryClass: string): queryClass is Br
     || queryClass === "graph_relationship_usage"
     || queryClass === "graph_relationship_dependencies"
     || queryClass === "graph_relationship_dependents"
+    || queryClass === "graph_call_hierarchy"
+    || queryClass === "graph_entry_points"
     || queryClass === "graph_build_evidence";
 }
 
@@ -877,6 +889,11 @@ function assembleAskAnswer(input: {
   const missingBuildEvidencePacket = input.requestedQuestionClass === "graph_build_evidence" && !rustEvidence;
   const envelopeEvidence = rustEvidence?.evidence ?? [];
   const evidence: KnowledgeAskEvidenceEntry[] = envelopeEvidence.map((entry) => {
+    const callRelationship = input.requestedQuestionClass === "graph_call_hierarchy"
+      ? "call_hierarchy"
+      : input.requestedQuestionClass === "graph_entry_points"
+        ? "entry_points"
+        : undefined;
     return {
       filePath: entry.filePath,
       lineStart: entry.lineStart,
@@ -895,7 +912,7 @@ function assembleAskAnswer(input: {
             ? "dependencies"
             : input.requestedQuestionClass === "graph_relationship_dependents"
               ? "dependents"
-      : undefined,
+              : callRelationship,
     };
   });
   const groundedBuildEvidenceWithoutEntries = input.requestedQuestionClass === "graph_build_evidence"

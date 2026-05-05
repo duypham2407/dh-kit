@@ -67,7 +67,16 @@ const v2InitializeResult = {
   protocolVersion: "1",
   capabilities: {
     protocolVersion: "1",
-    methods: ["dh.initialize", "query.search", "query.definition", "query.relationship", "query.buildEvidence"],
+    methods: [
+      "dh.initialize",
+      "query.search",
+      "query.definition",
+      "query.relationship",
+      "query.buildEvidence",
+      "query.callHierarchy",
+      "query.entryPoints",
+      "runtime.ping",
+    ],
     queryRelationship: {
       supportedRelations: ["usage", "dependencies", "dependents"],
     },
@@ -262,6 +271,153 @@ describe("dh-jsonrpc-stdio-client", () => {
       expect(result.evidence?.evidence).toHaveLength(state === "partial" ? 1 : 0);
       await client.close();
     }
+  });
+
+  it("advertises and routes call hierarchy and entry point requests through direct query methods", async () => {
+    const directCalls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const spawnChild = spawnFake((request, child) => {
+      if (request.method === "dh.initialize") {
+        child.emitJsonResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: v2InitializeResult,
+        });
+        return;
+      }
+
+      if (request.method === "query.callHierarchy" || request.method === "query.entryPoints") {
+        directCalls.push({
+          method: request.method,
+          params: request.params ?? {},
+        });
+        child.emitJsonResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            answerState: "grounded",
+            questionClass: request.method === "query.callHierarchy" ? "call_hierarchy" : "entry_points",
+            items: [
+              request.method === "query.callHierarchy"
+                ? { callers: [], callees: [{ qualifiedName: "helper", filePath: "src/util.ts", depth: 1 }] }
+                : { entryPoints: [{ qualifiedName: "auth_handler", filePath: "api/routes.ts", depth: 1, entryPoint: "ApiRoute" }] },
+            ],
+            evidence: {
+              answerState: "grounded",
+              questionClass: request.method === "query.callHierarchy" ? "call_hierarchy" : "entry_points",
+              subject: "helper",
+              summary: "Graph traversal",
+              conclusion: "Rust graph query returned traversal results",
+              evidence: [
+                {
+                  kind: "call",
+                  filePath: "src/util.ts",
+                  reason: "call graph edge",
+                  source: "graph",
+                  confidence: "grounded",
+                  symbol: "helper",
+                },
+              ],
+              gaps: [],
+              bounds: {
+                traversalScope: request.method === "query.callHierarchy" ? "call_hierarchy" : "entry_points",
+                hopCount: 3,
+                nodeLimit: 5,
+              },
+            },
+          },
+        });
+      }
+    });
+
+    const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
+    const hierarchy = await client.runAskQuery({
+      query: "helper",
+      repoRoot: process.cwd(),
+      queryClass: "graph_call_hierarchy",
+      symbol: "helper",
+      targetPath: "src/util.ts",
+      maxDepth: 3,
+      limit: 5,
+    });
+    const entryPoints = await client.runAskQuery({
+      query: "helper",
+      repoRoot: process.cwd(),
+      queryClass: "graph_entry_points",
+      symbol: "helper",
+      targetPath: "src/util.ts",
+      maxDepth: 3,
+      limit: 5,
+    });
+
+    expect(hierarchy.method).toBe("query.callHierarchy");
+    expect(hierarchy.questionClass).toBe("call_hierarchy");
+    expect(hierarchy.capabilities.methods).toContain("query.callHierarchy");
+    expect(entryPoints.method).toBe("query.entryPoints");
+    expect(entryPoints.questionClass).toBe("entry_points");
+    expect(entryPoints.capabilities.methods).toContain("query.entryPoints");
+    expect(directCalls).toEqual([
+      {
+        method: "query.callHierarchy",
+        params: {
+          symbol: "helper",
+          workspaceRoot: process.cwd(),
+          filePath: "src/util.ts",
+          limit: 5,
+          maxDepth: 3,
+        },
+      },
+      {
+        method: "query.entryPoints",
+        params: {
+          symbol: "helper",
+          workspaceRoot: process.cwd(),
+          filePath: "src/util.ts",
+          limit: 5,
+          maxDepth: 3,
+        },
+      },
+    ]);
+    await client.close();
+  });
+
+  it("surfaces degraded expanded graph query errors as CAPABILITY_UNSUPPORTED", async () => {
+    const spawnChild = spawnFake((request, child) => {
+      if (request.method === "dh.initialize") {
+        child.emitJsonResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: v2InitializeResult,
+        });
+        return;
+      }
+
+      if (request.method === "query.callHierarchy") {
+        child.emitJsonResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          error: {
+            code: -32601,
+            message: "query.callHierarchy is unsupported for unknown language scope",
+            data: {
+              code: "CAPABILITY_UNSUPPORTED",
+            },
+          },
+        });
+      }
+    });
+
+    const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
+    await expect(client.runAskQuery({
+      query: "mystery_symbol",
+      repoRoot: process.cwd(),
+      queryClass: "graph_call_hierarchy",
+      symbol: "mystery_symbol",
+      targetPath: "src/legacy.unknown",
+    })).rejects.toMatchObject({
+      code: "CAPABILITY_UNSUPPORTED",
+      phase: "request",
+    } satisfies Partial<DhBridgeError>);
+    await client.close();
   });
 
   it("parses multibyte payload with byte-oriented framing", async () => {
@@ -533,7 +689,6 @@ describe("dh-jsonrpc-stdio-client", () => {
     });
 
     const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
-    expect("getRuntimePing" in client).toBe(false);
     expect("getRuntimeHealth" in client).toBe(false);
     expect("getRuntimeDiagnostics" in client).toBe(false);
     expect("fileRead" in client).toBe(false);
@@ -552,7 +707,7 @@ describe("dh-jsonrpc-stdio-client", () => {
     expect(source).not.toMatch(/BridgeRuntime(Ping|Health|Diagnostics)Result/);
     expect(source).not.toMatch(/BridgeFile(Read|ReadRange|List)(Request|Result)/);
     expect(source).not.toMatch(/BridgeToolExecute(Request|Result)/);
-    expect(source).not.toMatch(/\bgetRuntime(Ping|Health|Diagnostics)\??:/);
+    expect(source).not.toMatch(/\bgetRuntime(Health|Diagnostics)\??:/);
     expect(source).not.toMatch(/\bfile(Read|ReadRange|List)\??:/);
     expect(source).not.toMatch(/\btoolExecute\??:/);
 

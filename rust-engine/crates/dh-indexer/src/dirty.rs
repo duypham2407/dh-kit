@@ -1,6 +1,8 @@
 use dh_types::{File, FileCandidate, FileId};
 use std::collections::{HashMap, HashSet};
 
+use crate::hasher::FileKey;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvalidationLevel {
     ContentOnly,
@@ -32,23 +34,25 @@ pub struct ConfirmedDelta {
 pub struct DirtyPlannerInput<'a> {
     pub scanned: &'a [FileCandidate],
     pub content_hashes: &'a HashMap<String, String>,
+    pub content_hashes_by_file_key: &'a HashMap<FileKey, String>,
     pub existing_files: &'a [File],
     pub force_full: bool,
     pub expand_dependents: bool,
     pub touched_paths: Option<&'a [String]>,
+    pub touched_file_keys: Option<&'a [FileKey]>,
 }
 
 pub fn build_dirty_set(input: DirtyPlannerInput<'_>) -> DirtySet {
-    let existing_by_path = input
+    let existing_by_key = input
         .existing_files
         .iter()
-        .map(|file| (file.rel_path.clone(), file))
+        .map(|file| (FileKey::new(file.root_id, file.rel_path.clone()), file))
         .collect::<HashMap<_, _>>();
 
-    let scanned_paths = input
+    let scanned_keys = input
         .scanned
         .iter()
-        .map(|candidate| candidate.rel_path.as_str())
+        .map(|candidate| FileKey::new(candidate.root_id, candidate.rel_path.clone()))
         .collect::<HashSet<_>>();
 
     let touched_path_set = input
@@ -60,19 +64,31 @@ pub fn build_dirty_set(input: DirtyPlannerInput<'_>) -> DirtySet {
                 .collect::<HashSet<_>>()
         })
         .unwrap_or_default();
+    let touched_key_set = input
+        .touched_file_keys
+        .map(|keys| keys.iter().cloned().collect::<HashSet<_>>())
+        .unwrap_or_default();
 
     let mut to_index = Vec::new();
 
     for candidate in input.scanned {
         let normalized_path = candidate.rel_path.replace('\\', "/");
-        let explicitly_touched =
-            !touched_path_set.is_empty() && touched_path_set.contains(&normalized_path);
+        let file_key = FileKey::new(candidate.root_id, candidate.rel_path.clone());
+        let explicitly_touched = touched_key_set.contains(&file_key)
+            || (touched_key_set.is_empty()
+                && !touched_path_set.is_empty()
+                && touched_path_set.contains(&normalized_path));
 
-        let Some(content_hash) = input.content_hashes.get(&candidate.rel_path) else {
+        let Some(content_hash) = input.content_hashes_by_file_key.get(&file_key).or_else(|| {
+            input
+                .content_hashes
+                .get(&candidate.rel_path)
+                .filter(|_| input.content_hashes_by_file_key.is_empty())
+        }) else {
             continue;
         };
 
-        let existing = existing_by_path.get(candidate.rel_path.as_str()).copied();
+        let existing = existing_by_key.get(&file_key).copied();
         let planner_outcome = plan_candidate(
             candidate,
             existing,
@@ -95,7 +111,7 @@ pub fn build_dirty_set(input: DirtyPlannerInput<'_>) -> DirtySet {
         .existing_files
         .iter()
         .filter(|file| file.deleted_at_unix_ms.is_none())
-        .filter(|file| !scanned_paths.contains(file.rel_path.as_str()))
+        .filter(|file| !scanned_keys.contains(&FileKey::new(file.root_id, file.rel_path.clone())))
         .map(|file| file.id)
         .collect::<Vec<_>>();
     to_delete.sort_unstable();

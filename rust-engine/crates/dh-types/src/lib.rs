@@ -521,6 +521,7 @@ pub enum BenchmarkClass {
     IncrementalReindex,
     ColdQuery,
     WarmQuery,
+    HydrateGraph,
     ParityBenchmark,
 }
 
@@ -601,6 +602,8 @@ pub struct MemoryMeasurement {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IndexBenchmarkMetrics {
     pub elapsed_ms: f64,
+    pub link_ms: f64,
+    pub graph_hydration_ms: f64,
     pub scanned_files: u64,
     pub changed_files: u64,
     pub reindexed_files: u64,
@@ -609,6 +612,21 @@ pub struct IndexBenchmarkMetrics {
     pub retained_current_files: u64,
     pub degraded_partial_files: u64,
     pub not_current_files: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GraphHydrationBenchmarkMetrics {
+    pub sample_count_requested: u32,
+    pub sample_count_completed: u32,
+    pub p50_ms: f64,
+    pub p95_ms: f64,
+    pub max_ms: f64,
+    pub workspace_id: WorkspaceId,
+    pub node_count: u64,
+    pub persisted_edge_count: u64,
+    pub synthetic_edge_count: u64,
+    pub freshness: String,
+    pub freshness_reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -649,6 +667,7 @@ pub struct BenchmarkResult {
     pub correctness: Option<ParityBenchmarkMetrics>,
     pub index_timing: Option<IndexBenchmarkMetrics>,
     pub query_latency: Option<QueryLatencyMetrics>,
+    pub graph_hydration: Option<GraphHydrationBenchmarkMetrics>,
     pub degradation_notes: Vec<String>,
 }
 
@@ -733,6 +752,32 @@ pub struct GraphEdge {
     pub confidence: EdgeConfidence,
     pub span: Option<Span>,
     pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_json: Option<String>,
+}
+
+impl GraphEdge {
+    #[must_use]
+    pub fn new(
+        kind: EdgeKind,
+        from: NodeId,
+        to: NodeId,
+        resolution: EdgeResolution,
+        confidence: EdgeConfidence,
+        span: Option<Span>,
+        reason: String,
+    ) -> Self {
+        Self {
+            kind,
+            from,
+            to,
+            resolution,
+            confidence,
+            span,
+            reason,
+            payload_json: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1203,4 +1248,3 @@ pub struct McpRouteAudit {
     pub stage: String,
     pub created_at_unix_ms: i64,
 }
-

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-05-01T12:03:22.326Z",
+  "taskId": "RGA-07F",
+  "sourceRga07bArtifact": "docs/solution/rga-07b-incremental-metrics.json",
+  "afterArtifact": "docs/solution/rga-07f-after-incremental-metrics.json",
+  "corpus": {
+    "label": "DH/OpenKit official corpus",
+    "rootPath": "/Users/duypham/Code/DH",
+    "snapshot": "local-working-tree",
+    "largeCorpusTargetFiles": 3000,
+    "limitation": "Current official corpus is smaller than the 3,000-file target recorded in the approved solution; measurements remain official-corpus evidence, not large-corpus proof."
+  },
+  "gateResults": {
+    "changedOneFileIncremental": "measured_subset_pass",
+    "changedTenFileIncremental": "measured_subset_pass",
+    "rga08DeleteGate": "incremental_gate_unblocked_by_rga_07f"
+  },
+  "beforeRga07b": {
+    "changedOneFileEngineP95Ms": 3098,
+    "changedTenFileEngineP95Ms": 4935,
+    "artifact": "docs/solution/rga-07b-incremental-metrics.json"
+  },
+  "afterMeasuredSubset": {
+    "changedOneFileEngineP95Ms": 287,
+    "changedTenFileEngineP95Ms": 1831,
+    "changedOneFileThresholdP95Ms": 500,
+    "changedTenFileThresholdP95Ms": 2000
+  },
+  "artifactsWritten": [
+    "docs/solution/rga-07f-after-incremental-metrics.json",
+    "docs/solution/rga-07f-performance-summary.json"
+  ],
+  "limitations": [
+    "RGA-07F is scoped only to incremental indexing/link/hydration performance remediation.",
+    "RGA-07G parity remains out of scope and may still block RGA-08.",
+    "RGA-08 deletion was not started."
+  ]
+}

@@ -150,6 +150,24 @@ describe("telemetry-collector", () => {
     expect(summary.semanticSearch.strategyBreakdown["db_scan"]).toBe(1);
     expect(summary.unresolvedPaths.semantic).toBe(1);
     expect(summary.unresolvedPaths.evidence).toBe(1);
+    expect(summary.degradedRetrieval.dependencyGraphUnavailable).toBe(0);
+  });
+
+  it("summarizes degraded retrieval dependency graph events", () => {
+    const repo = makeTmpRepo();
+
+    recordTelemetry(repo, {
+      kind: "retrieval_dependency_graph_unavailable",
+      details: {
+        reason: "rust_bridge_api_not_available_at_retrieval_boundary",
+        attemptedAdapter: "degraded_unavailable_adapter",
+        fallbackPath: "semantic_vector_retrieval",
+      },
+    });
+
+    const summary = summarizeTelemetry(repo);
+    expect(summary.totalEvents).toBe(1);
+    expect(summary.degradedRetrieval.dependencyGraphUnavailable).toBe(1);
   });
 
   it("summarizes telemetry inside a time window", () => {

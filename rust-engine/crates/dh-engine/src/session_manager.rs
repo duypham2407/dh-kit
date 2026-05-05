@@ -4,8 +4,7 @@
 //! and gate evaluation. It persists all state to SQLite via the storage repositories.
 
 use dh_storage::{
-    Database, ExecutionEnvelopeRepository, SessionRepository,
-    WorkflowStageRepository,
+    Database, ExecutionEnvelopeRepository, SessionRepository, WorkflowStageRepository,
 };
 use dh_types::{
     AgentRole, ExecutionEnvelope, GateStatus, SessionState, SessionStatus, StageStatus,
@@ -108,7 +107,8 @@ impl<'a> SessionManager<'a> {
             updated_at_unix_ms: now_ms,
         };
 
-        self.db.create_session(&session)
+        self.db
+            .create_session(&session)
             .context("failed to persist new session")?;
 
         // Insert initial workflow stage
@@ -121,7 +121,8 @@ impl<'a> SessionManager<'a> {
             gate_status: GateStatus::Pending,
             updated_at_unix_ms: now_ms,
         };
-        self.db.insert_stage(&stage_state)
+        self.db
+            .insert_stage(&stage_state)
             .context("failed to persist initial workflow stage")?;
 
         Ok(session)
@@ -134,7 +135,9 @@ impl<'a> SessionManager<'a> {
 
     /// Activate a pending session (transition to Active status).
     pub fn activate_session(&self, session_id: &str) -> Result<()> {
-        let session = self.db.get_session(session_id)?
+        let session = self
+            .db
+            .get_session(session_id)?
             .context("session not found")?;
 
         if session.status != SessionStatus::Pending {
@@ -145,7 +148,8 @@ impl<'a> SessionManager<'a> {
         }
 
         let now_ms = chrono::Utc::now().timestamp_millis();
-        self.db.update_session_status(session_id, SessionStatus::Active, now_ms)?;
+        self.db
+            .update_session_status(session_id, SessionStatus::Active, now_ms)?;
 
         // Also activate the first stage
         let chain = stage_chain_for(session.lane);
@@ -171,7 +175,9 @@ impl<'a> SessionManager<'a> {
         session_id: &str,
         next_stage: &str,
     ) -> Result<WorkflowStageState> {
-        let session = self.db.get_session(session_id)?
+        let session = self
+            .db
+            .get_session(session_id)?
             .context("session not found")?;
 
         if session.status != SessionStatus::Active {
@@ -185,7 +191,9 @@ impl<'a> SessionManager<'a> {
         if !is_valid_transition(session.lane, &session.current_stage, next_stage) {
             bail!(
                 "invalid stage transition: {:?} -> {:?} for {:?} lane",
-                session.current_stage, next_stage, session.lane
+                session.current_stage,
+                next_stage,
+                session.lane
             );
         }
 
@@ -195,7 +203,8 @@ impl<'a> SessionManager<'a> {
             if cs.gate_status != GateStatus::Passed && cs.gate_status != GateStatus::Waived {
                 bail!(
                     "cannot transition: current stage '{}' gate is {:?}, expected Passed or Waived",
-                    cs.stage, cs.gate_status
+                    cs.stage,
+                    cs.gate_status
                 );
             }
         }
@@ -224,7 +233,8 @@ impl<'a> SessionManager<'a> {
         self.db.insert_stage(&new_stage)?;
 
         // Update session's current_stage pointer
-        self.db.update_session_stage(session_id, next_stage, now_ms)?;
+        self.db
+            .update_session_stage(session_id, next_stage, now_ms)?;
 
         Ok(new_stage)
     }
@@ -232,7 +242,9 @@ impl<'a> SessionManager<'a> {
     /// Pass the gate on the current stage (prerequisite for transitioning).
     #[allow(dead_code)]
     pub fn pass_gate(&self, session_id: &str) -> Result<()> {
-        let session = self.db.get_session(session_id)?
+        let session = self
+            .db
+            .get_session(session_id)?
             .context("session not found")?;
 
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -250,7 +262,9 @@ impl<'a> SessionManager<'a> {
     /// Waive the gate on the current stage (bypass gate check).
     #[allow(dead_code)]
     pub fn waive_gate(&self, session_id: &str) -> Result<()> {
-        let session = self.db.get_session(session_id)?
+        let session = self
+            .db
+            .get_session(session_id)?
             .context("session not found")?;
 
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -267,7 +281,9 @@ impl<'a> SessionManager<'a> {
 
     /// Complete a session (set status to Completed, mark final stage as Passed).
     pub fn complete_session(&self, session_id: &str) -> Result<()> {
-        let session = self.db.get_session(session_id)?
+        let session = self
+            .db
+            .get_session(session_id)?
             .context("session not found")?;
 
         let chain = stage_chain_for(session.lane);
@@ -276,7 +292,8 @@ impl<'a> SessionManager<'a> {
         if session.current_stage != *final_stage {
             bail!(
                 "cannot complete session: current stage '{}' is not the final stage '{}'",
-                session.current_stage, final_stage
+                session.current_stage,
+                final_stage
             );
         }
 
@@ -292,7 +309,8 @@ impl<'a> SessionManager<'a> {
         )?;
 
         // Update session status
-        self.db.update_session_status(session_id, SessionStatus::Completed, now_ms)?;
+        self.db
+            .update_session_status(session_id, SessionStatus::Completed, now_ms)?;
 
         Ok(())
     }
@@ -300,7 +318,9 @@ impl<'a> SessionManager<'a> {
     /// Fail a session (set status to Failed).
     #[allow(dead_code)]
     pub fn fail_session(&self, session_id: &str, _reason: &str) -> Result<()> {
-        let session = self.db.get_session(session_id)?
+        let session = self
+            .db
+            .get_session(session_id)?
             .context("session not found")?;
 
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -315,7 +335,8 @@ impl<'a> SessionManager<'a> {
         )?;
 
         // Update session status
-        self.db.update_session_status(session_id, SessionStatus::Failed, now_ms)?;
+        self.db
+            .update_session_status(session_id, SessionStatus::Failed, now_ms)?;
 
         Ok(())
     }
@@ -329,7 +350,9 @@ impl<'a> SessionManager<'a> {
         role: AgentRole,
         work_item_id: Option<&str>,
     ) -> Result<ExecutionEnvelope> {
-        let session = self.db.get_session(session_id)?
+        let session = self
+            .db
+            .get_session(session_id)?
             .context("session not found")?;
 
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -375,7 +398,9 @@ mod tests {
         let db = setup_db();
         let mgr = SessionManager::new(&db);
 
-        let session = mgr.create_session("s1", "/repo", WorkflowLane::Quick).unwrap();
+        let session = mgr
+            .create_session("s1", "/repo", WorkflowLane::Quick)
+            .unwrap();
         assert_eq!(session.current_stage, "quick_intake");
         assert_eq!(session.status, SessionStatus::Pending);
         assert!(session.lane_locked);
@@ -389,7 +414,8 @@ mod tests {
         let db = setup_db();
         let mgr = SessionManager::new(&db);
 
-        mgr.create_session("s2", "/repo", WorkflowLane::Quick).unwrap();
+        mgr.create_session("s2", "/repo", WorkflowLane::Quick)
+            .unwrap();
         mgr.activate_session("s2").unwrap();
 
         let session = mgr.resume_session("s2").unwrap().unwrap();
@@ -407,7 +433,8 @@ mod tests {
         let db = setup_db();
         let mgr = SessionManager::new(&db);
 
-        mgr.create_session("s3", "/repo", WorkflowLane::Quick).unwrap();
+        mgr.create_session("s3", "/repo", WorkflowLane::Quick)
+            .unwrap();
         mgr.activate_session("s3").unwrap();
         mgr.pass_gate("s3").unwrap();
 
@@ -421,7 +448,8 @@ mod tests {
         let db = setup_db();
         let mgr = SessionManager::new(&db);
 
-        mgr.create_session("s4", "/repo", WorkflowLane::Delivery).unwrap();
+        mgr.create_session("s4", "/repo", WorkflowLane::Delivery)
+            .unwrap();
         mgr.activate_session("s4").unwrap();
 
         // Don't pass gate — transition should fail
@@ -434,7 +462,8 @@ mod tests {
         let db = setup_db();
         let mgr = SessionManager::new(&db);
 
-        mgr.create_session("s5", "/repo", WorkflowLane::Quick).unwrap();
+        mgr.create_session("s5", "/repo", WorkflowLane::Quick)
+            .unwrap();
         mgr.activate_session("s5").unwrap();
 
         // Can't complete from first stage
@@ -447,7 +476,8 @@ mod tests {
         let db = setup_db();
         let mgr = SessionManager::new(&db);
 
-        mgr.create_session("s6", "/repo", WorkflowLane::Quick).unwrap();
+        mgr.create_session("s6", "/repo", WorkflowLane::Quick)
+            .unwrap();
         mgr.activate_session("s6").unwrap();
 
         // Walk through all stages
@@ -473,10 +503,13 @@ mod tests {
         let db = setup_db();
         let mgr = SessionManager::new(&db);
 
-        mgr.create_session("s7", "/repo", WorkflowLane::Quick).unwrap();
+        mgr.create_session("s7", "/repo", WorkflowLane::Quick)
+            .unwrap();
         mgr.activate_session("s7").unwrap();
 
-        let envelope = mgr.create_envelope("s7", "quick-agent", AgentRole::QuickAgent, None).unwrap();
+        let envelope = mgr
+            .create_envelope("s7", "quick-agent", AgentRole::QuickAgent, None)
+            .unwrap();
         assert_eq!(envelope.session_id, "s7");
         assert_eq!(envelope.lane, WorkflowLane::Quick);
         assert_eq!(envelope.role, AgentRole::QuickAgent);
@@ -488,7 +521,8 @@ mod tests {
         let db = setup_db();
         let mgr = SessionManager::new(&db);
 
-        mgr.create_session("s8", "/repo", WorkflowLane::Migration).unwrap();
+        mgr.create_session("s8", "/repo", WorkflowLane::Migration)
+            .unwrap();
         mgr.activate_session("s8").unwrap();
 
         mgr.fail_session("s8", "critical error").unwrap();

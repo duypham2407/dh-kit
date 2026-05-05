@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "suite_id": "benchmark-suite-22aea947-ee56-4794-8a59-4b7649477fec",
+  "generated_at_unix_ms": 1777683104476,
+  "summary": {
+    "local_evidence_statement": "Benchmark results are local evidence for this corpus and this environment only.",
+    "corpus_summary": "DH@local-working-tree (DhRepo)",
+    "environment_summary": "macos-aarch64 build_profile=debug",
+    "degraded": false,
+    "result_count": 1
+  },
+  "results": [
+    {
+      "metadata": {
+        "run_id": "22aea947-ee56-4794-8a59-4b7649477fec",
+        "benchmark_class": "cold_full_index",
+        "suite_id": "benchmark-suite-22aea947-ee56-4794-8a59-4b7649477fec",
+        "started_at_unix_ms": 1777683049717,
+        "finished_at_unix_ms": 1777683104476,
+        "engine_version": "0.1.0",
+        "build_profile": "debug",
+        "host_os": "macos",
+        "host_arch": "aarch64",
+        "cpu_count": 8,
+        "corpus": {
+          "kind": "dh_repo",
+          "label": "DH",
+          "revision_or_snapshot": "local-working-tree",
+          "root_path": "/Users/duypham/Code/DH",
+          "query_set_label": null,
+          "mutation_set_label": null,
+          "notes": "Local benchmark evidence only; results are corpus-bound and environment-bound."
+        },
+        "preparation": {
+          "state_label": "cold_index_forced_full",
+          "cleared_reusable_state": true,
+          "preserved_reusable_state": false,
+          "baseline_run_ref": null,
+          "mutation_set_label": null,
+          "mutation_paths": [],
+          "query_set_label": null,
+          "notes": [
+            "Cold full-index benchmark used force_full=true to avoid assuming reusable warm state.",
+            "Result remains local evidence and does not imply startup SLA or universal behavior."
+          ]
+        },
+        "baseline_run_ref": null,
+        "comparison_key": "class=ColdFullIndex|corpus=DH@local-working-tree|profile=debug|prep=cold_index_forced_full|query_set=|mutation_set="
+      },
+      "status": "complete",
+      "memory": {
+        "status": "not_measured",
+        "peak_rss_bytes": null,
+        "method": null,
+        "scope": "index_run_process",
+        "reason": "Peak RSS measurement is not yet instrumented for index benchmark classes."
+      },
+      "comparison": {
+        "eligible": true,
+        "baseline_run_ref": null,
+        "comparison_key": "class=ColdFullIndex|corpus=DH@local-working-tree|profile=debug|prep=cold_index_forced_full|query_set=|mutation_set=",
+        "reason": null
+      },
+      "correctness": null,
+      "index_timing": {
+        "elapsed_ms": 54762.0095,
+        "link_ms": 554.0,
+        "graph_hydration_ms": 405.0,
+        "scanned_files": 355,
+        "changed_files": 355,
+        "reindexed_files": 355,
+        "deleted_files": 0,
+        "refreshed_current_files": 353,
+        "retained_current_files": 0,
+        "degraded_partial_files": 2,
+        "not_current_files": 0
+      },
+      "query_latency": null,
+      "graph_hydration": null,
+      "degradation_notes": []
+    }
+  ]
+}

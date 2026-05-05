@@ -2,7 +2,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { DhBridgeError } from "../bridge/dh-jsonrpc-stdio-client.js";
 import { HostBridgeClient } from "./host-bridge-client.js";
-import { WorkerJsonRpcPeer } from "./worker-jsonrpc-stdio.js";
+import { JsonRpcResponseError, WorkerJsonRpcPeer } from "./worker-jsonrpc-stdio.js";
 
 function connectPeers(): {
   workerPeer: WorkerJsonRpcPeer;
@@ -180,6 +180,136 @@ describe("HostBridgeClient", () => {
     }
   });
 
+  it("advertises and delegates expanded call hierarchy and entry point methods to the Rust host peer", async () => {
+    const { workerPeer, hostPeer, start } = connectPeers();
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+
+    hostPeer.onRequest("query.callHierarchy", (params) => {
+      calls.push({ method: "query.callHierarchy", params: params as Record<string, unknown> });
+      return {
+        answerState: "grounded",
+        questionClass: "call_hierarchy",
+        items: [
+          {
+            callers: [],
+            callees: [{ qualifiedName: "helper", filePath: "src/util.ts", depth: 1 }],
+          },
+        ],
+        evidence: {
+          answerState: "grounded",
+          questionClass: "call_hierarchy",
+          subject: "helper",
+          summary: "Call hierarchy",
+          conclusion: "Rust host returned call hierarchy results",
+          evidence: [
+            {
+              kind: "call",
+              filePath: "src/util.ts",
+              reason: "call graph edge",
+              source: "graph",
+              confidence: "grounded",
+              symbol: "helper",
+            },
+          ],
+          gaps: [],
+          bounds: {
+            traversalScope: "call_hierarchy",
+            hopCount: 3,
+            nodeLimit: 5,
+          },
+        },
+      };
+    });
+    hostPeer.onRequest("query.entryPoints", (params) => {
+      calls.push({ method: "query.entryPoints", params: params as Record<string, unknown> });
+      return {
+        answerState: "grounded",
+        questionClass: "entry_points",
+        items: [
+          {
+            entryPoints: [{ qualifiedName: "auth_handler", filePath: "api/routes.ts", depth: 1, entryPoint: "ApiRoute" }],
+          },
+        ],
+        evidence: {
+          answerState: "grounded",
+          questionClass: "entry_points",
+          subject: "helper",
+          summary: "Entry points",
+          conclusion: "Rust host returned entry point results",
+          evidence: [
+            {
+              kind: "call",
+              filePath: "api/routes.ts",
+              reason: "entry point reaches target",
+              source: "graph",
+              confidence: "grounded",
+              symbol: "auth_handler",
+            },
+          ],
+          gaps: [],
+          bounds: {
+            traversalScope: "entry_points",
+            hopCount: 3,
+            nodeLimit: 5,
+          },
+        },
+      };
+    });
+    start();
+
+    const client = new HostBridgeClient(workerPeer);
+    const hierarchy = await client.runAskQuery({
+      query: "helper",
+      repoRoot: "/repo",
+      queryClass: "graph_call_hierarchy",
+      symbol: "helper",
+      targetPath: "src/util.ts",
+      maxDepth: 3,
+      limit: 5,
+    });
+    const entryPoints = await client.runSessionCommand({
+      query: "helper",
+      repoRoot: "/repo",
+      queryClass: "graph_entry_points",
+      symbol: "helper",
+      targetPath: "src/util.ts",
+      maxDepth: 3,
+      limit: 5,
+    });
+
+    expect(hierarchy.method).toBe("query.callHierarchy");
+    expect(hierarchy.seamMethod).toBe("direct.query");
+    expect(hierarchy.questionClass).toBe("call_hierarchy");
+    expect(hierarchy.capabilities.methods).toContain("query.callHierarchy");
+    expect(entryPoints.method).toBe("query.entryPoints");
+    expect(entryPoints.seamMethod).toBe("session.runCommand");
+    expect(entryPoints.delegatedMethod).toBe("query.entryPoints");
+    expect(entryPoints.questionClass).toBe("entry_points");
+    expect(entryPoints.capabilities.methods).toContain("query.entryPoints");
+    expect(calls).toEqual([
+      {
+        method: "query.callHierarchy",
+        params: {
+          symbol: "helper",
+          workspaceRoot: "/repo",
+          filePath: "src/util.ts",
+          limit: 5,
+          maxDepth: 3,
+        },
+      },
+      {
+        method: "query.entryPoints",
+        params: {
+          symbol: "helper",
+          workspaceRoot: "/repo",
+          filePath: "src/util.ts",
+          limit: 5,
+          maxDepth: 3,
+        },
+      },
+    ]);
+  });
+
   it("keeps arbitrary methods refused and close subordinate after adding build evidence", async () => {
     const { workerPeer, hostPeer, start } = connectPeers();
     const calls: string[] = [];
@@ -322,6 +452,30 @@ describe("HostBridgeClient", () => {
       queryClass: "graph_definition",
     })).rejects.toMatchObject({
       code: "REQUEST_FAILED",
+      phase: "request",
+    } satisfies Partial<DhBridgeError>);
+  });
+
+  it("maps degraded expanded graph query errors to CAPABILITY_UNSUPPORTED", async () => {
+    const { workerPeer, hostPeer, start } = connectPeers();
+    hostPeer.onRequest("query.entryPoints", () => {
+      throw new JsonRpcResponseError({
+        code: -32601,
+        message: "query.entryPoints is unsupported for unknown language scope",
+        data: { code: "CAPABILITY_UNSUPPORTED" },
+      });
+    });
+    start();
+
+    const client = new HostBridgeClient(workerPeer);
+    await expect(client.runAskQuery({
+      query: "mystery_symbol",
+      repoRoot: "/repo",
+      queryClass: "graph_entry_points",
+      symbol: "mystery_symbol",
+      targetPath: "src/legacy.unknown",
+    })).rejects.toMatchObject({
+      code: "CAPABILITY_UNSUPPORTED",
       phase: "request",
     } satisfies Partial<DhBridgeError>);
   });

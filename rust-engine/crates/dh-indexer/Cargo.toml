@@ -10,6 +10,7 @@ blake3.workspace = true
 chrono.workspace = true
 indicatif.workspace = true
 dh-parser = { path = "../dh-parser" }
+dh-graph = { path = "../dh-graph" }
 dh-storage = { path = "../dh-storage" }
 dh-types = { path = "../dh-types" }
 ignore = "0.4"

@@ -523,6 +523,7 @@ pub enum BenchmarkClass {
     WarmQuery,
     HydrateGraph,
     ParityBenchmark,
+    BridgeCodec,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -639,6 +640,24 @@ pub struct QueryLatencyMetrics {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BridgeCodecBenchmarkMetrics {
+    pub sample_count_requested: u32,
+    pub sample_count_completed: u32,
+    pub json_bytes: u64,
+    pub msgpack_bytes: u64,
+    pub json_encode_ms: f64,
+    pub json_decode_ms: f64,
+    pub msgpack_encode_ms: f64,
+    pub msgpack_decode_ms: f64,
+    pub encode_speedup: f64,
+    pub decode_speedup: f64,
+    pub payload_label: String,
+    pub selected_codec: String,
+    pub improvement_classification: String,
+    pub target_5_10x_status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ParityBenchmarkMetrics {
     pub total_cases: u32,
     pub passed_cases: u32,
@@ -668,6 +687,7 @@ pub struct BenchmarkResult {
     pub index_timing: Option<IndexBenchmarkMetrics>,
     pub query_latency: Option<QueryLatencyMetrics>,
     pub graph_hydration: Option<GraphHydrationBenchmarkMetrics>,
+    pub bridge_codec: Option<BridgeCodecBenchmarkMetrics>,
     pub degradation_notes: Vec<String>,
 }
 

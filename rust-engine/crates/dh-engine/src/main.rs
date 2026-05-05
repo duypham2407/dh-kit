@@ -183,6 +183,7 @@ enum BenchmarkClassArg {
     WarmQuery,
     HydrateGraph,
     ParityBenchmark,
+    BridgeCodec,
 }
 
 impl From<BenchmarkClassArg> for BenchmarkClass {
@@ -195,6 +196,7 @@ impl From<BenchmarkClassArg> for BenchmarkClass {
             BenchmarkClassArg::WarmQuery => BenchmarkClass::WarmQuery,
             BenchmarkClassArg::HydrateGraph => BenchmarkClass::HydrateGraph,
             BenchmarkClassArg::ParityBenchmark => BenchmarkClass::ParityBenchmark,
+            BenchmarkClassArg::BridgeCodec => BenchmarkClass::BridgeCodec,
         }
     }
 }

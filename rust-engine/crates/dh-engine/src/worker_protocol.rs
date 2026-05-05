@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 
 pub const WORKER_PROTOCOL_VERSION: &str = "1";
 pub const WORKER_PROTOCOL_TRANSPORT: &str = "jsonrpc_stdio_content_length";
+pub const WORKER_PROTOCOL_BINARY_CODEC: &str = "msgpack-rpc-v1";
 pub const QUERY_CALL_HIERARCHY_METHOD: &str = "query.callHierarchy";
 pub const QUERY_ENTRY_POINTS_METHOD: &str = "query.entryPoints";
 pub const QUERY_BUILD_EVIDENCE_METHOD: &str = "query.buildEvidence";
@@ -69,6 +70,9 @@ pub const BRIDGE_LIFECYCLE_CONTROL_METHODS: [&str; 5] = [
 pub struct JsonRpcFramingContract {
     pub transport: &'static str,
     pub protocol_version: &'static str,
+    pub binary_codec: &'static str,
+    pub json_bootstrap: bool,
+    pub json_fallback: bool,
     pub content_length_framing: bool,
     pub stdout_protocol_only: bool,
     pub stderr_logs_only: bool,
@@ -127,6 +131,9 @@ pub fn worker_protocol_contract() -> WorkerProtocolContract {
         framing: JsonRpcFramingContract {
             transport: WORKER_PROTOCOL_TRANSPORT,
             protocol_version: WORKER_PROTOCOL_VERSION,
+            binary_codec: WORKER_PROTOCOL_BINARY_CODEC,
+            json_bootstrap: true,
+            json_fallback: true,
             content_length_framing: true,
             stdout_protocol_only: true,
             stderr_logs_only: true,

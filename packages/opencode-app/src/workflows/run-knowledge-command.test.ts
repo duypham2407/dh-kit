@@ -12,6 +12,7 @@ import {
   type BridgeInitializeCapabilities,
   type BridgeInitializeSnapshot,
 } from "../bridge/dh-jsonrpc-stdio-client.js";
+import { DEFAULT_BRIDGE_MAX_FRAME_BYTES, JSON_RPC_CODEC } from "../bridge/stdio-codec.js";
 
 let repos: string[] = [];
 
@@ -39,12 +40,21 @@ const v2Capabilities: BridgeInitializeCapabilities = {
   ],
 };
 
+const jsonFallbackTransport = {
+  selectedCodec: JSON_RPC_CODEC,
+  selectedMode: "json-fallback" as const,
+  fallbackReason: "test_json_default",
+  maxFrameBytes: DEFAULT_BRIDGE_MAX_FRAME_BYTES,
+  codecVersion: 1,
+};
+
 function makeInitializeSnapshot(): BridgeInitializeSnapshot {
   return {
     engineName: "dh-engine",
     engineVersion: "0.1.0",
     protocolVersion: "1",
-    capabilities: v2Capabilities,
+    capabilities: { ...v2Capabilities, transport: jsonFallbackTransport },
+    transport: jsonFallbackTransport,
   };
 }
 

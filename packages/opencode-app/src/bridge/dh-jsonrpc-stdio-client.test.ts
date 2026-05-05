@@ -9,24 +9,34 @@ import {
   createDhJsonRpcStdioClient,
   DhBridgeError,
 } from "./dh-jsonrpc-stdio-client.js";
+import {
+  decodeRpcBody,
+  encodeRpcFrame,
+  JSON_RPC_CODEC,
+  MIN_BRIDGE_MAX_FRAME_BYTES,
+  MSGPACK_RPC_CODEC,
+  type BridgeRpcCodec,
+} from "./stdio-codec.js";
 
-type RpcHandler = (request: { id: number; method: string; params?: Record<string, unknown> }, child: FakeChildProcess) => void;
+type RpcHandler = (request: { id: number; method: string; params?: Record<string, unknown> }, child: FakeChildProcess, codec: BridgeRpcCodec) => void;
 
 class FakeChildProcess extends EventEmitter {
   readonly stdout = new EventEmitter();
   readonly stderr = new EventEmitter();
   readonly stdin: {
-    write: (chunk: string, encoding: BufferEncoding, cb?: (error?: Error | null) => void) => boolean;
+    write: (chunk: Buffer | string, encodingOrCb?: BufferEncoding | ((error?: Error | null) => void), cb?: (error?: Error | null) => void) => boolean;
   };
   killed = false;
+  codec: BridgeRpcCodec = JSON_RPC_CODEC;
 
   constructor(private readonly handler: RpcHandler) {
     super();
     this.stdin = {
-      write: (chunk, _encoding, cb) => {
-        const request = parseFrame(chunk);
-        this.handler(request, this);
-        cb?.(null);
+      write: (chunk, encodingOrCb, cb) => {
+        const callback = typeof encodingOrCb === "function" ? encodingOrCb : cb;
+        const request = parseFrame(chunk, this.codec);
+        this.handler(request, this, this.codec);
+        callback?.(null);
         return true;
       },
     };
@@ -39,8 +49,11 @@ class FakeChildProcess extends EventEmitter {
   }
 
   emitJsonResponse(payload: Record<string, unknown>, splitAtBytes?: number): void {
-    const body = JSON.stringify(payload);
-    const frame = Buffer.from(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`, "utf8");
+    this.emitResponse(JSON_RPC_CODEC, payload, splitAtBytes);
+  }
+
+  emitResponse(codec: BridgeRpcCodec, payload: Record<string, unknown>, splitAtBytes?: number): void {
+    const frame = encodeRpcFrame(codec, payload);
     if (!splitAtBytes || splitAtBytes <= 0 || splitAtBytes >= frame.length) {
       this.stdout.emit("data", frame);
       return;
@@ -51,10 +64,11 @@ class FakeChildProcess extends EventEmitter {
   }
 }
 
-function parseFrame(frame: string): { id: number; method: string; params?: Record<string, unknown> } {
-  const headerEnd = frame.indexOf("\r\n\r\n");
-  const body = frame.slice(headerEnd + 4);
-  return JSON.parse(body) as { id: number; method: string; params?: Record<string, unknown> };
+function parseFrame(frame: Buffer | string, codec: BridgeRpcCodec): { id: number; method: string; params?: Record<string, unknown> } {
+  const bytes = Buffer.isBuffer(frame) ? frame : Buffer.from(frame, "utf8");
+  const headerEnd = bytes.indexOf("\r\n\r\n");
+  const body = bytes.subarray(headerEnd + 4);
+  return decodeRpcBody(codec, body) as { id: number; method: string; params?: Record<string, unknown> };
 }
 
 function spawnFake(handler: RpcHandler): (command: string, args: string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams {
@@ -65,6 +79,13 @@ const v2InitializeResult = {
   serverName: "dh-engine",
   serverVersion: "0.1.0",
   protocolVersion: "1",
+  transport: {
+    selectedCodec: "json-rpc-v1",
+    selectedMode: "json-fallback",
+    fallbackReason: "test_json_default",
+    maxFrameBytes: 16 * 1024 * 1024,
+    codecVersion: 1,
+  },
   capabilities: {
     protocolVersion: "1",
     methods: [
@@ -89,6 +110,13 @@ const v2InitializeResult = {
         parserBacked: false,
       },
     ],
+    transport: {
+      selectedCodec: "json-rpc-v1",
+      selectedMode: "json-fallback",
+      fallbackReason: "test_json_default",
+      maxFrameBytes: 16 * 1024 * 1024,
+      codecVersion: 1,
+    },
   },
 };
 
@@ -512,7 +540,7 @@ describe("dh-jsonrpc-stdio-client", () => {
   it("keeps startup failures classified as startup phase", async () => {
     const spawnChild = spawnFake((request, child) => {
       if (request.method === "dh.initialize") {
-        child.emit("error", new Error("spawn failed"));
+        setTimeout(() => child.emit("error", new Error("spawn failed")), 0);
       }
     });
 
@@ -673,6 +701,128 @@ describe("dh-jsonrpc-stdio-client", () => {
     })).rejects.toMatchObject({
       code: "INVALID_REQUEST",
       phase: "request",
+    } satisfies Partial<DhBridgeError>);
+    await client.close();
+  });
+
+  it("fails oversized binary responses with structured frame-too-large errors", async () => {
+    const maxFrameBytes = MIN_BRIDGE_MAX_FRAME_BYTES;
+    const spawnChild = spawnFake((request, child) => {
+      if (request.method === "dh.initialize") {
+        const transport = {
+          selectedCodec: MSGPACK_RPC_CODEC,
+          selectedMode: "msgpack-rpc-v1",
+          maxFrameBytes,
+          codecVersion: 1,
+        };
+        child.emitJsonResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            ...v2InitializeResult,
+            transport,
+            capabilities: {
+              ...v2InitializeResult.capabilities,
+              transport,
+            },
+          },
+        });
+        child.codec = MSGPACK_RPC_CODEC;
+        return;
+      }
+
+      if (request.method === "query.search") {
+        child.stdout.emit(
+          "data",
+          Buffer.from(`Content-Length: ${maxFrameBytes + 1}\r\nContent-Type: application/x-msgpack\r\n\r\n`, "ascii"),
+        );
+      }
+    });
+
+    const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
+    await expect(client.runAskQuery({
+      query: "auth",
+      repoRoot: process.cwd(),
+      queryClass: "search_file_discovery",
+      limit: 1,
+    })).rejects.toMatchObject({
+      code: "BRIDGE_FRAME_TOO_LARGE",
+      phase: "request",
+    } satisfies Partial<DhBridgeError>);
+    await client.close();
+  });
+
+  it("fails malformed binary responses with structured decode errors", async () => {
+    const spawnChild = spawnFake((request, child) => {
+      if (request.method === "dh.initialize") {
+        const transport = {
+          selectedCodec: MSGPACK_RPC_CODEC,
+          selectedMode: "msgpack-rpc-v1",
+          maxFrameBytes: 16 * 1024 * 1024,
+          codecVersion: 1,
+        };
+        child.emitJsonResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            ...v2InitializeResult,
+            transport,
+            capabilities: {
+              ...v2InitializeResult.capabilities,
+              transport,
+            },
+          },
+        });
+        child.codec = MSGPACK_RPC_CODEC;
+        return;
+      }
+
+      if (request.method === "query.search") {
+        child.stdout.emit("data", Buffer.from("Content-Length: 1\r\nContent-Type: application/x-msgpack\r\n\r\n\xc1", "binary"));
+      }
+    });
+
+    const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
+    await expect(client.runAskQuery({
+      query: "auth",
+      repoRoot: process.cwd(),
+      queryClass: "search_file_discovery",
+      limit: 1,
+    })).rejects.toMatchObject({
+      code: "BRIDGE_CODEC_DECODE_FAILED",
+      phase: "request",
+    } satisfies Partial<DhBridgeError>);
+    await client.close();
+  });
+
+  it("rejects negotiated maxFrameBytes below the supported lower bound", async () => {
+    const spawnChild = spawnFake((request, child) => {
+      if (request.method === "dh.initialize") {
+        const transport = {
+          selectedCodec: MSGPACK_RPC_CODEC,
+          selectedMode: "msgpack-rpc-v1",
+          maxFrameBytes: MIN_BRIDGE_MAX_FRAME_BYTES - 1,
+          codecVersion: 1,
+        };
+        child.emitJsonResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            ...v2InitializeResult,
+            transport,
+            capabilities: {
+              ...v2InitializeResult.capabilities,
+              transport,
+            },
+          },
+        });
+      }
+    });
+
+    const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
+    await expect(client.getInitializeSnapshot!()).rejects.toMatchObject({
+      code: "BRIDGE_CODEC_NEGOTIATION_FAILED",
+      phase: "startup",
     } satisfies Partial<DhBridgeError>);
     await client.close();
   });
@@ -865,6 +1015,249 @@ describe("dh-jsonrpc-stdio-client", () => {
     } satisfies Partial<DhBridgeError>);
     expect(callMethods).toEqual(["dh.initialize"]);
     await client.close();
+  });
+
+  it("negotiates MessagePack after JSON initialize bootstrap and preserves large payload shape", async () => {
+    const observedCodecs: BridgeRpcCodec[] = [];
+    const largeVector = Array.from({ length: 1536 }, (_, index) => index / 1536);
+    const spawnChild = spawnFake((request, child, codec) => {
+      observedCodecs.push(codec);
+      if (request.method === "dh.initialize") {
+        const transport = {
+          selectedCodec: MSGPACK_RPC_CODEC,
+          selectedMode: "msgpack-rpc-v1",
+          maxFrameBytes: 16 * 1024 * 1024,
+          codecVersion: 1,
+        };
+        child.emitJsonResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            ...v2InitializeResult,
+            transport,
+            capabilities: {
+              ...v2InitializeResult.capabilities,
+              transport,
+            },
+          },
+        });
+        child.codec = MSGPACK_RPC_CODEC;
+        return;
+      }
+
+      if (request.method === "session.runCommand") {
+        child.emitResponse(MSGPACK_RPC_CODEC, {
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            method: "query.buildEvidence",
+            answerState: "grounded",
+            questionClass: "build_evidence",
+            items: [],
+            evidence: {
+              answerState: "grounded",
+              questionClass: "build_evidence",
+              subject: "vector",
+              summary: "large MessagePack payload",
+              conclusion: "large payload survived MessagePack bridge",
+              evidence: [],
+              gaps: [],
+              bounds: {
+                nodeLimit: largeVector.length,
+              },
+            },
+            largeVector,
+          },
+        });
+      }
+    });
+
+    const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
+    const snapshot = await client.getInitializeSnapshot!();
+    expect(snapshot.transport.selectedMode).toBe("msgpack-rpc-v1");
+    expect(snapshot.capabilities.transport?.selectedCodec).toBe(MSGPACK_RPC_CODEC);
+
+    const result = await client.runSessionCommand!({
+      query: "vector",
+      repoRoot: process.cwd(),
+      queryClass: "graph_build_evidence",
+      targets: ["vector"],
+    });
+
+    expect(result.answerState).toBe("grounded");
+    expect(result.evidence?.bounds.nodeLimit).toBe(largeVector.length);
+    expect(observedCodecs).toEqual([JSON_RPC_CODEC, MSGPACK_RPC_CODEC]);
+    await client.close();
+  });
+
+  it("preserves parity for runtime.ping query.search and query.buildEvidence across JSON and MessagePack", async () => {
+    async function runScenario(selectedCodec: BridgeRpcCodec): Promise<{
+      snapshotMode: string;
+      ping: Awaited<ReturnType<NonNullable<bridgeModule.BridgeClient["getRuntimePing"]>>>;
+      searchAnswer: string;
+      evidenceSubject: string | undefined;
+    }> {
+      const spawnChild = spawnFake((request, child) => {
+        if (request.method === "dh.initialize") {
+          const transport = selectedCodec === MSGPACK_RPC_CODEC
+            ? {
+              selectedCodec: MSGPACK_RPC_CODEC,
+              selectedMode: "msgpack-rpc-v1",
+              maxFrameBytes: 16 * 1024 * 1024,
+              codecVersion: 1,
+            }
+            : {
+              selectedCodec: JSON_RPC_CODEC,
+              selectedMode: "json-fallback",
+              fallbackReason: "parity_json_mode",
+              maxFrameBytes: 16 * 1024 * 1024,
+              codecVersion: 1,
+            };
+          child.emitJsonResponse({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              ...v2InitializeResult,
+              transport,
+              capabilities: {
+                ...v2InitializeResult.capabilities,
+                transport,
+              },
+            },
+          });
+          child.codec = selectedCodec;
+          return;
+        }
+
+        if (request.method === "runtime.ping") {
+          child.emitResponse(selectedCodec, {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              ok: true,
+              workerState: "ready",
+              healthState: "healthy",
+              phase: "health",
+            },
+          });
+          return;
+        }
+
+        const response = request.method === "query.search"
+          ? {
+            answerState: "grounded",
+            questionClass: "search_file_discovery",
+            items: [{ filePath: "src/auth.ts", lineStart: 1, lineEnd: 2, snippet: "auth", reason: "match", score: 1 }],
+          }
+          : {
+            answerState: "grounded",
+            questionClass: "build_evidence",
+            items: [],
+            evidence: {
+              answerState: "grounded",
+              questionClass: "build_evidence",
+              subject: "auth",
+              summary: "same evidence",
+              conclusion: "same conclusion",
+              evidence: [],
+              gaps: [],
+              bounds: { nodeLimit: 1 },
+            },
+          };
+        child.emitResponse(selectedCodec, {
+          jsonrpc: "2.0",
+          id: request.id,
+          result: response,
+        });
+      });
+
+      const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
+      const snapshot = await client.getInitializeSnapshot!();
+      const ping = await client.getRuntimePing!();
+      const search = await client.runAskQuery({
+        query: "auth",
+        repoRoot: process.cwd(),
+        queryClass: "search_file_discovery",
+        limit: 1,
+      });
+      const evidence = await client.runSessionCommand!({
+        query: "auth",
+        repoRoot: process.cwd(),
+        queryClass: "graph_build_evidence",
+        targets: ["auth"],
+      });
+      await client.close();
+      return {
+        snapshotMode: snapshot.transport.selectedMode,
+        ping,
+        searchAnswer: search.answerState,
+        evidenceSubject: evidence.evidence?.subject,
+      };
+    }
+
+    const jsonResult = await runScenario(JSON_RPC_CODEC);
+    const msgpackResult = await runScenario(MSGPACK_RPC_CODEC);
+
+    expect(jsonResult.snapshotMode).toBe("json-fallback");
+    expect(msgpackResult.snapshotMode).toBe("msgpack-rpc-v1");
+    expect({ ...jsonResult, snapshotMode: "<ignored>" }).toEqual({ ...msgpackResult, snapshotMode: "<ignored>" });
+  });
+
+  it("falls back observably to JSON when MessagePack is disabled", async () => {
+    const originalOverride = process.env.DH_BRIDGE_CODEC;
+    process.env.DH_BRIDGE_CODEC = "json";
+    try {
+      const spawnChild = spawnFake((request, child) => {
+        if (request.method === "dh.initialize") {
+          child.emitJsonResponse({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: v2InitializeResult,
+          });
+        }
+      });
+
+      const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
+      const snapshot = await client.getInitializeSnapshot!();
+      expect(snapshot.transport.selectedMode).toBe("json-fallback");
+      expect(snapshot.transport.fallbackReason).toBe("test_json_default");
+      await client.close();
+    } finally {
+      if (originalOverride === undefined) {
+        delete process.env.DH_BRIDGE_CODEC;
+      } else {
+        process.env.DH_BRIDGE_CODEC = originalOverride;
+      }
+    }
+  });
+
+  it("fails explicitly when forced MessagePack negotiation returns JSON", async () => {
+    const originalOverride = process.env.DH_BRIDGE_CODEC;
+    process.env.DH_BRIDGE_CODEC = "msgpack";
+    try {
+      const spawnChild = spawnFake((request, child) => {
+        if (request.method === "dh.initialize") {
+          child.emitJsonResponse({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: v2InitializeResult,
+          });
+        }
+      });
+
+      const client = createDhJsonRpcStdioClient(process.cwd(), { spawnChild });
+      await expect(client.getInitializeSnapshot!()).rejects.toMatchObject({
+        code: "BRIDGE_CODEC_NEGOTIATION_FAILED",
+        phase: "startup",
+      } satisfies Partial<DhBridgeError>);
+      await client.close();
+    } finally {
+      if (originalOverride === undefined) {
+        delete process.env.DH_BRIDGE_CODEC;
+      } else {
+        process.env.DH_BRIDGE_CODEC = originalOverride;
+      }
+    }
   });
 
   it("surfaces explicit session.runCommand refusal as CAPABILITY_UNSUPPORTED", async () => {

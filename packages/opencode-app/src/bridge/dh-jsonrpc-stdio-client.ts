@@ -2,6 +2,19 @@ import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStd
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import {
+  DEFAULT_BRIDGE_MAX_FRAME_BYTES,
+  decodeRpcBody,
+  encodeRpcFrame,
+  findFrameHeaderEnd,
+  JSON_RPC_CODEC,
+  MIN_BRIDGE_MAX_FRAME_BYTES,
+  MSGPACK_RPC_CODEC,
+  normalizeBridgeCodecModeOverride,
+  parseFrameHeaders,
+  validateBridgeMaxFrameBytes,
+  type BridgeRpcCodec,
+} from "./stdio-codec.js";
 
 export type BridgeFailureCode =
   | "BRIDGE_STARTUP_FAILED"
@@ -15,6 +28,10 @@ export type BridgeFailureCode =
   | "EXECUTION_FAILED"
   | "RUNTIME_UNAVAILABLE"
   | "BINARY_FILE_UNSUPPORTED"
+  | "BRIDGE_CODEC_UNSUPPORTED"
+  | "BRIDGE_CODEC_DECODE_FAILED"
+  | "BRIDGE_FRAME_TOO_LARGE"
+  | "BRIDGE_CODEC_NEGOTIATION_FAILED"
   | "CAPABILITY_UNSUPPORTED"
   | "REQUEST_FAILED";
 
@@ -85,6 +102,16 @@ export type BridgeLanguageCapabilityEntry = {
   parserBacked: boolean;
 };
 
+export type BridgeTransportSelectedMode = "json" | "msgpack-rpc-v1" | "json-fallback";
+
+export type BridgeTransportSnapshot = {
+  selectedCodec: BridgeRpcCodec;
+  selectedMode: BridgeTransportSelectedMode;
+  fallbackReason?: string;
+  maxFrameBytes: number;
+  codecVersion: number;
+};
+
 export type BridgeInitializeCapabilities = {
   protocolVersion: string;
   methods: readonly string[];
@@ -92,6 +119,7 @@ export type BridgeInitializeCapabilities = {
     supportedRelations: readonly string[];
   };
   languageCapabilityMatrix: BridgeLanguageCapabilityEntry[];
+  transport?: BridgeTransportSnapshot;
 };
 
 export type BridgeInitializeSnapshot = {
@@ -99,6 +127,7 @@ export type BridgeInitializeSnapshot = {
   engineVersion: string;
   protocolVersion: string;
   capabilities: BridgeInitializeCapabilities;
+  transport: BridgeTransportSnapshot;
 };
 
 export type BridgeAskQueryClass =
@@ -266,6 +295,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const V2_PROTOCOL_VERSION = "1";
 const V2_METHODS = ["dh.initialize", "query.search", "query.definition", "query.relationship", "query.buildEvidence", "query.callHierarchy", "query.entryPoints", "runtime.ping"] as const;
 const V2_RELATIONS = ["usage", "dependencies", "dependents"] as const;
+const SUPPORTED_BRIDGE_CODECS = [JSON_RPC_CODEC, MSGPACK_RPC_CODEC] as const;
 
 export function createDhJsonRpcStdioClient(
   repoRoot: string,
@@ -288,6 +318,12 @@ class DhJsonRpcStdioClient implements BridgeClient {
   private closed = false;
   private nextRequestId = 1;
   private readBuffer = Buffer.alloc(0);
+  private activeCodec: BridgeRpcCodec = JSON_RPC_CODEC;
+  private negotiatedCodec: BridgeRpcCodec = JSON_RPC_CODEC;
+  private selectedMode: BridgeTransportSelectedMode = "json";
+  private fallbackReason: string | undefined;
+  private maxFrameBytes = DEFAULT_BRIDGE_MAX_FRAME_BYTES;
+  private codecVersion = 1;
   private pending = new Map<number, {
     resolve: (value: JsonRpcResponse) => void;
     reject: (error: Error) => void;
@@ -468,6 +504,7 @@ class DhJsonRpcStdioClient implements BridgeClient {
       engineVersion: this.engineVersion,
       protocolVersion: this.protocolVersion,
       capabilities: this.capabilities,
+      transport: this.transportSnapshot(),
     };
   }
 
@@ -713,6 +750,7 @@ class DhJsonRpcStdioClient implements BridgeClient {
             name: "dh-cli",
             version: "0.1.0",
           },
+          transport: this.initializeTransportParams(),
         },
       },
       "startup",
@@ -746,7 +784,82 @@ class DhJsonRpcStdioClient implements BridgeClient {
 
     this.protocolVersion = protocolVersion;
     this.capabilities = capabilities;
+    this.applyNegotiatedTransport(resultObj.transport, capabilities.transport);
     this.initialized = true;
+  }
+
+  private initializeTransportParams(): Record<string, unknown> {
+    const override = normalizeBridgeCodecModeOverride(process.env.DH_BRIDGE_CODEC);
+    const supportedCodecs = override === "json" ? [JSON_RPC_CODEC] : [...SUPPORTED_BRIDGE_CODECS];
+    return {
+      supportedCodecs,
+      preferredCodec: override === "json" ? JSON_RPC_CODEC : MSGPACK_RPC_CODEC,
+      maxFrameBytes: this.maxFrameBytes,
+      binaryBridge: {
+        enabled: override !== "json",
+        minPayloadBytes: 0,
+      },
+      codecOverride: override,
+    };
+  }
+
+  private applyNegotiatedTransport(resultTransport: unknown, capabilitiesTransport: BridgeTransportSnapshot | undefined): void {
+    const transport = asRecord(resultTransport);
+    const selectedCodec = asBridgeRpcCodec(transport.selectedCodec) ?? capabilitiesTransport?.selectedCodec ?? JSON_RPC_CODEC;
+    const fallbackReason = asString(transport.fallbackReason) ?? capabilitiesTransport?.fallbackReason;
+    const maxFrameBytes = asNumber(transport.maxFrameBytes) ?? capabilitiesTransport?.maxFrameBytes ?? DEFAULT_BRIDGE_MAX_FRAME_BYTES;
+    const codecVersion = asNumber(transport.codecVersion) ?? capabilitiesTransport?.codecVersion ?? 1;
+    const override = normalizeBridgeCodecModeOverride(process.env.DH_BRIDGE_CODEC);
+
+    try {
+      validateBridgeMaxFrameBytes(maxFrameBytes);
+    } catch (error) {
+      throw new DhBridgeError({
+        code: "BRIDGE_CODEC_NEGOTIATION_FAILED",
+        phase: "startup",
+        message: `Bridge selected invalid maxFrameBytes: ${(error as Error).message}`,
+      });
+    }
+
+    if (override === "msgpack" && selectedCodec !== MSGPACK_RPC_CODEC) {
+      throw new DhBridgeError({
+        code: "BRIDGE_CODEC_NEGOTIATION_FAILED",
+        phase: "startup",
+        message: `DH_BRIDGE_CODEC=msgpack required ${MSGPACK_RPC_CODEC}, but bridge selected ${selectedCodec}.`,
+      });
+    }
+
+    if (selectedCodec === MSGPACK_RPC_CODEC && codecVersion !== 1) {
+      throw new DhBridgeError({
+        code: "BRIDGE_CODEC_UNSUPPORTED",
+        phase: "startup",
+        message: `Bridge selected unsupported MessagePack codecVersion '${codecVersion}'.`,
+      });
+    }
+
+    this.negotiatedCodec = selectedCodec;
+    this.activeCodec = selectedCodec;
+    this.maxFrameBytes = maxFrameBytes;
+    this.codecVersion = codecVersion;
+    this.fallbackReason = fallbackReason;
+    this.selectedMode = selectedCodec === MSGPACK_RPC_CODEC ? "msgpack-rpc-v1" : fallbackReason ? "json-fallback" : "json";
+
+    this.capabilities = {
+      ...this.capabilities,
+      transport: this.transportSnapshot(),
+    };
+
+    process.stderr.write(`[dh-bridge] selected codec: ${this.selectedMode}${fallbackReason ? ` (${fallbackReason})` : ""}\n`);
+  }
+
+  private transportSnapshot(): BridgeTransportSnapshot {
+    return {
+      selectedCodec: this.negotiatedCodec,
+      selectedMode: this.selectedMode,
+      fallbackReason: this.fallbackReason,
+      maxFrameBytes: this.maxFrameBytes,
+      codecVersion: this.codecVersion,
+    };
   }
 
   private request(
@@ -784,10 +897,21 @@ class DhJsonRpcStdioClient implements BridgeClient {
 
       this.pending.set(message.id, { resolve, reject, timer, phase });
 
-      const body = JSON.stringify(message);
-      const frame = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
+      let frame: Buffer;
+      try {
+        frame = encodeRpcFrame(this.activeCodec, message, this.maxFrameBytes);
+      } catch (error) {
+        this.pending.delete(message.id);
+        clearTimeout(timer);
+        reject(new DhBridgeError({
+          code: "BRIDGE_FRAME_TOO_LARGE",
+          phase,
+          message: `Failed to encode bridge request '${message.method}': ${(error as Error).message}`,
+        }));
+        return;
+      }
 
-      child.stdin.write(frame, "utf8", (err) => {
+      child.stdin.write(frame, (err) => {
         if (!err) {
           return;
         }
@@ -808,19 +932,32 @@ class DhJsonRpcStdioClient implements BridgeClient {
 
   private drainFrames(): void {
     while (true) {
-      const headerEnd = findHeaderEnd(this.readBuffer);
+      const headerEnd = findFrameHeaderEnd(this.readBuffer);
       if (headerEnd === null) {
         return;
       }
 
       const header = this.readBuffer.subarray(0, headerEnd).toString("ascii");
-      const contentLength = parseContentLength(header);
-      if (contentLength === null || contentLength < 0) {
+      const { contentLength, malformedContentLength } = parseFrameHeaders(header);
+      if (contentLength === null || contentLength < 0 || malformedContentLength) {
         this.failAllPending((phase) => {
           return new DhBridgeError({
             code: "INVALID_REQUEST",
             phase,
-            message: "Bridge response is missing a valid Content-Length header.",
+            message: malformedContentLength
+              ? "Bridge response has a malformed Content-Length header."
+              : "Bridge response is missing a valid Content-Length header.",
+          });
+        });
+        this.readBuffer = Buffer.alloc(0);
+        return;
+      }
+      if (contentLength > this.maxFrameBytes) {
+        this.failAllPending((phase) => {
+          return new DhBridgeError({
+            code: "BRIDGE_FRAME_TOO_LARGE",
+            phase,
+            message: `Bridge response frame is ${contentLength} bytes, exceeding maxFrameBytes=${this.maxFrameBytes}.`,
           });
         });
         this.readBuffer = Buffer.alloc(0);
@@ -833,18 +970,18 @@ class DhJsonRpcStdioClient implements BridgeClient {
         return;
       }
 
-      const body = this.readBuffer.subarray(bodyStart, frameLength).toString("utf8");
+      const body = this.readBuffer.subarray(bodyStart, frameLength);
       this.readBuffer = this.readBuffer.subarray(frameLength);
 
       let parsed: JsonRpcResponse;
       try {
-        parsed = JSON.parse(body) as JsonRpcResponse;
+        parsed = decodeRpcBody(this.activeCodec, body, this.maxFrameBytes) as JsonRpcResponse;
       } catch (error) {
         this.failAllPending((phase) => {
           return new DhBridgeError({
-            code: "INVALID_REQUEST",
+            code: this.activeCodec === MSGPACK_RPC_CODEC ? "BRIDGE_CODEC_DECODE_FAILED" : "INVALID_REQUEST",
             phase,
-            message: `Bridge response payload is not valid JSON: ${(error as Error).message}`,
+            message: `Bridge response payload could not be decoded as ${this.activeCodec}: ${(error as Error).message}`,
           });
         });
         return;
@@ -918,6 +1055,34 @@ class DhJsonRpcStdioClient implements BridgeClient {
         message,
       });
     }
+    if (symbolicCode === "BRIDGE_CODEC_UNSUPPORTED") {
+      return new DhBridgeError({
+        code: "BRIDGE_CODEC_UNSUPPORTED",
+        phase,
+        message,
+      });
+    }
+    if (symbolicCode === "BRIDGE_CODEC_DECODE_FAILED") {
+      return new DhBridgeError({
+        code: "BRIDGE_CODEC_DECODE_FAILED",
+        phase,
+        message,
+      });
+    }
+    if (symbolicCode === "BRIDGE_FRAME_TOO_LARGE") {
+      return new DhBridgeError({
+        code: "BRIDGE_FRAME_TOO_LARGE",
+        phase,
+        message,
+      });
+    }
+    if (symbolicCode === "BRIDGE_CODEC_NEGOTIATION_FAILED") {
+      return new DhBridgeError({
+        code: "BRIDGE_CODEC_NEGOTIATION_FAILED",
+        phase,
+        message,
+      });
+    }
     if (code === -32601) {
       return new DhBridgeError({
         code: "METHOD_NOT_SUPPORTED",
@@ -946,36 +1111,6 @@ class DhJsonRpcStdioClient implements BridgeClient {
       this.pending.delete(id);
     }
   }
-}
-
-function findHeaderEnd(buffer: Buffer): number | null {
-  for (let index = 0; index <= buffer.length - 4; index += 1) {
-    if (
-      buffer[index] === 13
-      && buffer[index + 1] === 10
-      && buffer[index + 2] === 13
-      && buffer[index + 3] === 10
-    ) {
-      return index;
-    }
-  }
-  return null;
-}
-
-function parseContentLength(header: string): number | null {
-  const lines = header.split("\r\n");
-  for (const line of lines) {
-    const [name, ...rest] = line.split(":");
-    if (!name || rest.length === 0) {
-      continue;
-    }
-    if (name.trim().toLowerCase() !== "content-length") {
-      continue;
-    }
-    const parsed = Number.parseInt(rest.join(":").trim(), 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
 }
 
 function toBridgeSearchItem(raw: unknown): BridgeSearchItem | null {
@@ -1014,6 +1149,13 @@ function asString(value: unknown): string | null {
 
 function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asBridgeRpcCodec(value: unknown): BridgeRpcCodec | null {
+  if (value === JSON_RPC_CODEC || value === MSGPACK_RPC_CODEC) {
+    return value;
+  }
+  return null;
 }
 
 function asBoolean(value: unknown): boolean | null {
@@ -1266,6 +1408,8 @@ function parseV2Capabilities(value: unknown): BridgeAskResult["capabilities"] | 
     return null;
   }
 
+  const transport = parseBridgeTransportSnapshot(capabilities.transport);
+
   return {
     protocolVersion,
     methods: V2_METHODS,
@@ -1273,6 +1417,31 @@ function parseV2Capabilities(value: unknown): BridgeAskResult["capabilities"] | 
       supportedRelations: V2_RELATIONS,
     },
     languageCapabilityMatrix,
+    transport,
+  };
+}
+
+function parseBridgeTransportSnapshot(value: unknown): BridgeTransportSnapshot | undefined {
+  const raw = asRecord(value);
+  const selectedCodec = asBridgeRpcCodec(raw.selectedCodec);
+  if (!selectedCodec) {
+    return undefined;
+  }
+
+  const rawMaxFrameBytes = asNumber(raw.maxFrameBytes) ?? DEFAULT_BRIDGE_MAX_FRAME_BYTES;
+  const maxFrameBytes = rawMaxFrameBytes >= MIN_BRIDGE_MAX_FRAME_BYTES && rawMaxFrameBytes <= DEFAULT_BRIDGE_MAX_FRAME_BYTES
+    ? rawMaxFrameBytes
+    : DEFAULT_BRIDGE_MAX_FRAME_BYTES;
+
+  const selectedMode = raw.selectedMode === "json" || raw.selectedMode === "json-fallback" || raw.selectedMode === "msgpack-rpc-v1"
+    ? raw.selectedMode
+    : selectedCodec === MSGPACK_RPC_CODEC ? "msgpack-rpc-v1" : "json";
+  return {
+    selectedCodec,
+    selectedMode,
+    fallbackReason: asString(raw.fallbackReason) ?? undefined,
+    maxFrameBytes,
+    codecVersion: asNumber(raw.codecVersion) ?? 1,
   };
 }
 

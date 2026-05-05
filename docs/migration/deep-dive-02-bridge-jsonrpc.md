@@ -130,6 +130,36 @@ Allowed only when both peers negotiated:
 
 Production default remains `content-length` even if NDJSON is supported.
 
+#### MessagePack body mode (2026-05 binary bridge update)
+
+The current bridge keeps `Content-Length` framing as the canonical transport and adds a negotiated body codec:
+
+- `json-rpc-v1` — UTF-8 JSON-RPC envelope body; default bootstrap and fallback body codec.
+- `msgpack-rpc-v1` — MessagePack-encoded JSON-RPC 2.0 envelope body; used only after `dh.initialize` negotiation selects it.
+
+Frame headers remain ASCII and length-prefixed for both body codecs:
+
+```text
+Content-Length: <body byte length>\r\n
+Content-Type: application/vscode-jsonrpc; charset=utf-8\r\n
+\r\n
+<json body bytes>
+```
+
+```text
+Content-Length: <body byte length>\r\n
+Content-Type: application/x-msgpack; bridge=dh-jsonrpc; version=1\r\n
+\r\n
+<messagepack body bytes>
+```
+
+Reader rules:
+
+- `Content-Length` is mandatory, decimal ASCII only, and interpreted as a byte count.
+- Duplicate, missing, negative, fractional, partially numeric, or non-numeric `Content-Length` values are malformed frames.
+- Readers MUST enforce `maxFrameBytes` before allocating body buffers.
+- `Content-Type` is emitted for observability, but after negotiation readers use the selected codec state rather than trusting each individual frame header to switch codecs.
+
 #### stdout / stderr rule
 
 - **stdout**: protocol frames only
@@ -485,6 +515,41 @@ export interface InitializeResult {
 }
 ```
 
+Binary-capable clients add `transport` to `InitializeParams`:
+
+```ts
+export type BridgeRpcCodec = 'json-rpc-v1' | 'msgpack-rpc-v1';
+export type BridgeTransportSelectedMode = 'json' | 'msgpack-rpc-v1' | 'json-fallback';
+
+export interface InitializeTransportParams {
+  supportedCodecs: BridgeRpcCodec[];
+  preferredCodec: BridgeRpcCodec;
+  /** Valid negotiated range is 64 KiB through 16 MiB inclusive. */
+  maxFrameBytes?: number;
+  binaryBridge?: {
+    enabled: boolean;
+    minPayloadBytes?: number;
+  };
+  /** Test/operator override: auto | json | msgpack. */
+  codecOverride?: 'auto' | 'json' | 'msgpack';
+}
+```
+
+Binary-capable servers add `transport` to `InitializeResult` and to `capabilities.transport`:
+
+```ts
+export interface BridgeTransportSnapshot {
+  selectedCodec: BridgeRpcCodec;
+  selectedMode: BridgeTransportSelectedMode;
+  fallbackReason?: string;
+  /** Negotiated bound, 64 KiB through 16 MiB inclusive. */
+  maxFrameBytes: number;
+  codecVersion: 1;
+}
+```
+
+`selectedMode` is the operator/QA-facing mode label. `selectedCodec` is the exact body codec. They intentionally both exist so code can branch on codec while logs, snapshots, and benchmark output can distinguish plain JSON from fallback JSON.
+
 Example:
 
 ```json
@@ -585,6 +650,21 @@ Backward compatibility policy:
 3. **Unknown fields MUST be ignored**
 4. **Unknown methods MUST return `METHOD_NOT_FOUND`**
 5. **Unknown notifications SHOULD be ignored and MAY be logged to stderr**
+
+### 3.5 MessagePack negotiation matrix
+
+The first `dh.initialize` request and response are always `json-rpc-v1` over `Content-Length`. Codec switching begins only for frames after a successful initialize response.
+
+| Client capability / override | Server selection | selectedMode | Behavior |
+|---|---|---|---|
+| Client supports `msgpack-rpc-v1`, `binaryBridge.enabled=true`, preferred codec is MessagePack, and server supports codec version 1 | `msgpack-rpc-v1` | `msgpack-rpc-v1` | Subsequent requests and responses use MessagePack body bytes. |
+| Client sends only `json-rpc-v1` or binary is disabled | `json-rpc-v1` | `json-fallback` | Continue with JSON; include `fallbackReason` such as `binary_disabled` or `peer_does_not_support_msgpack`. |
+| Client prefers JSON while still listing MessagePack | `json-rpc-v1` | `json-fallback` | Continue with JSON; include `fallbackReason=peer_preferred_json`. |
+| `DH_BRIDGE_CODEC=json` / `codecOverride=json` | `json-rpc-v1` | `json-fallback` | Forced rollback path; no MessagePack frames are sent. |
+| `DH_BRIDGE_CODEC=msgpack` / `codecOverride=msgpack` but peer cannot negotiate MessagePack | JSON-RPC error | n/a | Initialize fails with `BRIDGE_CODEC_NEGOTIATION_FAILED`; do not silently continue. |
+| `maxFrameBytes` outside 64 KiB..16 MiB | JSON-RPC error | n/a | Initialize fails with `BRIDGE_CODEC_NEGOTIATION_FAILED`. |
+
+Fallback is safe only before any binary frame is used. Once `selectedCodec` is `msgpack-rpc-v1`, malformed binary, decode failures, truncation, and size violations are terminal for the affected session because the stream codec state may no longer be safely recoverable.
 
 ---
 
@@ -3048,6 +3128,19 @@ For a given `operationId`:
 | `ACCESS_DENIED` | -32020 | file/tool access blocked by policy |
 | `INVALID_STATE` | -32021 | operation invalid for current runtime state |
 
+### 8.2.1 Bridge transport / codec error codes
+
+The MessagePack bridge uses the existing JSON-RPC error envelope and maps transport failures into machine-readable `data.code` values. Current Rust/TS implementation uses the following bridge-specific codes:
+
+| Symbol | Code | Meaning | Request id behavior |
+|---|---:|---|---|
+| `BRIDGE_CODEC_UNSUPPORTED` | -32016 | Peer selected an unsupported codec or codec version. | Initialize/request id when available. |
+| `BRIDGE_CODEC_DECODE_FAILED` | -32017 | JSON or MessagePack body could not be decoded. | If the malformed body is parseable enough to recover `id`, respond to that id; otherwise use `id: null` or terminate the session without a response when no valid frame id exists. |
+| `BRIDGE_FRAME_TOO_LARGE` | -32018 | Frame body length exceeds negotiated `maxFrameBytes`; checked before body allocation. | Usually `id: null` because the body is not read. Pending TS requests fail with this code. |
+| `BRIDGE_CODEC_NEGOTIATION_FAILED` | -32019 | Initialize transport params are incompatible or invalid. | Initialize request id. |
+
+No-id session behavior is intentionally explicit: missing/invalid headers, oversized frames, truncated frames, and fully undecodable MessagePack often have no trustworthy JSON-RPC id. In those cases Rust logs a stderr diagnostic, emits a structured response only when an id can be recovered, and treats post-switch MessagePack failures as terminal for the session. TS clients fail all pending requests with the structured local bridge error (`INVALID_REQUEST`, `BRIDGE_CODEC_DECODE_FAILED`, or `BRIDGE_FRAME_TOO_LARGE`) so callers do not hang indefinitely.
+
 ### 8.3 Error object structure
 
 ```ts
@@ -3056,6 +3149,7 @@ export interface DhRpcError {
   message: string;
   data?: {
     dhCode?: string;
+    code?: string;
     category?: 'parse' | 'validation' | 'index' | 'search' | 'file' | 'tool' | 'runtime';
     retryable?: boolean;
     degraded?: boolean;
@@ -3595,6 +3689,38 @@ All file paths MUST be normalized relative to initialized workspace root unless 
 | parser missing for language | return `CAPABILITY_UNSUPPORTED` or degraded result | fall back to file/text mode |
 | tool backend unhealthy | emit `event.engine.degraded` | avoid tool-heavy strategies |
 
+### 11.4.1 Binary bridge fallback and failure matrix
+
+| Condition | Rust behavior | TS behavior | Observability |
+|---|---|---|---|
+| MessagePack supported and preferred | Select `msgpack-rpc-v1`; encode subsequent bodies with `rmp-serde` | Switch active codec after initialize | `transport.selectedMode=msgpack-rpc-v1`; stderr selected-codec diagnostic; benchmark `selected_codec=msgpack-rpc-v1` |
+| Binary disabled or JSON forced | Select `json-rpc-v1` with fallback reason | Keep JSON codec | `transport.selectedMode=json-fallback`, `fallbackReason=forced_json` or equivalent |
+| Peer lacks MessagePack | Select JSON unless MessagePack is forced | Keep JSON | `fallbackReason=peer_does_not_support_msgpack` |
+| Forced MessagePack but peer cannot support it | Return `BRIDGE_CODEC_NEGOTIATION_FAILED` | Fail startup with `BRIDGE_CODEC_NEGOTIATION_FAILED` | Initialize error evidence |
+| MessagePack body malformed after activation | Recover id if possible; return `BRIDGE_CODEC_DECODE_FAILED` when id exists; otherwise stderr diagnostic and terminate session | Fail pending request/session with `BRIDGE_CODEC_DECODE_FAILED` | Error `data.code`, stderr diagnostic, tests |
+| Frame body length exceeds negotiated max | Reject before body allocation with `BRIDGE_FRAME_TOO_LARGE` | Fail pending request/session with `BRIDGE_FRAME_TOO_LARGE` | Error `data.code`, tests |
+| Frame is truncated / stream ends early | No trustworthy id; stderr diagnostic and terminal session failure | Fail pending requests with protocol/bridge decode failure | No-id behavior documented; tests |
+
+Size limits are negotiated per session and must remain within **64 KiB <= `maxFrameBytes` <= 16 MiB**. The lower bound prevents peers from negotiating a frame size too small for normal initialize/query envelopes; the upper bound prevents accidental large allocation and is enforced before reading frame bodies.
+
+### 11.4.2 Parity and benchmark evidence expectations
+
+Repository-verifiable parity evidence for the current implementation must cover both JSON and MessagePack body modes for:
+
+- `runtime.ping`
+- `query.search`
+- `query.buildEvidence`
+
+The parity check may be a focused smoke/unit fixture when a full external end-to-end corpus is not required. It must compare result shape, request correlation, and structured error mapping rather than only asserting that encode/decode functions return bytes.
+
+Performance evidence must classify the observed result:
+
+- `material_and_5x_target_met` — encode and decode both meet at least 5x vs JSON.
+- `material_improvement` — encode and decode both meet at least 1.5x but miss the 5x lower bound.
+- `below_material` — one or both paths miss material improvement.
+
+The 5-10x number remains an aspirational target from the improvement request, not a claim to hide in summaries. Benchmark code must surface serde encode/decode errors as failed/degraded benchmark evidence; it must not replace serde failures with empty/default payloads.
+
 ### 11.5 Preferred TS call strategy
 
 When agent asks broad question:
@@ -3619,10 +3745,11 @@ When agent wants mutation:
 For DH v1 bridge, the protocol should be:
 
 1. **JSON-RPC 2.0 over stdio with Content-Length framing as canonical transport**
-2. **single final response + notification stream** for long-running work
-3. **coarse-grained evidence-oriented APIs** instead of chatty symbol-by-symbol orchestration
-4. **typed contracts end-to-end** with Zod on TS and serde structs on Rust
-5. **explicit degraded mode and actionable errors** so agents never hallucinate capability
+2. **JSON bootstrap with negotiated MessagePack body mode** (`msgpack-rpc-v1`) for large local bridge payloads while preserving JSON fallback
+3. **single final response + notification stream** for long-running work
+4. **coarse-grained evidence-oriented APIs** instead of chatty symbol-by-symbol orchestration
+5. **typed contracts end-to-end** with Zod on TS and serde structs on Rust
+6. **explicit degraded mode, selected-mode observability, size limits, and actionable transport errors** so agents never hallucinate capability
 
 This gives DH a bridge that is:
 

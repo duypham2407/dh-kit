@@ -26,12 +26,35 @@ use dh_types::{
     LanguageCapabilitySummary, LanguageId, QuestionClass, SemanticMode, SessionState,
     SessionStatus, ToolEnforcementLevel, WorkflowLane,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_DB_NAME: &str = "dh-index.db";
+const JSON_RPC_CODEC: &str = "json-rpc-v1";
+const MSGPACK_RPC_CODEC: &str = "msgpack-rpc-v1";
+const DEFAULT_BRIDGE_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+const MIN_BRIDGE_MAX_FRAME_BYTES: usize = 64 * 1024;
+const JSON_RPC_CONTENT_TYPE: &str = "application/vscode-jsonrpc; charset=utf-8";
+const MSGPACK_RPC_CONTENT_TYPE: &str = "application/x-msgpack; bridge=dh-jsonrpc; version=1";
+
+#[derive(Debug, Clone)]
+struct BridgeProtocolError {
+    rpc_error: BridgeRpcError,
+    request_id: Option<Value>,
+    terminal: bool,
+}
+
+impl BridgeProtocolError {
+    fn new(rpc_error: BridgeRpcError, request_id: Option<Value>, terminal: bool) -> Self {
+        Self {
+            rpc_error,
+            request_id,
+            terminal,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BridgeRpcError {
@@ -106,6 +129,38 @@ impl BridgeRpcError {
         }
     }
 
+    pub fn codec_unsupported(message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc_code: -32016,
+            symbolic_code: "BRIDGE_CODEC_UNSUPPORTED".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn codec_decode_failed(message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc_code: -32017,
+            symbolic_code: "BRIDGE_CODEC_DECODE_FAILED".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn frame_too_large(message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc_code: -32018,
+            symbolic_code: "BRIDGE_FRAME_TOO_LARGE".into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn codec_negotiation_failed(message: impl Into<String>) -> Self {
+        Self {
+            jsonrpc_code: -32019,
+            symbolic_code: "BRIDGE_CODEC_NEGOTIATION_FAILED".into(),
+            message: message.into(),
+        }
+    }
+
     pub fn to_response(self, id: Option<Value>) -> Value {
         json!({
             "jsonrpc": "2.0",
@@ -126,6 +181,102 @@ pub struct RpcRequest {
     pub id: Option<Value>,
     pub method: String,
     pub params: Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BridgeCodec {
+    Json,
+    MessagePack,
+}
+
+impl BridgeCodec {
+    fn wire_name(self) -> &'static str {
+        match self {
+            BridgeCodec::Json => JSON_RPC_CODEC,
+            BridgeCodec::MessagePack => MSGPACK_RPC_CODEC,
+        }
+    }
+
+    fn content_type(self) -> &'static str {
+        match self {
+            BridgeCodec::Json => JSON_RPC_CONTENT_TYPE,
+            BridgeCodec::MessagePack => MSGPACK_RPC_CONTENT_TYPE,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct BridgeTransportState {
+    codec: BridgeCodec,
+    fallback_reason: Option<String>,
+    max_frame_bytes: usize,
+    codec_version: u8,
+}
+
+impl Default for BridgeTransportState {
+    fn default() -> Self {
+        Self {
+            codec: BridgeCodec::Json,
+            fallback_reason: None,
+            max_frame_bytes: DEFAULT_BRIDGE_MAX_FRAME_BYTES,
+            codec_version: 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeTransportNegotiationResult {
+    selected_codec: &'static str,
+    selected_mode: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fallback_reason: Option<String>,
+    max_frame_bytes: usize,
+    codec_version: u8,
+}
+
+impl BridgeTransportState {
+    fn to_wire(&self) -> BridgeTransportNegotiationResult {
+        BridgeTransportNegotiationResult {
+            selected_codec: self.codec.wire_name(),
+            selected_mode: if self.codec == BridgeCodec::MessagePack {
+                MSGPACK_RPC_CODEC
+            } else if self.fallback_reason.is_some() {
+                "json-fallback"
+            } else {
+                "json"
+            },
+            fallback_reason: self.fallback_reason.clone(),
+            max_frame_bytes: self.max_frame_bytes,
+            codec_version: self.codec_version,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeTransportParams {
+    #[serde(default)]
+    supported_codecs: Vec<String>,
+    preferred_codec: Option<String>,
+    max_frame_bytes: Option<usize>,
+    binary_bridge: Option<InitializeBinaryBridgeParams>,
+    codec_override: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeBinaryBridgeParams {
+    enabled: bool,
+    #[allow(dead_code)]
+    min_payload_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct IncomingFrame {
+    body: Vec<u8>,
+    #[allow(dead_code)]
+    content_type: Option<String>,
 }
 
 pub struct BridgeRpcRouter<'a> {
@@ -287,6 +438,7 @@ struct BridgeCapabilities {
     methods: Vec<&'static str>,
     query_relationship: BridgeQueryRelationshipCapabilities,
     language_capability_matrix: Vec<WireLanguageCapabilityEntry>,
+    transport: BridgeTransportNegotiationResult,
     lifecycle_control: WireLifecycleControl,
     rust_host_lifecycle_contract: LifecycleContract,
     worker_protocol_contract: WorkerProtocolContract,
@@ -305,6 +457,7 @@ struct InitializeResult {
     server_version: &'static str,
     workspace_root: String,
     protocol_version: &'static str,
+    transport: BridgeTransportNegotiationResult,
     capabilities: BridgeCapabilities,
 }
 
@@ -321,19 +474,58 @@ pub fn run_bridge_server(workspace: PathBuf) -> Result<()> {
     let mut writer = io::BufWriter::new(stdout.lock());
 
     let router = BridgeRpcRouter::new(&workspace, &db, &dispatcher, &db);
+    let mut transport = BridgeTransportState::default();
 
     loop {
-        let request = match read_rpc_request(&mut reader) {
+        let request = match read_rpc_request(&mut reader, transport.codec, transport.max_frame_bytes) {
             Ok(value) => value,
             Err(err) => {
-                eprintln!("bridge read failed: {err}");
-                break;
+                eprintln!(
+                    "bridge protocol failure: code={} message={}",
+                    err.rpc_error.symbolic_code, err.rpc_error.message
+                );
+                if let Some(id) = err.request_id.clone() {
+                    let response = err.rpc_error.to_response(Some(id));
+                    write_rpc_response(
+                        &mut writer,
+                        &response,
+                        transport.codec,
+                        transport.max_frame_bytes,
+                    )?;
+                }
+                if err.terminal {
+                    break;
+                }
+                continue;
             }
         };
 
         let should_shutdown = request.method == "dh.shutdown";
-        let response = router.route(request);
-        write_rpc_response(&mut writer, &response)?;
+        let response = if request.method == "dh.initialize" {
+            match negotiate_transport(&request.params) {
+                Ok(next_transport) => {
+                    let response = ok_result(
+                        request.id.clone(),
+                        initialize_result(&workspace, next_transport.clone()),
+                    );
+                    transport = next_transport;
+                    eprintln!(
+                        "bridge selected codec: {}{}",
+                        transport.to_wire().selected_mode,
+                        transport
+                            .fallback_reason
+                            .as_deref()
+                            .map(|reason| format!(" ({reason})"))
+                            .unwrap_or_default()
+                    );
+                    response
+                }
+                Err(err) => err.to_response(request.id.clone()),
+            }
+        } else {
+            router.route(request)
+        };
+        write_rpc_response(&mut writer, &response, transport.codec, transport.max_frame_bytes)?;
         if should_shutdown {
             break;
         }
@@ -342,14 +534,47 @@ pub fn run_bridge_server(workspace: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn read_rpc_request(reader: &mut BufReader<impl Read>) -> Result<RpcRequest> {
+fn read_rpc_request(
+    reader: &mut BufReader<impl Read>,
+    codec: BridgeCodec,
+    max_frame_bytes: usize,
+) -> std::result::Result<RpcRequest, BridgeProtocolError> {
+    let frame = read_frame(reader, max_frame_bytes)?;
+    decode_rpc_request(&frame.body, codec).map_err(|err| {
+        let request_id = extract_request_id(codec, &frame.body);
+        BridgeProtocolError::new(
+            BridgeRpcError::codec_decode_failed(format!(
+                "decode {} request payload: {err}",
+                codec.wire_name()
+            )),
+            request_id,
+            true,
+        )
+    })
+}
+
+fn read_frame(
+    reader: &mut BufReader<impl Read>,
+    max_frame_bytes: usize,
+) -> std::result::Result<IncomingFrame, BridgeProtocolError> {
     let mut content_length: Option<usize> = None;
+    let mut content_type: Option<String> = None;
 
     loop {
         let mut line = String::new();
-        let bytes = reader.read_line(&mut line)?;
+        let bytes = reader.read_line(&mut line).map_err(|err| {
+            BridgeProtocolError::new(
+                BridgeRpcError::invalid_request(format!("failed to read bridge frame header: {err}")),
+                None,
+                true,
+            )
+        })?;
         if bytes == 0 {
-            anyhow::bail!("bridge stdin closed");
+            return Err(BridgeProtocolError::new(
+                BridgeRpcError::invalid_request("bridge stdin closed"),
+                None,
+                true,
+            ));
         }
         if line == "\r\n" {
             break;
@@ -357,21 +582,71 @@ fn read_rpc_request(reader: &mut BufReader<impl Read>) -> Result<RpcRequest> {
 
         if let Some((key, value)) = line.split_once(':') {
             if key.trim().eq_ignore_ascii_case("Content-Length") {
-                content_length = Some(
-                    value
-                        .trim()
-                        .parse::<usize>()
-                        .context("invalid Content-Length header")?,
-                );
+                let trimmed = value.trim();
+                if content_length.is_some() || trimmed.is_empty() || !trimmed.chars().all(|c| c.is_ascii_digit()) {
+                    return Err(BridgeProtocolError::new(
+                        BridgeRpcError::invalid_request("invalid Content-Length header"),
+                        None,
+                        true,
+                    ));
+                }
+                content_length = Some(trimmed.parse::<usize>().map_err(|err| {
+                    BridgeProtocolError::new(
+                        BridgeRpcError::invalid_request(format!("invalid Content-Length header: {err}")),
+                        None,
+                        true,
+                    )
+                })?);
+            }
+            if key.trim().eq_ignore_ascii_case("Content-Type") {
+                content_type = Some(value.trim().to_string());
             }
         }
     }
 
-    let len = content_length.context("missing Content-Length header")?;
+    let len = content_length.ok_or_else(|| {
+        BridgeProtocolError::new(
+            BridgeRpcError::invalid_request("missing Content-Length header"),
+            None,
+            true,
+        )
+    })?;
+    if len > max_frame_bytes {
+        return Err(BridgeProtocolError::new(
+            BridgeRpcError::frame_too_large(format!(
+                "bridge frame too large: {len} bytes exceeds maxFrameBytes={max_frame_bytes}"
+            )),
+            None,
+            true,
+        ));
+    }
     let mut buf = vec![0_u8; len];
-    reader.read_exact(&mut buf)?;
-    let payload = String::from_utf8(buf).context("request payload is not utf8")?;
-    let value: Value = serde_json::from_str(&payload).context("invalid json request payload")?;
+    reader.read_exact(&mut buf).map_err(|err| {
+        BridgeProtocolError::new(
+            BridgeRpcError::codec_decode_failed(format!(
+                "bridge frame body truncated or unreadable: expected {len} bytes: {err}"
+            )),
+            None,
+            true,
+        )
+    })?;
+
+    Ok(IncomingFrame {
+        body: buf,
+        content_type,
+    })
+}
+
+fn decode_rpc_request(buf: &[u8], codec: BridgeCodec) -> Result<RpcRequest> {
+    let value: Value = match codec {
+        BridgeCodec::Json => {
+            let payload = std::str::from_utf8(buf).context("request payload is not utf8")?;
+            serde_json::from_str(payload).context("invalid json request payload")?
+        }
+        BridgeCodec::MessagePack => {
+            rmp_serde::from_slice(buf).context("invalid messagepack request payload")?
+        }
+    };
 
     let id = value.get("id").cloned();
     let method = value
@@ -384,6 +659,14 @@ fn read_rpc_request(reader: &mut BufReader<impl Read>) -> Result<RpcRequest> {
     Ok(RpcRequest { id, method, params })
 }
 
+fn extract_request_id(codec: BridgeCodec, buf: &[u8]) -> Option<Value> {
+    let value: Result<Value> = match codec {
+        BridgeCodec::Json => serde_json::from_slice(buf).context("invalid json request payload"),
+        BridgeCodec::MessagePack => rmp_serde::from_slice(buf).context("invalid messagepack request payload"),
+    };
+    value.ok().and_then(|value| value.get("id").cloned())
+}
+
 fn handle_request(
     workspace: &Path,
     db: &Database,
@@ -392,7 +675,10 @@ fn handle_request(
     request: RpcRequest,
 ) -> Value {
     match request.method.as_str() {
-        "dh.initialize" => ok_result(request.id, initialize_result(workspace)),
+        "dh.initialize" => match negotiate_transport(&request.params) {
+            Ok(transport) => ok_result(request.id, initialize_result(workspace, transport)),
+            Err(err) => err.to_response(request.id),
+        },
         "dh.initialized" => ok_result(
             request.id,
             json!({
@@ -1359,19 +1645,129 @@ fn unsupported_build_evidence_intent_result(query: String, intent: &str) -> Brid
     }
 }
 
-fn write_rpc_response(writer: &mut io::BufWriter<impl Write>, payload: &Value) -> Result<()> {
-    let body = serde_json::to_string(payload)?;
-    write!(writer, "Content-Length: {}\r\n\r\n{}", body.len(), body)?;
+fn write_rpc_response(
+    writer: &mut io::BufWriter<impl Write>,
+    payload: &Value,
+    codec: BridgeCodec,
+    max_frame_bytes: usize,
+) -> Result<()> {
+    let body = encode_rpc_value(payload, codec)?;
+    if body.len() > max_frame_bytes {
+        anyhow::bail!(
+            "bridge response frame too large: {} bytes exceeds maxFrameBytes={}",
+            body.len(),
+            max_frame_bytes
+        );
+    }
+    write!(
+        writer,
+        "Content-Length: {}\r\nContent-Type: {}\r\n\r\n",
+        body.len(),
+        codec.content_type()
+    )?;
+    writer.write_all(&body)?;
     writer.flush()?;
     Ok(())
 }
 
-fn initialize_result(workspace: &Path) -> InitializeResult {
+fn encode_rpc_value(payload: &Value, codec: BridgeCodec) -> Result<Vec<u8>> {
+    match codec {
+        BridgeCodec::Json => Ok(serde_json::to_vec(payload)?),
+        BridgeCodec::MessagePack => Ok(rmp_serde::to_vec_named(payload)?),
+    }
+}
+
+fn negotiate_transport(params: &Value) -> std::result::Result<BridgeTransportState, BridgeRpcError> {
+    let transport_params: InitializeTransportParams = params
+        .get("transport")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|err| BridgeRpcError::codec_negotiation_failed(format!("invalid transport params: {err}")))?
+        .unwrap_or_default();
+
+    let requested_max_frame_bytes = transport_params
+        .max_frame_bytes
+        .unwrap_or(DEFAULT_BRIDGE_MAX_FRAME_BYTES);
+    if !(MIN_BRIDGE_MAX_FRAME_BYTES..=DEFAULT_BRIDGE_MAX_FRAME_BYTES).contains(&requested_max_frame_bytes) {
+        return Err(BridgeRpcError::codec_negotiation_failed(format!(
+            "maxFrameBytes must be between {MIN_BRIDGE_MAX_FRAME_BYTES} and {DEFAULT_BRIDGE_MAX_FRAME_BYTES}; received {requested_max_frame_bytes}"
+        )));
+    }
+    let max_frame_bytes = requested_max_frame_bytes;
+    let env_override = std::env::var("DH_BRIDGE_CODEC").unwrap_or_else(|_| "auto".into());
+    let override_mode = normalize_codec_override(transport_params.codec_override.as_deref().unwrap_or(&env_override));
+
+    if override_mode == "json" {
+        return Ok(BridgeTransportState {
+            codec: BridgeCodec::Json,
+            fallback_reason: Some("forced_json".into()),
+            max_frame_bytes,
+            codec_version: 1,
+        });
+    }
+
+    let binary_enabled = transport_params
+        .binary_bridge
+        .as_ref()
+        .map(|binary| binary.enabled)
+        .unwrap_or(true);
+    let supports_msgpack = transport_params
+        .supported_codecs
+        .iter()
+        .any(|codec| codec == MSGPACK_RPC_CODEC);
+    let prefers_msgpack = transport_params
+        .preferred_codec
+        .as_deref()
+        .is_none_or(|codec| codec == MSGPACK_RPC_CODEC);
+
+    if binary_enabled && supports_msgpack && prefers_msgpack {
+        return Ok(BridgeTransportState {
+            codec: BridgeCodec::MessagePack,
+            fallback_reason: None,
+            max_frame_bytes,
+            codec_version: 1,
+        });
+    }
+
+    if override_mode == "msgpack" {
+        return Err(BridgeRpcError::codec_negotiation_failed(
+            "DH_BRIDGE_CODEC=msgpack requires both peers to support msgpack-rpc-v1",
+        ));
+    }
+
+    let fallback_reason = if !binary_enabled {
+        "binary_disabled"
+    } else if !supports_msgpack {
+        "peer_does_not_support_msgpack"
+    } else {
+        "peer_preferred_json"
+    };
+
+    Ok(BridgeTransportState {
+        codec: BridgeCodec::Json,
+        fallback_reason: Some(fallback_reason.into()),
+        max_frame_bytes,
+        codec_version: 1,
+    })
+}
+
+fn normalize_codec_override(value: &str) -> &'static str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "json" => "json",
+        "msgpack" => "msgpack",
+        _ => "auto",
+    }
+}
+
+fn initialize_result(workspace: &Path, transport: BridgeTransportState) -> InitializeResult {
+    let transport_wire = transport.to_wire();
     InitializeResult {
         server_name: "dh-engine",
         server_version: env!("CARGO_PKG_VERSION"),
         workspace_root: workspace.to_string_lossy().to_string(),
         protocol_version: WORKER_PROTOCOL_VERSION,
+        transport: transport_wire.clone(),
         capabilities: BridgeCapabilities {
             protocol_version: WORKER_PROTOCOL_VERSION,
             methods: BRIDGE_INITIALIZE_METHODS.to_vec(),
@@ -1382,6 +1778,7 @@ fn initialize_result(workspace: &Path) -> InitializeResult {
                 .into_iter()
                 .map(to_wire_language_capability_entry)
                 .collect::<Vec<_>>(),
+            transport: transport_wire,
             lifecycle_control: WireLifecycleControl {
                 methods: BRIDGE_LIFECYCLE_CONTROL_METHODS.to_vec(),
                 max_auto_restarts: 1,
@@ -1899,7 +2296,12 @@ fn push_language(target: &mut Vec<LanguageId>, language: LanguageId) {
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_request, BridgeRpcRouter, RpcRequest};
+    use super::{
+        decode_rpc_request, encode_rpc_value, handle_request, negotiate_transport, read_frame,
+        read_rpc_request, write_rpc_response, BridgeCodec, BridgeRpcRouter, RpcRequest,
+        DEFAULT_BRIDGE_MAX_FRAME_BYTES, JSON_RPC_CODEC, MIN_BRIDGE_MAX_FRAME_BYTES,
+        MSGPACK_RPC_CODEC,
+    };
     use crate::hooks::HookDispatcher;
     use dh_storage::{Database, FileRepository, GraphEdgeRepository, SymbolRepository};
     use dh_types::{
@@ -1908,6 +2310,7 @@ mod tests {
     };
     use serde_json::json;
     use serde_json::Value;
+    use std::io::{BufReader, Cursor};
 
     fn setup_db() -> anyhow::Result<(tempfile::TempDir, Database)> {
         let tmp = tempfile::tempdir()?;
@@ -2573,6 +2976,23 @@ mod tests {
 
         assert_eq!(response["result"]["protocolVersion"], "1");
         assert_eq!(response["result"]["capabilities"]["protocolVersion"], "1");
+        assert_eq!(response["result"]["transport"]["selectedCodec"], JSON_RPC_CODEC);
+        assert_eq!(
+            response["result"]["transport"]["selectedMode"],
+            json!("json-fallback")
+        );
+        assert_eq!(
+            response["result"]["transport"]["fallbackReason"],
+            json!("peer_does_not_support_msgpack")
+        );
+        assert_eq!(
+            response["result"]["transport"]["maxFrameBytes"],
+            json!(DEFAULT_BRIDGE_MAX_FRAME_BYTES)
+        );
+        assert_eq!(
+            response["result"]["capabilities"]["transport"]["selectedCodec"],
+            JSON_RPC_CODEC
+        );
         assert_eq!(
             response["result"]["capabilities"]["methods"],
             json!([
@@ -2605,6 +3025,249 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn initialize_negotiates_messagepack_when_supported() -> anyhow::Result<()> {
+        let (tmp, db) = setup_db()?;
+        let dispatcher = HookDispatcher::new();
+        let response = handle_request(
+            tmp.path(),
+            &db,
+            &dispatcher,
+            &db,
+            RpcRequest {
+                id: Some(json!(142)),
+                method: "dh.initialize".into(),
+                params: json!({
+                    "transport": {
+                        "supportedCodecs": [JSON_RPC_CODEC, MSGPACK_RPC_CODEC],
+                        "preferredCodec": MSGPACK_RPC_CODEC,
+                        "maxFrameBytes": DEFAULT_BRIDGE_MAX_FRAME_BYTES,
+                        "binaryBridge": { "enabled": true }
+                    }
+                }),
+            },
+        );
+
+        assert_eq!(response["result"]["transport"]["selectedCodec"], MSGPACK_RPC_CODEC);
+        assert_eq!(
+            response["result"]["transport"]["selectedMode"],
+            MSGPACK_RPC_CODEC
+        );
+        assert_eq!(
+            response["result"]["capabilities"]["transport"]["selectedCodec"],
+            MSGPACK_RPC_CODEC
+        );
+        assert!(response["result"]["transport"]["fallbackReason"].is_null());
+
+        Ok(())
+    }
+
+    #[test]
+    fn negotiate_transport_rejects_forced_messagepack_without_peer_support() {
+        let result = negotiate_transport(&json!({
+            "transport": {
+                "supportedCodecs": [JSON_RPC_CODEC],
+                "preferredCodec": JSON_RPC_CODEC,
+                "codecOverride": "msgpack"
+            }
+        }));
+
+        let response = result.expect_err("forced MessagePack should fail").to_response(Some(json!(1)));
+        assert_eq!(
+            response["error"]["data"]["code"],
+            json!("BRIDGE_CODEC_NEGOTIATION_FAILED")
+        );
+    }
+
+    #[test]
+    fn negotiate_transport_rejects_max_frame_bytes_below_lower_bound() {
+        let result = negotiate_transport(&json!({
+            "transport": {
+                "supportedCodecs": [JSON_RPC_CODEC, MSGPACK_RPC_CODEC],
+                "preferredCodec": MSGPACK_RPC_CODEC,
+                "maxFrameBytes": MIN_BRIDGE_MAX_FRAME_BYTES - 1,
+                "binaryBridge": { "enabled": true }
+            }
+        }));
+
+        let response = result.expect_err("too-small maxFrameBytes should fail").to_response(Some(json!(1)));
+        assert_eq!(
+            response["error"]["data"]["code"],
+            json!("BRIDGE_CODEC_NEGOTIATION_FAILED")
+        );
+        assert!(response["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("maxFrameBytes")));
+    }
+
+    #[test]
+    fn negotiate_transport_rejects_max_frame_bytes_above_upper_bound() {
+        let result = negotiate_transport(&json!({
+            "transport": {
+                "supportedCodecs": [JSON_RPC_CODEC, MSGPACK_RPC_CODEC],
+                "preferredCodec": MSGPACK_RPC_CODEC,
+                "maxFrameBytes": DEFAULT_BRIDGE_MAX_FRAME_BYTES + 1,
+                "binaryBridge": { "enabled": true }
+            }
+        }));
+
+        let response = result.expect_err("too-large maxFrameBytes should fail").to_response(Some(json!(1)));
+        assert_eq!(
+            response["error"]["data"]["code"],
+            json!("BRIDGE_CODEC_NEGOTIATION_FAILED")
+        );
+    }
+
+    #[test]
+    fn msgpack_codec_preserves_large_payload_shape() -> anyhow::Result<()> {
+        let vector = (0..1536)
+            .map(|index| json!((index as f64) / 1536.0))
+            .collect::<Vec<_>>();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 77,
+            "method": "query.buildEvidence",
+            "params": {
+                "query": "large vector",
+                "semanticVector": vector,
+                "ast": {
+                    "kind": "module",
+                    "children": (0..256).map(|index| json!({ "kind": "node", "index": index })).collect::<Vec<_>>()
+                }
+            }
+        });
+
+        let bytes = encode_rpc_value(&request, BridgeCodec::MessagePack)?;
+        let decoded = decode_rpc_request(&bytes, BridgeCodec::MessagePack)?;
+
+        assert_eq!(decoded.method, "query.buildEvidence");
+        assert_eq!(decoded.params["semanticVector"].as_array().map(Vec::len), Some(1536));
+        assert_eq!(decoded.params["ast"]["children"].as_array().map(Vec::len), Some(256));
+        Ok(())
+    }
+
+    #[test]
+    fn msgpack_codec_preserves_runtime_search_and_build_evidence_shapes() -> anyhow::Result<()> {
+        let cases = [
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "runtime.ping",
+                "params": {}
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "query.search",
+                "params": { "query": "auth", "mode": "file_path", "limit": 3 }
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "query.buildEvidence",
+                "params": {
+                    "query": "how does auth work?",
+                    "intent": "explain",
+                    "targets": ["AuthService"],
+                    "budget": { "maxFiles": 4, "maxSymbols": 8, "maxSnippets": 6 }
+                }
+            }),
+        ];
+
+        for request in cases {
+            let json_decoded = decode_rpc_request(&encode_rpc_value(&request, BridgeCodec::Json)?, BridgeCodec::Json)?;
+            let msgpack_decoded = decode_rpc_request(
+                &encode_rpc_value(&request, BridgeCodec::MessagePack)?,
+                BridgeCodec::MessagePack,
+            )?;
+            assert_eq!(json_decoded.id, msgpack_decoded.id);
+            assert_eq!(json_decoded.method, msgpack_decoded.method);
+            assert_eq!(json_decoded.params, msgpack_decoded.params);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_msgpack_request_with_id_returns_structured_codec_error() -> anyhow::Result<()> {
+        let partial = vec![0x82, 0xa2, b'i', b'd', 0x2a, 0xa6, b'm', b'e', b't', b'h', b'o', b'd'];
+        let mut frame = format!(
+            "Content-Length: {}\r\nContent-Type: application/x-msgpack\r\n\r\n",
+            partial.len()
+        )
+        .into_bytes();
+        frame.extend_from_slice(&partial);
+        let mut reader = BufReader::new(Cursor::new(frame));
+
+        let err = read_rpc_request(
+            &mut reader,
+            BridgeCodec::MessagePack,
+            DEFAULT_BRIDGE_MAX_FRAME_BYTES,
+        )
+        .expect_err("malformed MessagePack should return protocol error");
+        assert_eq!(err.rpc_error.symbolic_code, "BRIDGE_CODEC_DECODE_FAILED");
+        assert!(err.request_id.is_none());
+        assert!(err.terminal);
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_frame_returns_structured_frame_too_large_error_before_body_allocation() {
+        let frame = format!(
+            "Content-Length: {}\r\nContent-Type: application/x-msgpack\r\n\r\n",
+            DEFAULT_BRIDGE_MAX_FRAME_BYTES + 1
+        )
+        .into_bytes();
+        let mut reader = BufReader::new(Cursor::new(frame));
+
+        let err = read_frame(&mut reader, DEFAULT_BRIDGE_MAX_FRAME_BYTES)
+            .expect_err("oversized frame should fail before body read");
+        assert_eq!(err.rpc_error.symbolic_code, "BRIDGE_FRAME_TOO_LARGE");
+        assert!(err.request_id.is_none());
+        assert!(err.terminal);
+    }
+
+    #[test]
+    fn truncated_frame_body_returns_structured_decode_error_without_id() {
+        let mut reader = BufReader::new(Cursor::new(
+            b"Content-Length: 10\r\nContent-Type: application/x-msgpack\r\n\r\nabc".to_vec(),
+        ));
+
+        let err = read_frame(&mut reader, DEFAULT_BRIDGE_MAX_FRAME_BYTES)
+            .expect_err("truncated frame should fail explicitly");
+        assert_eq!(err.rpc_error.symbolic_code, "BRIDGE_CODEC_DECODE_FAILED");
+        assert!(err.request_id.is_none());
+        assert!(err.terminal);
+    }
+
+    #[test]
+    fn strict_content_length_rejects_duplicate_and_non_numeric_headers() {
+        let mut duplicate = BufReader::new(Cursor::new(
+            b"Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}".to_vec(),
+        ));
+        let duplicate_err = read_frame(&mut duplicate, DEFAULT_BRIDGE_MAX_FRAME_BYTES)
+            .expect_err("duplicate Content-Length should fail");
+        assert_eq!(duplicate_err.rpc_error.symbolic_code, "INVALID_REQUEST");
+
+        let mut non_numeric = BufReader::new(Cursor::new(
+            b"Content-Length: 1junk\r\n\r\n{}".to_vec(),
+        ));
+        let non_numeric_err = read_frame(&mut non_numeric, DEFAULT_BRIDGE_MAX_FRAME_BYTES)
+            .expect_err("non-numeric Content-Length should fail");
+        assert_eq!(non_numeric_err.rpc_error.symbolic_code, "INVALID_REQUEST");
+    }
+
+    #[test]
+    fn write_rpc_response_enforces_max_frame_bytes() {
+        let payload = json!({ "jsonrpc": "2.0", "id": 1, "result": "x".repeat(2048) });
+        let mut output = Vec::new();
+        let mut writer = std::io::BufWriter::new(&mut output);
+
+        let err = write_rpc_response(&mut writer, &payload, BridgeCodec::Json, 512)
+            .expect_err("response larger than maxFrameBytes should fail");
+        assert!(err.to_string().contains("bridge response frame too large"));
     }
 
     #[test]
@@ -2645,6 +3308,9 @@ mod tests {
             protocol["framing"]["transport"],
             json!("jsonrpc_stdio_content_length")
         );
+        assert_eq!(protocol["framing"]["binaryCodec"], json!("msgpack-rpc-v1"));
+        assert_eq!(protocol["framing"]["jsonBootstrap"], json!(true));
+        assert_eq!(protocol["framing"]["jsonFallback"], json!(true));
         assert_eq!(protocol["framing"]["networkTransport"], json!(false));
         assert_eq!(
             protocol["framing"]["arbitraryMethodPassthrough"],

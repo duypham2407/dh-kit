@@ -14,6 +14,7 @@ dh-types = { path = "../dh-types" }
 dh-graph = { path = "../dh-graph" }
 dh-query = { path = "../dh-query" }
 serde_json.workspace = true
+rmp-serde.workspace = true
 serde.workspace = true
 sha2.workspace = true
 chrono.workspace = true

@@ -7,7 +7,7 @@ use dh_storage::{Database, SymbolRepository};
 use dh_types::{
     BenchmarkClass, BenchmarkComparison, BenchmarkCorpusKind, BenchmarkCorpusRef,
     BenchmarkPreparationState, BenchmarkResult, BenchmarkResultStatus, BenchmarkRunMetadata,
-    BenchmarkSuiteArtifact, BenchmarkSummary, GraphHydrationBenchmarkMetrics,
+    BenchmarkSuiteArtifact, BenchmarkSummary, BridgeCodecBenchmarkMetrics, GraphHydrationBenchmarkMetrics,
     IndexBenchmarkMetrics, MemoryMeasurement, MemoryMeasurementStatus, ParityBenchmarkMetrics,
     QueryLatencyMetrics, WorkspaceId,
 };
@@ -46,6 +46,9 @@ pub fn run_benchmark(request: BenchmarkRunRequest) -> Result<BenchmarkRunRespons
                 artifact: parity_report_to_artifact(&report, &fixture_root),
             })
         }
+        BenchmarkClass::BridgeCodec => Ok(BenchmarkRunResponse {
+            artifact: run_bridge_codec_benchmark(&request.workspace),
+        }),
         BenchmarkClass::ColdFullIndex
         | BenchmarkClass::WarmNoChangeIndex
         | BenchmarkClass::IncrementalReindex => {
@@ -214,6 +217,25 @@ pub fn benchmark_summary_lines(artifact: &BenchmarkSuiteArtifact) -> Vec<String>
                 latency.p50_ms,
                 latency.p95_ms,
                 latency.query_set_label
+            ));
+        }
+
+        if let Some(bridge) = &result.bridge_codec {
+            lines.push(format!(
+                "  bridge_codec: payload={} selected_codec={} samples={} json_bytes={} msgpack_bytes={} json_encode_ms={:.3} json_decode_ms={:.3} msgpack_encode_ms={:.3} msgpack_decode_ms={:.3} encode_speedup={:.2}x decode_speedup={:.2}x improvement_class={} target_5_10x_status={}",
+                bridge.payload_label,
+                bridge.selected_codec,
+                bridge.sample_count_completed,
+                bridge.json_bytes,
+                bridge.msgpack_bytes,
+                bridge.json_encode_ms,
+                bridge.json_decode_ms,
+                bridge.msgpack_encode_ms,
+                bridge.msgpack_decode_ms,
+                bridge.encode_speedup,
+                bridge.decode_speedup,
+                bridge.improvement_classification,
+                bridge.target_5_10x_status
             ));
         }
 
@@ -468,6 +490,7 @@ fn run_index_benchmark(
         }),
         query_latency: None,
         graph_hydration: None,
+        bridge_codec: None,
         degradation_notes,
     };
 
@@ -644,6 +667,7 @@ fn run_query_benchmark(
             query_set_label,
         }),
         graph_hydration: None,
+        bridge_codec: None,
         degradation_notes: if sample_count_completed == 0 {
             vec!["No completed query latency samples were captured.".to_string()]
         } else {
@@ -831,6 +855,7 @@ fn run_hydrate_benchmark(
         }),
         query_latency: None,
         graph_hydration: Some(graph_hydration),
+        bridge_codec: None,
         degradation_notes,
     };
 
@@ -978,6 +1003,7 @@ fn parity_report_to_artifact(
         }),
         query_latency: None,
         graph_hydration: None,
+        bridge_codec: None,
         degradation_notes,
     };
 
@@ -1006,6 +1032,315 @@ fn parity_report_to_artifact(
         summary,
         results: vec![result],
     }
+}
+
+fn run_bridge_codec_benchmark(workspace: &Path) -> BenchmarkSuiteArtifact {
+    let started = now_unix_ms();
+    let suite_id = format!("benchmark-suite-bridge-codec-{started}");
+    let corpus = BenchmarkCorpusRef {
+        kind: BenchmarkCorpusKind::CuratedFixture,
+        label: "bridge_codec_large_payload_fixture".to_string(),
+        revision_or_snapshot: "local-large-payload-v1".to_string(),
+        root_path: workspace.to_string_lossy().to_string(),
+        query_set_label: Some("embedding_1536_and_ast_256".to_string()),
+        mutation_set_label: None,
+        notes: Some(
+            "Synthetic bridge payload fixture for JSON vs MessagePack serialization/deserialization overhead."
+                .to_string(),
+        ),
+    };
+    let preparation = BenchmarkPreparationState {
+        state_label: "bridge_codec_synthetic_payload".to_string(),
+        cleared_reusable_state: Some(false),
+        preserved_reusable_state: Some(false),
+        baseline_run_ref: Some("json-rpc-v1".to_string()),
+        mutation_set_label: None,
+        mutation_paths: Vec::new(),
+        query_set_label: Some("embedding_1536_and_ast_256".to_string()),
+        notes: vec![
+            "Measures local encode/decode overhead only; it does not include child-process startup, DB query, or LLM latency."
+                .to_string(),
+            "Frame boundary remains Content-Length for both codecs; payload body differs between JSON and MessagePack."
+                .to_string(),
+        ],
+    };
+    let comparison_key = Some(comparison_key_for(
+        BenchmarkClass::BridgeCodec,
+        &corpus,
+        profile_name(),
+        &preparation,
+    ));
+
+    let payload = bridge_codec_payload();
+    let sample_count_requested = 40_u32;
+
+    let json_encode = time_json_encode(&payload, sample_count_requested);
+    let json_decode = json_encode.as_ref().ok().map(|samples| time_json_decode(samples));
+    let msgpack_encode = time_msgpack_encode(&payload, sample_count_requested);
+    let msgpack_decode = msgpack_encode
+        .as_ref()
+        .ok()
+        .map(|samples| time_msgpack_decode(samples));
+    let finished = now_unix_ms();
+
+    let mut degradation_notes = Vec::new();
+    let mut status = BenchmarkResultStatus::Complete;
+
+    let json_encode = match json_encode {
+        Ok(value) => value,
+        Err(err) => {
+            status = BenchmarkResultStatus::Failed;
+            degradation_notes.push(format!("JSON encode benchmark failed: {err}"));
+            TimedPayloadSamples::empty()
+        }
+    };
+    let json_decode_ms = match json_decode {
+        Some(Ok(value)) => value,
+        Some(Err(err)) => {
+            status = BenchmarkResultStatus::Failed;
+            degradation_notes.push(format!("JSON decode benchmark failed: {err}"));
+            0.0
+        }
+        None => 0.0,
+    };
+    let msgpack_encode = match msgpack_encode {
+        Ok(value) => value,
+        Err(err) => {
+            status = BenchmarkResultStatus::Failed;
+            degradation_notes.push(format!("MessagePack encode benchmark failed: {err}"));
+            TimedPayloadSamples::empty()
+        }
+    };
+    let msgpack_decode_ms = match msgpack_decode {
+        Some(Ok(value)) => value,
+        Some(Err(err)) => {
+            status = BenchmarkResultStatus::Failed;
+            degradation_notes.push(format!("MessagePack decode benchmark failed: {err}"));
+            0.0
+        }
+        None => 0.0,
+    };
+
+    let encode_speedup = ratio(json_encode.elapsed_ms, msgpack_encode.elapsed_ms);
+    let decode_speedup = ratio(json_decode_ms, msgpack_decode_ms);
+    let improvement_classification = classify_bridge_codec_improvement(encode_speedup, decode_speedup);
+    let target_5_10x_status = classify_bridge_codec_target_status(encode_speedup, decode_speedup);
+    if improvement_classification == "below_material" && status == BenchmarkResultStatus::Complete {
+        status = BenchmarkResultStatus::Degraded;
+        degradation_notes.push(
+            "Bridge codec benchmark did not meet material improvement threshold for both encode and decode."
+                .to_string(),
+        );
+    }
+
+    let bridge_codec = BridgeCodecBenchmarkMetrics {
+        sample_count_requested,
+        sample_count_completed: if status == BenchmarkResultStatus::Failed {
+            0
+        } else {
+            sample_count_requested
+        },
+        json_bytes: json_encode.bytes,
+        msgpack_bytes: msgpack_encode.bytes,
+        json_encode_ms: json_encode.elapsed_ms,
+        json_decode_ms,
+        msgpack_encode_ms: msgpack_encode.elapsed_ms,
+        msgpack_decode_ms,
+        encode_speedup,
+        decode_speedup,
+        payload_label: "embedding_1536_and_ast_256".to_string(),
+        selected_codec: "msgpack-rpc-v1".to_string(),
+        improvement_classification: improvement_classification.to_string(),
+        target_5_10x_status: target_5_10x_status.to_string(),
+    };
+    let result = BenchmarkResult {
+        metadata: BenchmarkRunMetadata {
+            run_id: format!("bridge-codec-{started}"),
+            benchmark_class: BenchmarkClass::BridgeCodec,
+            suite_id: suite_id.clone(),
+            started_at_unix_ms: started,
+            finished_at_unix_ms: finished,
+            engine_version: env!("CARGO_PKG_VERSION").to_string(),
+            build_profile: profile_name(),
+            host_os: std::env::consts::OS.to_string(),
+            host_arch: std::env::consts::ARCH.to_string(),
+            cpu_count: std::thread::available_parallelism()
+                .map(|count| count.get())
+                .unwrap_or(1),
+            corpus: corpus.clone(),
+            preparation,
+            baseline_run_ref: Some("json-rpc-v1".to_string()),
+            comparison_key: comparison_key.clone(),
+        },
+        status,
+        memory: MemoryMeasurement {
+            status: MemoryMeasurementStatus::NotMeasured,
+            peak_rss_bytes: None,
+            method: None,
+            scope: Some("bridge_codec_encode_decode".to_string()),
+            reason: Some("Peak RSS measurement is not instrumented for bridge codec benchmark.".to_string()),
+        },
+        comparison: BenchmarkComparison {
+            eligible: true,
+            baseline_run_ref: Some("json-rpc-v1".to_string()),
+            comparison_key,
+            reason: Some("Compares MessagePack encode/decode against JSON encode/decode for the same synthetic payload.".to_string()),
+        },
+        correctness: None,
+        index_timing: None,
+        query_latency: None,
+        graph_hydration: None,
+        bridge_codec: Some(bridge_codec),
+        degradation_notes,
+    };
+
+    let summary = BenchmarkSummary {
+        local_evidence_statement: "Bridge codec benchmark is local encode/decode evidence only; it does not prove end-to-end workflow latency.".to_string(),
+        corpus_summary: format!(
+            "{}@{} ({:?})",
+            corpus.label, corpus.revision_or_snapshot, corpus.kind
+        ),
+        environment_summary: format!(
+            "{}-{} build_profile={}",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            profile_name()
+        ),
+        degraded: matches!(result.status, BenchmarkResultStatus::Degraded),
+        result_count: 1,
+    };
+
+    BenchmarkSuiteArtifact {
+        schema_version: BENCHMARK_SCHEMA_VERSION,
+        suite_id,
+        generated_at_unix_ms: now_unix_ms(),
+        summary,
+        results: vec![result],
+    }
+}
+
+fn bridge_codec_payload() -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 9001,
+        "method": "query.buildEvidence",
+        "params": {
+            "query": "large bridge payload fixture",
+            "semanticVector": (0..1536).map(|index| (index as f64) / 1536.0).collect::<Vec<_>>(),
+            "ast": {
+                "kind": "module",
+                "children": (0..256).map(|index| serde_json::json!({
+                    "kind": "node",
+                    "index": index,
+                    "text": format!("synthetic_node_{index}"),
+                    "range": { "startLine": index + 1, "endLine": index + 1 }
+                })).collect::<Vec<_>>()
+            },
+            "evidence": {
+                "items": (0..128).map(|index| serde_json::json!({
+                    "filePath": format!("src/generated/file_{index}.ts"),
+                    "reason": "synthetic benchmark evidence",
+                    "snippet": "export function synthetic() { return true; }"
+                })).collect::<Vec<_>>()
+            }
+        }
+    })
+}
+
+#[derive(Debug, Clone)]
+struct TimedPayloadSamples {
+    bytes: u64,
+    payloads: Vec<Vec<u8>>,
+    elapsed_ms: f64,
+}
+
+impl TimedPayloadSamples {
+    fn empty() -> Self {
+        Self {
+            bytes: 0,
+            payloads: Vec::new(),
+            elapsed_ms: 0.0,
+        }
+    }
+}
+
+fn time_json_encode(payload: &serde_json::Value, sample_count: u32) -> Result<TimedPayloadSamples> {
+    let started = Instant::now();
+    let mut bytes = 0_u64;
+    let mut payloads = Vec::with_capacity(sample_count as usize);
+    for _ in 0..sample_count {
+        let encoded = serde_json::to_vec(payload).context("encode bridge payload as JSON")?;
+        bytes = encoded.len() as u64;
+        payloads.push(encoded);
+    }
+    Ok(TimedPayloadSamples {
+        bytes,
+        payloads,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+    })
+}
+
+fn time_json_decode(samples: &TimedPayloadSamples) -> Result<f64> {
+    let started = Instant::now();
+    for bytes in &samples.payloads {
+        let _: serde_json::Value = serde_json::from_slice(bytes).context("decode JSON bridge payload")?;
+    }
+    Ok(started.elapsed().as_secs_f64() * 1000.0)
+}
+
+fn time_msgpack_encode(payload: &serde_json::Value, sample_count: u32) -> Result<TimedPayloadSamples> {
+    let started = Instant::now();
+    let mut bytes = 0_u64;
+    let mut payloads = Vec::with_capacity(sample_count as usize);
+    for _ in 0..sample_count {
+        let encoded = rmp_serde::to_vec_named(payload).context("encode bridge payload as MessagePack")?;
+        bytes = encoded.len() as u64;
+        payloads.push(encoded);
+    }
+    Ok(TimedPayloadSamples {
+        bytes,
+        payloads,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+    })
+}
+
+fn time_msgpack_decode(samples: &TimedPayloadSamples) -> Result<f64> {
+    let started = Instant::now();
+    for bytes in &samples.payloads {
+        let _: serde_json::Value = rmp_serde::from_slice(bytes).context("decode MessagePack bridge payload")?;
+    }
+    Ok(started.elapsed().as_secs_f64() * 1000.0)
+}
+
+fn classify_bridge_codec_improvement(encode_speedup: f64, decode_speedup: f64) -> &'static str {
+    let weakest = encode_speedup.min(decode_speedup);
+    if weakest >= 5.0 {
+        "material_and_5x_target_met"
+    } else if weakest >= 1.5 {
+        "material_improvement"
+    } else {
+        "below_material"
+    }
+}
+
+fn classify_bridge_codec_target_status(encode_speedup: f64, decode_speedup: f64) -> &'static str {
+    let weakest = encode_speedup.min(decode_speedup);
+    if weakest >= 10.0 {
+        "exceeds_5_10x_target"
+    } else if weakest >= 5.0 {
+        "meets_5x_lower_bound"
+    } else if weakest >= 1.5 {
+        "material_but_below_5_10x_target"
+    } else {
+        "below_material_and_target"
+    }
+}
+
+fn ratio(baseline: f64, candidate: f64) -> f64 {
+    if candidate <= f64::EPSILON {
+        return 0.0;
+    }
+    baseline / candidate
 }
 
 #[derive(Debug, Clone)]
@@ -1234,6 +1569,7 @@ fn benchmark_class_label(class: BenchmarkClass) -> &'static str {
         BenchmarkClass::WarmQuery => "warm_query",
         BenchmarkClass::HydrateGraph => "hydrate_graph",
         BenchmarkClass::ParityBenchmark => "parity_benchmark",
+        BenchmarkClass::BridgeCodec => "bridge_codec",
     }
 }
 
@@ -1380,6 +1716,41 @@ export function run(): number {
             .iter()
             .any(|line| line.contains("class=hydrate_graph")));
         assert!(lines.iter().any(|line| line.contains("graph_hydration_ms")));
+    }
+
+    #[test]
+    fn bridge_codec_benchmark_classifies_material_improvement_without_hidden_codec_failures() {
+        let temp = tempdir().expect("temporary benchmark workspace should be created");
+        let response = run_benchmark(BenchmarkRunRequest {
+            class: BenchmarkClass::BridgeCodec,
+            workspace: temp.path().to_path_buf(),
+        })
+        .expect("bridge codec benchmark should run");
+
+        let result = &response.artifact.results[0];
+        assert_eq!(result.metadata.benchmark_class, BenchmarkClass::BridgeCodec);
+        let bridge = result
+            .bridge_codec
+            .as_ref()
+            .expect("bridge codec benchmark should include codec metrics");
+        assert_eq!(bridge.selected_codec, "msgpack-rpc-v1");
+        assert!(bridge.json_bytes > 0, "JSON bytes must not be hidden by defaulting failed serde output");
+        assert!(bridge.msgpack_bytes > 0, "MessagePack bytes must not be hidden by defaulting failed serde output");
+        assert!(matches!(
+            bridge.improvement_classification.as_str(),
+            "below_material" | "material_improvement" | "material_and_5x_target_met"
+        ));
+        assert!(matches!(
+            bridge.target_5_10x_status.as_str(),
+            "below_material_and_target"
+                | "material_but_below_5_10x_target"
+                | "meets_5x_lower_bound"
+                | "exceeds_5_10x_target"
+        ));
+
+        let lines = benchmark_summary_lines(&response.artifact);
+        assert!(lines.iter().any(|line| line.contains("improvement_class=")));
+        assert!(lines.iter().any(|line| line.contains("target_5_10x_status=")));
     }
 
     #[test]

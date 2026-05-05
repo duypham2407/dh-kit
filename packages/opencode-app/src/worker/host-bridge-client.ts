@@ -10,7 +10,9 @@ import {
   type BridgeInitializeSnapshot,
   type BridgeSessionDelegatedMethod,
   type BridgeSessionRunCommandRequest,
+  type BridgeTransportSnapshot,
 } from "../bridge/dh-jsonrpc-stdio-client.js";
+import { DEFAULT_BRIDGE_MAX_FRAME_BYTES, JSON_RPC_CODEC } from "../bridge/stdio-codec.js";
 import { JsonRpcPeerError, type WorkerJsonRpcPeer } from "./worker-jsonrpc-stdio.js";
 import { z } from "zod";
 
@@ -59,6 +61,7 @@ export class HostBridgeClient implements BridgeClient {
   private readonly engineVersion: string;
   private readonly protocolVersion: string;
   private readonly capabilities: BridgeInitializeCapabilities;
+  private readonly transport: BridgeTransportSnapshot;
   private nextSyntheticRequestId = 1;
 
   constructor(peer: WorkerJsonRpcPeer, options?: HostBridgeClientOptions) {
@@ -67,7 +70,8 @@ export class HostBridgeClient implements BridgeClient {
     this.engineName = options?.engineName ?? HOST_BACKED_BRIDGE_ENGINE_NAME;
     this.engineVersion = options?.engineVersion ?? "host-managed";
     this.protocolVersion = options?.protocolVersion ?? HOST_BACKED_BRIDGE_PROTOCOL_VERSION;
-    this.capabilities = options?.capabilities ?? defaultHostBridgeCapabilities(this.protocolVersion);
+    this.transport = options?.capabilities?.transport ?? defaultHostBridgeTransport();
+    this.capabilities = options?.capabilities ?? defaultHostBridgeCapabilities(this.protocolVersion, this.transport);
   }
 
   async runAskQuery(input: BridgeAskRequest): Promise<BridgeAskResult> {
@@ -111,6 +115,7 @@ export class HostBridgeClient implements BridgeClient {
       engineVersion: this.engineVersion,
       protocolVersion: this.protocolVersion,
       capabilities: this.capabilities,
+      transport: this.transport,
     };
   }
 
@@ -140,7 +145,20 @@ export function createHostBridgeClient(
   return new HostBridgeClient(peer, options);
 }
 
-function defaultHostBridgeCapabilities(protocolVersion: string): BridgeInitializeCapabilities {
+function defaultHostBridgeTransport(): BridgeTransportSnapshot {
+  return {
+    selectedCodec: JSON_RPC_CODEC,
+    selectedMode: "json-fallback",
+    fallbackReason: "host_bridge_worker_peer_uses_json_rpc",
+    maxFrameBytes: DEFAULT_BRIDGE_MAX_FRAME_BYTES,
+    codecVersion: 1,
+  };
+}
+
+function defaultHostBridgeCapabilities(
+  protocolVersion: string,
+  transport: BridgeTransportSnapshot,
+): BridgeInitializeCapabilities {
   return {
     protocolVersion,
     methods: HOST_BACKED_BRIDGE_SUPPORTED_METHODS,
@@ -163,6 +181,7 @@ function defaultHostBridgeCapabilities(protocolVersion: string): BridgeInitializ
         parserBacked: false,
       },
     ],
+    transport,
   };
 }
 

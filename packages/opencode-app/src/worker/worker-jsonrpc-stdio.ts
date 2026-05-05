@@ -1,4 +1,14 @@
 import type { Readable, Writable } from "node:stream";
+import {
+  DEFAULT_BRIDGE_MAX_FRAME_BYTES,
+  decodeRpcBody,
+  encodeRpcFrame,
+  findFrameHeaderEnd,
+  JSON_RPC_CODEC,
+  parseFrameHeaders,
+  validateBridgeMaxFrameBytes,
+  type BridgeRpcCodec,
+} from "../bridge/stdio-codec.js";
 
 export type JsonRpcId = number | string;
 
@@ -48,6 +58,11 @@ type RequestHandler = (params: unknown, request: JsonRpcRequest) => Promise<unkn
 type NotificationHandler = (params: unknown, notification: JsonRpcNotification) => Promise<void> | void;
 type AfterResponseHandler = (request: JsonRpcRequest) => Promise<void> | void;
 
+export type WorkerJsonRpcPeerCodecOptions = {
+  codec?: BridgeRpcCodec;
+  maxFrameBytes?: number;
+};
+
 export class JsonRpcResponseError extends Error {
   readonly code: number;
   readonly data?: unknown;
@@ -87,12 +102,15 @@ export class WorkerJsonRpcPeer {
   private readonly output: Writable;
   private readonly requestTimeoutMs: number;
   private readonly onProtocolError?: (error: Error) => void;
+  private readonly codec: BridgeRpcCodec;
+  private readonly maxFrameBytes: number;
   private readonly requestHandlers = new Map<string, RequestHandler>();
   private readonly notificationHandlers = new Map<string, NotificationHandler>();
   private readonly afterResponseHandlers = new Map<string, AfterResponseHandler>();
   private readonly pending = new Map<JsonRpcId, PendingRequest>();
 
   private readBuffer = Buffer.alloc(0);
+  private expectedFrameLength: number | null = null;
   private nextRequestId = 1;
   private started = false;
   private closed = false;
@@ -102,11 +120,15 @@ export class WorkerJsonRpcPeer {
     output: Writable;
     requestTimeoutMs?: number;
     onProtocolError?: (error: Error) => void;
+    codec?: BridgeRpcCodec;
+    maxFrameBytes?: number;
   }) {
     this.input = input.input;
     this.output = input.output;
     this.requestTimeoutMs = input.requestTimeoutMs ?? 10_000;
     this.onProtocolError = input.onProtocolError;
+    this.codec = input.codec ?? JSON_RPC_CODEC;
+    this.maxFrameBytes = validateBridgeMaxFrameBytes(input.maxFrameBytes ?? DEFAULT_BRIDGE_MAX_FRAME_BYTES);
   }
 
   start(): void {
@@ -133,6 +155,12 @@ export class WorkerJsonRpcPeer {
     });
 
     this.input.on("end", () => {
+      if (this.expectedFrameLength !== null || this.readBuffer.length > 0) {
+        this.handleProtocolError(new Error("JSON-RPC input stream ended with a truncated frame."));
+        this.readBuffer = Buffer.alloc(0);
+        this.expectedFrameLength = null;
+      }
+
       this.failAllPending(new JsonRpcPeerError({
         kind: "closed",
         message: "JSON-RPC input stream ended.",
@@ -227,15 +255,24 @@ export class WorkerJsonRpcPeer {
 
   private drainFrames(): void {
     while (true) {
-      const headerEnd = findHeaderEnd(this.readBuffer);
+      const headerEnd = findFrameHeaderEnd(this.readBuffer);
       if (headerEnd === null) {
         return;
       }
 
       const header = this.readBuffer.subarray(0, headerEnd).toString("ascii");
-      const contentLength = parseContentLength(header);
-      if (contentLength === null || contentLength < 0) {
-        this.handleProtocolError(new Error("JSON-RPC frame is missing a valid Content-Length header."));
+      const { contentLength, malformedContentLength } = parseFrameHeaders(header);
+      if (contentLength === null || contentLength < 0 || malformedContentLength) {
+        this.handleProtocolError(new Error(
+          malformedContentLength
+            ? "JSON-RPC frame has a malformed Content-Length header."
+            : "JSON-RPC frame is missing a valid Content-Length header.",
+        ));
+        this.readBuffer = Buffer.alloc(0);
+        return;
+      }
+      if (contentLength > this.maxFrameBytes) {
+        this.handleProtocolError(new Error(`JSON-RPC frame is ${contentLength} bytes, exceeding maxFrameBytes=${this.maxFrameBytes}.`));
         this.readBuffer = Buffer.alloc(0);
         return;
       }
@@ -243,17 +280,19 @@ export class WorkerJsonRpcPeer {
       const bodyStart = headerEnd + 4;
       const frameLength = bodyStart + contentLength;
       if (this.readBuffer.length < frameLength) {
+        this.expectedFrameLength = frameLength;
         return;
       }
+      this.expectedFrameLength = null;
 
-      const body = this.readBuffer.subarray(bodyStart, frameLength).toString("utf8");
+      const body = this.readBuffer.subarray(bodyStart, frameLength);
       this.readBuffer = this.readBuffer.subarray(frameLength);
 
       let parsed: JsonRpcIncomingMessage;
       try {
-        parsed = JSON.parse(body) as JsonRpcIncomingMessage;
+        parsed = decodeRpcBody(this.codec, body, this.maxFrameBytes) as JsonRpcIncomingMessage;
       } catch (error) {
-        this.handleProtocolError(new Error(`JSON-RPC payload is not valid JSON: ${(error as Error).message}`));
+        this.handleProtocolError(new Error(`JSON-RPC payload could not be decoded as ${this.codec}: ${(error as Error).message}`));
         continue;
       }
 
@@ -354,11 +393,15 @@ export class WorkerJsonRpcPeer {
   }
 
   private writeMessage(message: JsonRpcRequest | JsonRpcNotification | JsonRpcResponse): Promise<void> {
-    const body = JSON.stringify(message);
-    const frame = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
+    let frame: Buffer;
+    try {
+      frame = encodeRpcFrame(this.codec, message, this.maxFrameBytes);
+    } catch (error) {
+      return Promise.reject(error);
+    }
 
     return new Promise<void>((resolve, reject) => {
-      this.output.write(frame, "utf8", (error?: Error | null) => {
+      this.output.write(frame, (error?: Error | null) => {
         if (error) {
           reject(error);
           return;
@@ -383,36 +426,6 @@ export class WorkerJsonRpcPeer {
       message: error.message,
     }));
   }
-}
-
-function findHeaderEnd(buffer: Buffer): number | null {
-  for (let index = 0; index <= buffer.length - 4; index += 1) {
-    if (
-      buffer[index] === 13
-      && buffer[index + 1] === 10
-      && buffer[index + 2] === 13
-      && buffer[index + 3] === 10
-    ) {
-      return index;
-    }
-  }
-  return null;
-}
-
-function parseContentLength(header: string): number | null {
-  const lines = header.split("\r\n");
-  for (const line of lines) {
-    const [name, ...rest] = line.split(":");
-    if (!name || rest.length === 0) {
-      continue;
-    }
-    if (name.trim().toLowerCase() !== "content-length") {
-      continue;
-    }
-    const parsed = Number.parseInt(rest.join(":").trim(), 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
 }
 
 function isJsonRpcMessage(message: JsonRpcIncomingMessage): boolean {

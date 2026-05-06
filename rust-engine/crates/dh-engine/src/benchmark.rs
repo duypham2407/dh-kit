@@ -2,14 +2,16 @@ use anyhow::{Context, Result};
 use dh_graph::HydratedGraphProjection;
 use dh_indexer::parity::{ParityCaseResult, ParityHarness};
 use dh_indexer::{IndexReport, IndexWorkspaceRequest, Indexer, IndexerApi};
-use dh_query::{FindSymbolQuery, QueryEngine};
-use dh_storage::{Database, SymbolRepository};
+use dh_query::{FindSymbolQuery, QueryEngine, SemanticSearchQuery};
+use dh_storage::{
+    ChunkRepository, Database, EmbeddingRepository, GraphRepository, SymbolRepository,
+};
 use dh_types::{
     BenchmarkClass, BenchmarkComparison, BenchmarkCorpusKind, BenchmarkCorpusRef,
     BenchmarkPreparationState, BenchmarkResult, BenchmarkResultStatus, BenchmarkRunMetadata,
-    BenchmarkSuiteArtifact, BenchmarkSummary, BridgeCodecBenchmarkMetrics, GraphHydrationBenchmarkMetrics,
-    IndexBenchmarkMetrics, MemoryMeasurement, MemoryMeasurementStatus, ParityBenchmarkMetrics,
-    QueryLatencyMetrics, WorkspaceId,
+    BenchmarkSuiteArtifact, BenchmarkSummary, BridgeCodecBenchmarkMetrics,
+    GraphHydrationBenchmarkMetrics, IndexBenchmarkMetrics, MemoryMeasurement,
+    MemoryMeasurementStatus, ParityBenchmarkMetrics, QueryLatencyMetrics, WorkspaceId,
 };
 use serde::Serialize;
 use std::collections::HashSet;
@@ -532,6 +534,12 @@ fn run_query_benchmark(
             "query benchmark requires indexed symbols; no benchmarkable symbol cases were found"
         );
     }
+    let semantic_vectors_seeded = seed_benchmark_semantic_vectors(db, &benchmark_set.cases)?;
+    let semantic_probe = if semantic_vectors_seeded > 0 {
+        run_benchmark_semantic_probe(db, &benchmark_set.cases)?
+    } else {
+        None
+    };
 
     let run_id = format!("query-benchmark-{}", now_unix_ms());
     let suite_id = format!("benchmark-suite-{run_id}");
@@ -587,10 +595,13 @@ fn run_query_benchmark(
         root_path: workspace.to_string_lossy().to_string(),
         query_set_label: Some(query_set_label.clone()),
         mutation_set_label: None,
-        notes: Some(
-            "Bounded Rust query-engine latency only; does not measure CLI startup, bridge, or LLM latency."
-                .to_string(),
-        ),
+        notes: Some(format!(
+            "Bounded Rust query-engine latency only; does not measure CLI startup, bridge, or LLM latency. Semantic vector probe seeded {semantic_vectors_seeded} local vectors and observed backend={}",
+            semantic_probe
+                .as_ref()
+                .map(|result| result.backend.as_str())
+                .unwrap_or("not_available")
+        )),
     };
 
     let preparation = BenchmarkPreparationState {
@@ -611,6 +622,21 @@ fn run_query_benchmark(
                 .to_string(),
             "This benchmark is local evidence only and does not imply end-to-end answer latency guarantees."
                 .to_string(),
+            format!(
+                "Semantic vector probe backend={}, degraded={}, matches={}",
+                semantic_probe
+                    .as_ref()
+                    .map(|result| result.backend.as_str())
+                    .unwrap_or("not_available"),
+                semantic_probe
+                    .as_ref()
+                    .map(|result| result.degraded)
+                    .unwrap_or(false),
+                semantic_probe
+                    .as_ref()
+                    .map(|result| result.matches.len())
+                    .unwrap_or(0)
+            ),
         ],
     };
 
@@ -668,10 +694,38 @@ fn run_query_benchmark(
         }),
         graph_hydration: None,
         bridge_codec: None,
-        degradation_notes: if sample_count_completed == 0 {
-            vec!["No completed query latency samples were captured.".to_string()]
-        } else {
-            Vec::new()
+        degradation_notes: {
+            let mut notes = Vec::new();
+            if sample_count_completed == 0 {
+                notes.push("No completed query latency samples were captured.".to_string());
+            }
+            if semantic_vectors_seeded == 0 {
+                notes.push(
+                    "Semantic vector probe could not seed vectors because benchmark symbols had no chunks."
+                        .to_string(),
+                );
+            }
+            if semantic_probe
+                .as_ref()
+                .is_some_and(|result| result.degraded || result.backend != "vector_db")
+            {
+                notes.push(format!(
+                    "Semantic vector probe did not use healthy vector_db backend: backend={} degraded={} reason={}",
+                    semantic_probe
+                        .as_ref()
+                        .map(|result| result.backend.as_str())
+                        .unwrap_or("not_available"),
+                    semantic_probe
+                        .as_ref()
+                        .map(|result| result.degraded)
+                        .unwrap_or(false),
+                    semantic_probe
+                        .as_ref()
+                        .and_then(|result| result.degraded_reason.as_deref())
+                        .unwrap_or("none")
+                ));
+            }
+            notes
         },
     };
 
@@ -1075,7 +1129,10 @@ fn run_bridge_codec_benchmark(workspace: &Path) -> BenchmarkSuiteArtifact {
     let sample_count_requested = 40_u32;
 
     let json_encode = time_json_encode(&payload, sample_count_requested);
-    let json_decode = json_encode.as_ref().ok().map(|samples| time_json_decode(samples));
+    let json_decode = json_encode
+        .as_ref()
+        .ok()
+        .map(|samples| time_json_decode(samples));
     let msgpack_encode = time_msgpack_encode(&payload, sample_count_requested);
     let msgpack_decode = msgpack_encode
         .as_ref()
@@ -1123,7 +1180,8 @@ fn run_bridge_codec_benchmark(workspace: &Path) -> BenchmarkSuiteArtifact {
 
     let encode_speedup = ratio(json_encode.elapsed_ms, msgpack_encode.elapsed_ms);
     let decode_speedup = ratio(json_decode_ms, msgpack_decode_ms);
-    let improvement_classification = classify_bridge_codec_improvement(encode_speedup, decode_speedup);
+    let improvement_classification =
+        classify_bridge_codec_improvement(encode_speedup, decode_speedup);
     let target_5_10x_status = classify_bridge_codec_target_status(encode_speedup, decode_speedup);
     if improvement_classification == "below_material" && status == BenchmarkResultStatus::Complete {
         status = BenchmarkResultStatus::Degraded;
@@ -1283,17 +1341,22 @@ fn time_json_encode(payload: &serde_json::Value, sample_count: u32) -> Result<Ti
 fn time_json_decode(samples: &TimedPayloadSamples) -> Result<f64> {
     let started = Instant::now();
     for bytes in &samples.payloads {
-        let _: serde_json::Value = serde_json::from_slice(bytes).context("decode JSON bridge payload")?;
+        let _: serde_json::Value =
+            serde_json::from_slice(bytes).context("decode JSON bridge payload")?;
     }
     Ok(started.elapsed().as_secs_f64() * 1000.0)
 }
 
-fn time_msgpack_encode(payload: &serde_json::Value, sample_count: u32) -> Result<TimedPayloadSamples> {
+fn time_msgpack_encode(
+    payload: &serde_json::Value,
+    sample_count: u32,
+) -> Result<TimedPayloadSamples> {
     let started = Instant::now();
     let mut bytes = 0_u64;
     let mut payloads = Vec::with_capacity(sample_count as usize);
     for _ in 0..sample_count {
-        let encoded = rmp_serde::to_vec_named(payload).context("encode bridge payload as MessagePack")?;
+        let encoded =
+            rmp_serde::to_vec_named(payload).context("encode bridge payload as MessagePack")?;
         bytes = encoded.len() as u64;
         payloads.push(encoded);
     }
@@ -1307,7 +1370,8 @@ fn time_msgpack_encode(payload: &serde_json::Value, sample_count: u32) -> Result
 fn time_msgpack_decode(samples: &TimedPayloadSamples) -> Result<f64> {
     let started = Instant::now();
     for bytes in &samples.payloads {
-        let _: serde_json::Value = rmp_serde::from_slice(bytes).context("decode MessagePack bridge payload")?;
+        let _: serde_json::Value =
+            rmp_serde::from_slice(bytes).context("decode MessagePack bridge payload")?;
     }
     Ok(started.elapsed().as_secs_f64() * 1000.0)
 }
@@ -1346,6 +1410,7 @@ fn ratio(baseline: f64, candidate: f64) -> f64 {
 #[derive(Debug, Clone)]
 struct QueryBenchmarkCase {
     symbol_name: String,
+    semantic_chunk_id: Option<dh_types::ChunkId>,
 }
 
 #[derive(Debug, Clone)]
@@ -1368,8 +1433,15 @@ fn benchmark_query_set(db: &Database) -> Result<QueryBenchmarkSet> {
             continue;
         }
 
+        let semantic_chunk_id = db
+            .find_chunks_by_file(symbol.file_id)?
+            .into_iter()
+            .find(|chunk| chunk.symbol_id == Some(symbol.id) || chunk.title == symbol.name)
+            .map(|chunk| chunk.id);
+
         cases.push(QueryBenchmarkCase {
             symbol_name: symbol.name,
+            semantic_chunk_id,
         });
         if cases.len() >= 5 {
             break;
@@ -1381,6 +1453,64 @@ fn benchmark_query_set(db: &Database) -> Result<QueryBenchmarkSet> {
         sample_count_requested: 5,
         cases,
     })
+}
+
+fn seed_benchmark_semantic_vectors(db: &Database, cases: &[QueryBenchmarkCase]) -> Result<usize> {
+    let mut seeded = 0;
+    for (index, query_case) in cases.iter().enumerate() {
+        let Some(chunk_id) = query_case.semantic_chunk_id else {
+            continue;
+        };
+        let Some(chunk) = db.find_chunk_by_id(1, chunk_id)? else {
+            continue;
+        };
+        let vector = if index % 2 == 0 {
+            [1.0, 0.0, 0.0]
+        } else {
+            [0.0, 1.0, 0.0]
+        };
+        db.upsert_embedding(
+            chunk_id,
+            "benchmark-semantic",
+            3,
+            &chunk.content_hash,
+            &vector,
+        )?;
+        seeded += 1;
+    }
+    Ok(seeded)
+}
+
+fn run_benchmark_semantic_probe(
+    db: &Database,
+    cases: &[QueryBenchmarkCase],
+) -> Result<Option<dh_query::SemanticSearchResult>> {
+    let Some(case) = cases.iter().find(|case| case.semantic_chunk_id.is_some()) else {
+        return Ok(None);
+    };
+    let Some(chunk_id) = case.semantic_chunk_id else {
+        return Ok(None);
+    };
+    let query_vector = if cases
+        .iter()
+        .position(|candidate| candidate.semantic_chunk_id == Some(chunk_id))
+        .unwrap_or_default()
+        % 2
+        == 0
+    {
+        vec![1.0, 0.0, 0.0]
+    } else {
+        vec![0.0, 1.0, 0.0]
+    };
+
+    db.semantic_search(SemanticSearchQuery {
+        workspace_id: 1,
+        model: "benchmark-semantic".to_string(),
+        query_vector,
+        limit: 5,
+        min_score: 0.0,
+    })
+    .map(Some)
 }
 
 fn percentile(values: &[f64], percentile: f64) -> f64 {
@@ -1734,8 +1864,14 @@ export function run(): number {
             .as_ref()
             .expect("bridge codec benchmark should include codec metrics");
         assert_eq!(bridge.selected_codec, "msgpack-rpc-v1");
-        assert!(bridge.json_bytes > 0, "JSON bytes must not be hidden by defaulting failed serde output");
-        assert!(bridge.msgpack_bytes > 0, "MessagePack bytes must not be hidden by defaulting failed serde output");
+        assert!(
+            bridge.json_bytes > 0,
+            "JSON bytes must not be hidden by defaulting failed serde output"
+        );
+        assert!(
+            bridge.msgpack_bytes > 0,
+            "MessagePack bytes must not be hidden by defaulting failed serde output"
+        );
         assert!(matches!(
             bridge.improvement_classification.as_str(),
             "below_material" | "material_improvement" | "material_and_5x_target_met"
@@ -1750,7 +1886,9 @@ export function run(): number {
 
         let lines = benchmark_summary_lines(&response.artifact);
         assert!(lines.iter().any(|line| line.contains("improvement_class=")));
-        assert!(lines.iter().any(|line| line.contains("target_5_10x_status=")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("target_5_10x_status=")));
     }
 
     #[test]

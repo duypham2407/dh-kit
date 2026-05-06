@@ -1,7 +1,7 @@
 use dh_indexer::{IndexPathsRequest, IndexWorkspaceRequest, Indexer, IndexerApi};
 use dh_storage::{
-    ChunkRepository, Database, FileRepository, GraphEdgeRepository, IndexStateRepository,
-    SymbolRepository,
+    ChunkRepository, Database, EmbeddingRepository, FileRepository, GraphEdgeRepository,
+    IndexStateRepository, SymbolRepository, VectorIndexRepository,
 };
 use dh_types::{EdgeKind, FreshnessReason, FreshnessState, NodeId, ParseStatus};
 use std::collections::HashSet;
@@ -472,6 +472,91 @@ fn hash_read_failure_marks_existing_file_failed_and_clears_facts() {
             .expect("service chunks lookup after failure should not fail")
             .is_empty(),
         "stale chunks must be deleted when hash read fails"
+    );
+}
+
+#[test]
+fn vector_index_does_not_retain_stale_chunk_after_file_reindex_and_delete() {
+    let fixture = TempDir::new().expect("create temp fixture workspace");
+    let workspace = fixture.path();
+
+    seed_fixture_project(workspace);
+
+    let db_path = workspace.join("dh-index.db");
+    let indexer = Indexer::new(db_path.clone());
+    indexer
+        .index_workspace(IndexWorkspaceRequest {
+            roots: vec![workspace.to_path_buf()],
+            force_full: false,
+            max_files: None,
+            include_embeddings: false,
+        })
+        .expect("initial index should succeed");
+
+    let db = Database::new(&db_path).expect("open db");
+    db.initialize().expect("initialize db");
+    let util_file = db
+        .get_file_by_path(1, "src/util.ts")
+        .expect("util lookup should not fail")
+        .expect("util should exist");
+    let util_chunk = db
+        .find_chunks_by_file(util_file.id)
+        .expect("chunk lookup should not fail")
+        .into_iter()
+        .next()
+        .expect("util should have at least one chunk");
+
+    db.upsert_embedding(
+        util_chunk.id,
+        "model-a",
+        3,
+        &util_chunk.content_hash,
+        &[1.0, 0.0, 0.0],
+    )
+    .expect("seed util embedding");
+    assert_eq!(
+        db.hydrate_vector_index(1, "model-a", 3)
+            .expect("hydrate vector index"),
+        1
+    );
+
+    fs::write(
+        workspace.join("src/util.ts"),
+        "export function helper(v: number): number {\n  return v + 10;\n}\n",
+    )
+    .expect("rewrite util.ts");
+    indexer
+        .index_workspace(IndexWorkspaceRequest {
+            roots: vec![workspace.to_path_buf()],
+            force_full: false,
+            max_files: None,
+            include_embeddings: false,
+        })
+        .expect("reindex after util rewrite should succeed");
+
+    let after_update = db
+        .semantic_vector_search(1, "model-a", 3, &[1.0, 0.0, 0.0], 10, 0.0)
+        .expect("semantic search after update should not fail");
+    assert!(
+        after_update.records.is_empty(),
+        "old vector record must not survive a chunk content-hash change"
+    );
+
+    fs::remove_file(workspace.join("src/util.ts")).expect("remove util.ts");
+    indexer
+        .index_workspace(IndexWorkspaceRequest {
+            roots: vec![workspace.to_path_buf()],
+            force_full: false,
+            max_files: None,
+            include_embeddings: false,
+        })
+        .expect("reindex after util deletion should succeed");
+    let after_delete = db
+        .semantic_vector_search(1, "model-a", 3, &[1.0, 0.0, 0.0], 10, 0.0)
+        .expect("semantic search after delete should not fail");
+    assert!(
+        after_delete.records.is_empty(),
+        "old vector record must not survive file deletion"
     );
 }
 

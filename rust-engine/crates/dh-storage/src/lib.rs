@@ -1,6 +1,6 @@
 //! SQLite storage layer for DH index facts and runtime state.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use dh_types::{
     AgentRole, Chunk, ChunkId, EmbeddingRecord, EmbeddingStatus, ExecutionEnvelope, File, FileId,
     FreshnessReason, FreshnessState, GateStatus, HookDecision, HookInvocationLog, HookName,
@@ -9,12 +9,15 @@ use dh_types::{
     WorkflowLane, WorkflowStageState, WorkspaceId,
 };
 
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{ffi::sqlite3_auto_extension, params, Connection, OptionalExtension, Transaction};
+use std::sync::Once;
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, warn};
 
 #[allow(dead_code)]
 const SCHEMA_VERSION: u32 = 1;
+const VECTOR_INDEX_TABLE_PREFIX: &str = "vector_index_vec0";
+static SQLITE_VEC_INIT: Once = Once::new();
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -38,6 +41,7 @@ pub struct FreshnessStateCounts {
 
 impl Database {
     pub fn new(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        register_sqlite_vec_extension();
         let conn = Connection::open(path).context("open sqlite database")?;
         Ok(Self { conn })
     }
@@ -45,6 +49,7 @@ impl Database {
     pub fn initialize(&self) -> Result<()> {
         self.apply_pragmas()?;
         self.create_schema()?;
+        self.ensure_vector_embedding_schema()?;
         self.ensure_files_freshness_columns()?;
         self.create_indexes()?;
         self.create_fts()?;
@@ -192,12 +197,24 @@ impl Database {
             );
 
             CREATE TABLE IF NOT EXISTS embeddings (
-              chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+              chunk_id INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
               model TEXT NOT NULL,
               dimensions INTEGER NOT NULL,
               content_hash TEXT NOT NULL,
               vector BLOB NOT NULL,
-              created_at_unix_ms INTEGER NOT NULL
+              created_at_unix_ms INTEGER NOT NULL,
+              PRIMARY KEY(chunk_id, model, dimensions)
+            );
+
+            CREATE TABLE IF NOT EXISTS vector_index (
+              chunk_id INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+              workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+              model TEXT NOT NULL,
+              dimensions INTEGER NOT NULL,
+              content_hash TEXT NOT NULL,
+              vector BLOB NOT NULL,
+              updated_at_unix_ms INTEGER NOT NULL,
+              PRIMARY KEY(chunk_id, model, dimensions)
             );
 
             CREATE TABLE IF NOT EXISTS embedding_jobs (
@@ -326,6 +343,7 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_chunks_workspace_kind ON chunks(workspace_id, kind);
 
             CREATE INDEX IF NOT EXISTS idx_embedding_jobs_status ON embedding_jobs(status, updated_at_unix_ms);
+            CREATE INDEX IF NOT EXISTS idx_vector_index_scope ON vector_index(workspace_id, model, dimensions);
             CREATE INDEX IF NOT EXISTS idx_index_runs_workspace_status ON index_runs(workspace_id, status);
 
             CREATE INDEX IF NOT EXISTS idx_sessions_repo ON sessions(repo_root);
@@ -381,6 +399,100 @@ impl Database {
 
         Ok(())
     }
+
+    fn ensure_vector_embedding_schema(&self) -> Result<()> {
+        self.ensure_composite_embedding_table(
+            "embeddings",
+            "created_at_unix_ms",
+            "CREATE TABLE embeddings_new (
+              chunk_id INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+              model TEXT NOT NULL,
+              dimensions INTEGER NOT NULL,
+              content_hash TEXT NOT NULL,
+              vector BLOB NOT NULL,
+              created_at_unix_ms INTEGER NOT NULL,
+              PRIMARY KEY(chunk_id, model, dimensions)
+            )",
+            "INSERT OR REPLACE INTO embeddings_new (chunk_id, model, dimensions, content_hash, vector, created_at_unix_ms)
+             SELECT chunk_id, model, dimensions, content_hash, vector, created_at_unix_ms FROM embeddings",
+        )?;
+        self.ensure_composite_embedding_table(
+            "vector_index",
+            "updated_at_unix_ms",
+            "CREATE TABLE vector_index_new (
+              chunk_id INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+              workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+              model TEXT NOT NULL,
+              dimensions INTEGER NOT NULL,
+              content_hash TEXT NOT NULL,
+              vector BLOB NOT NULL,
+              updated_at_unix_ms INTEGER NOT NULL,
+              PRIMARY KEY(chunk_id, model, dimensions)
+            )",
+            "INSERT OR REPLACE INTO vector_index_new (chunk_id, workspace_id, model, dimensions, content_hash, vector, updated_at_unix_ms)
+             SELECT chunk_id, workspace_id, model, dimensions, content_hash, vector, updated_at_unix_ms FROM vector_index",
+        )?;
+        Ok(())
+    }
+
+    fn ensure_composite_embedding_table(
+        &self,
+        table_name: &str,
+        timestamp_column: &str,
+        create_sql: &str,
+        copy_sql: &str,
+    ) -> Result<()> {
+        let primary_key_columns = table_primary_key_columns(&self.conn, table_name)?;
+        if primary_key_columns == ["chunk_id", "model", "dimensions"] {
+            return Ok(());
+        }
+
+        let temporary_table = format!("{table_name}_new");
+        self.conn.execute_batch(&format!(
+            "DROP TABLE IF EXISTS {temporary_table};\n{create_sql};"
+        ))?;
+        self.conn.execute(copy_sql, [])?;
+        self.conn.execute_batch(&format!(
+            "DROP TABLE {table_name};\nALTER TABLE {temporary_table} RENAME TO {table_name};"
+        ))?;
+        info!(
+            table = table_name,
+            key = "chunk_id,model,dimensions",
+            timestamp_column,
+            "migrated vector storage table to model/dimension isolated primary key"
+        );
+        Ok(())
+    }
+}
+
+fn table_primary_key_columns(conn: &Connection, table_name: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table_name})"))?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
+    })?;
+    let mut pk_columns = Vec::new();
+    for row in rows {
+        let (name, ordinal) = row?;
+        if ordinal > 0 {
+            pk_columns.push((ordinal, name));
+        }
+    }
+    pk_columns.sort_by_key(|(ordinal, _)| *ordinal);
+    Ok(pk_columns.into_iter().map(|(_, name)| name).collect())
+}
+
+fn register_sqlite_vec_extension() {
+    SQLITE_VEC_INIT.call_once(|| {
+        // SAFETY: sqlite_vec::sqlite3_vec_init is the sqlite-vec extension entrypoint with
+        // static program lifetime. sqlite3_auto_extension stores the function pointer so every
+        // subsequently opened SQLite connection can initialize the extension. This follows the
+        // sqlite-vec Rust integration contract and does not dereference application-owned data.
+        unsafe {
+            sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            )));
+        }
+    });
 }
 
 pub trait FileRepository {
@@ -521,7 +633,8 @@ pub trait IndexStateRepository {
 /// Trait for storing and retrieving embedding vectors.
 pub trait EmbeddingRepository {
     /// Upsert a vector for a chunk. If a record already exists for the same
-    /// (chunk_id, model, content_hash) triple the call is a no-op.
+    /// (chunk_id, model, dimensions) triple it is replaced with the current
+    /// chunk content hash and vector payload.
     fn upsert_embedding(
         &self,
         chunk_id: ChunkId,
@@ -537,6 +650,83 @@ pub trait EmbeddingRepository {
 
     /// Delete the embedding for a chunk (e.g. when the chunk is re-indexed).
     fn delete_embedding(&self, chunk_id: ChunkId) -> Result<()>;
+
+    /// Delete the embedding for a chunk/model/dimension scope while leaving
+    /// embeddings from other models or dimensions intact.
+    fn delete_embedding_for_model(
+        &self,
+        chunk_id: ChunkId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<()>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VectorSearchBackend {
+    VectorDb,
+    SqliteScan,
+}
+
+impl VectorSearchBackend {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::VectorDb => "vector_db",
+            Self::SqliteScan => "sqlite_scan",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VectorSearchRecord {
+    pub chunk_id: ChunkId,
+    pub score: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct VectorSearchOutcome {
+    pub records: Vec<VectorSearchRecord>,
+    pub backend: VectorSearchBackend,
+    pub degraded: bool,
+    pub degraded_reason: Option<String>,
+    pub scanned_records: usize,
+}
+
+pub trait VectorIndexRepository {
+    fn vector_backend_status(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<VectorBackendStatus>;
+
+    fn hydrate_vector_index(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<usize>;
+
+    fn semantic_vector_search(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+        query_vector: &[f32],
+        limit: usize,
+        min_score: f32,
+    ) -> Result<VectorSearchOutcome>;
+
+    fn delete_vector_index_record(&self, chunk_id: ChunkId) -> Result<usize>;
+
+    fn prune_stale_vector_records(&self) -> Result<usize>;
+}
+
+#[derive(Debug, Clone)]
+pub struct VectorBackendStatus {
+    pub backend: VectorSearchBackend,
+    pub healthy: bool,
+    pub degraded_reason: Option<String>,
+    pub indexed_records: usize,
 }
 
 impl EmbeddingRepository for Database {
@@ -548,7 +738,7 @@ impl EmbeddingRepository for Database {
         content_hash: &str,
         vector: &[f32],
     ) -> Result<()> {
-        let blob: Vec<u8> = vector.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let blob = vector_to_blob(vector);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -556,14 +746,13 @@ impl EmbeddingRepository for Database {
         self.conn.execute(
             "INSERT INTO embeddings (chunk_id, model, dimensions, content_hash, vector, created_at_unix_ms)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(chunk_id) DO UPDATE SET
-               model = excluded.model,
-               dimensions = excluded.dimensions,
+             ON CONFLICT(chunk_id, model, dimensions) DO UPDATE SET
                content_hash = excluded.content_hash,
                vector = excluded.vector,
                created_at_unix_ms = excluded.created_at_unix_ms",
             params![chunk_id, model, dimensions as i64, content_hash, blob, now],
         )?;
+        self.upsert_vector_index_record(chunk_id, model, dimensions, content_hash, vector)?;
         Ok(())
     }
 
@@ -587,10 +776,7 @@ impl EmbeddingRepository for Database {
             .filter_map(|r| r.ok())
             .map(
                 |(chunk_id, model, dimensions, content_hash, blob, created_at_unix_ms)| {
-                    let vector: Vec<f32> = blob
-                        .chunks_exact(4)
-                        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                        .collect();
+                    let vector = blob_to_vector(&blob);
                     EmbeddingRecord {
                         chunk_id,
                         model,
@@ -610,8 +796,752 @@ impl EmbeddingRepository for Database {
             "DELETE FROM embeddings WHERE chunk_id = ?1",
             params![chunk_id],
         )?;
+        self.delete_vector_index_record_by_chunk(chunk_id)?;
         Ok(())
     }
+
+    fn delete_embedding_for_model(
+        &self,
+        chunk_id: ChunkId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM embeddings WHERE chunk_id = ?1 AND model = ?2 AND dimensions = ?3",
+            params![chunk_id, model, dimensions as i64],
+        )?;
+        self.delete_vector_index_record_by_scope(chunk_id, model, dimensions)?;
+        Ok(())
+    }
+}
+
+impl VectorIndexRepository for Database {
+    fn vector_backend_status(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<VectorBackendStatus> {
+        let version = self.sqlite_vec_version()?;
+        let indexed_records = self.fresh_vector_index_count(workspace_id, model, dimensions)?;
+        Ok(VectorBackendStatus {
+            backend: VectorSearchBackend::VectorDb,
+            healthy: true,
+            degraded_reason: version.map(|value| format!("sqlite-vec {value}")),
+            indexed_records,
+        })
+    }
+
+    fn hydrate_vector_index(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<usize> {
+        if dimensions == 0 {
+            return Ok(0);
+        }
+        self.ensure_vec0_table(workspace_id, model, dimensions)?;
+        self.clear_vector_index_scope(workspace_id, model, dimensions)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT e.chunk_id, e.model, e.dimensions, e.content_hash, e.vector
+             FROM embeddings e
+             JOIN chunks c ON c.id = e.chunk_id
+             JOIN files f ON f.id = c.file_id
+             WHERE f.workspace_id = ?1 AND e.model = ?2 AND e.dimensions = ?3
+               AND c.content_hash = e.content_hash
+               AND f.deleted_at_unix_ms IS NULL",
+        )?;
+        let rows = stmt.query_map(params![workspace_id, model, dimensions as i64], |row| {
+            Ok((
+                row.get::<_, ChunkId>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)? as usize,
+                row.get::<_, String>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
+            ))
+        })?;
+
+        let mut pending = Vec::new();
+        for row in rows {
+            pending.push(row?);
+        }
+        drop(stmt);
+
+        let mut hydrated = 0;
+        for (chunk_id, model, dimensions, content_hash, blob) in pending {
+            let vector = blob_to_vector(&blob);
+            self.upsert_vector_index_record(chunk_id, &model, dimensions, &content_hash, &vector)?;
+            hydrated += 1;
+        }
+        Ok(hydrated)
+    }
+
+    fn semantic_vector_search(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+        query_vector: &[f32],
+        limit: usize,
+        min_score: f32,
+    ) -> Result<VectorSearchOutcome> {
+        if limit == 0 || query_vector.is_empty() || query_vector.len() != dimensions {
+            return Ok(VectorSearchOutcome {
+                records: Vec::new(),
+                backend: VectorSearchBackend::VectorDb,
+                degraded: query_vector.len() != dimensions,
+                degraded_reason: (query_vector.len() != dimensions).then(|| {
+                    format!(
+                        "query vector dimensions {} did not match requested dimensions {dimensions}",
+                        query_vector.len()
+                    )
+                }),
+                scanned_records: 0,
+            });
+        }
+
+        match self.semantic_vec0_search(
+            workspace_id,
+            model,
+            dimensions,
+            query_vector,
+            limit,
+            min_score,
+        ) {
+            Ok(Some(outcome)) => Ok(outcome),
+            Ok(None) => self.semantic_sqlite_scan(
+                workspace_id,
+                model,
+                dimensions,
+                query_vector,
+                limit,
+                min_score,
+                "vector index empty; using canonical sqlite embedding scan".into(),
+            ),
+            Err(err) => self.semantic_sqlite_scan(
+                workspace_id,
+                model,
+                dimensions,
+                query_vector,
+                limit,
+                min_score,
+                format!("vector backend failed: {err}; using canonical sqlite embedding scan"),
+            ),
+        }
+    }
+
+    fn delete_vector_index_record(&self, chunk_id: ChunkId) -> Result<usize> {
+        self.delete_vector_index_record_by_chunk(chunk_id)
+    }
+
+    fn prune_stale_vector_records(&self) -> Result<usize> {
+        let removed = self.conn.execute(
+            "DELETE FROM vector_index
+             WHERE chunk_id NOT IN (SELECT id FROM chunks)
+                OR content_hash != COALESCE((SELECT content_hash FROM chunks WHERE chunks.id = vector_index.chunk_id), '')
+                OR EXISTS (
+                    SELECT 1
+                      FROM chunks
+                      JOIN files ON files.id = chunks.file_id
+                     WHERE chunks.id = vector_index.chunk_id
+                       AND files.deleted_at_unix_ms IS NOT NULL
+                )",
+            [],
+        )?;
+        for table_name in self.vec0_table_names()? {
+            let sql = format!(
+                "DELETE FROM {table_name}
+                  WHERE chunk_id NOT IN (SELECT id FROM chunks)
+                     OR content_hash != COALESCE((SELECT content_hash FROM chunks WHERE chunks.id = {table_name}.chunk_id), '')
+                     OR EXISTS (
+                         SELECT 1
+                           FROM chunks
+                           JOIN files ON files.id = chunks.file_id
+                          WHERE chunks.id = {table_name}.chunk_id
+                            AND files.deleted_at_unix_ms IS NOT NULL
+                     )"
+            );
+            self.conn.execute(&sql, [])?;
+        }
+        Ok(removed)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ScopedVectorRecord {
+    chunk_id: ChunkId,
+    vector: Vec<f32>,
+}
+
+impl Database {
+    fn upsert_vector_index_record(
+        &self,
+        chunk_id: ChunkId,
+        model: &str,
+        dimensions: usize,
+        content_hash: &str,
+        vector: &[f32],
+    ) -> Result<()> {
+        let workspace_id: Option<WorkspaceId> = self
+            .conn
+            .query_row(
+                "SELECT f.workspace_id
+                   FROM chunks c
+                   JOIN files f ON f.id = c.file_id
+                  WHERE c.id = ?1
+                    AND c.content_hash = ?2
+                    AND f.deleted_at_unix_ms IS NULL",
+                params![chunk_id, content_hash],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(workspace_id) = workspace_id else {
+            self.delete_vector_index_record_by_scope(chunk_id, model, dimensions)?;
+            return Ok(());
+        };
+        self.delete_vector_index_record_by_scope(chunk_id, model, dimensions)?;
+        let blob = vector_to_blob(vector);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        self.conn.execute(
+            "INSERT INTO vector_index (chunk_id, workspace_id, model, dimensions, content_hash, vector, updated_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(chunk_id, model, dimensions) DO UPDATE SET
+               workspace_id = excluded.workspace_id,
+               content_hash = excluded.content_hash,
+               vector = excluded.vector,
+               updated_at_unix_ms = excluded.updated_at_unix_ms",
+            params![chunk_id, workspace_id, model, dimensions as i64, content_hash, blob, now],
+        )?;
+        if let Err(err) = self.upsert_vec0_record(
+            workspace_id,
+            chunk_id,
+            model,
+            dimensions,
+            content_hash,
+            &blob,
+        ) {
+            warn!(
+                chunk_id,
+                workspace_id,
+                model,
+                dimensions,
+                error = %err,
+                "sqlite-vec derived index upsert failed; canonical embedding remains stored"
+            );
+        }
+        Ok(())
+    }
+
+    fn delete_vector_index_record_by_chunk(&self, chunk_id: ChunkId) -> Result<usize> {
+        let removed = self.conn.execute(
+            "DELETE FROM vector_index WHERE chunk_id = ?1",
+            params![chunk_id],
+        )?;
+        for table_name in self.vec0_table_names()? {
+            let sql = format!("DELETE FROM {table_name} WHERE chunk_id = ?1");
+            self.conn.execute(&sql, params![chunk_id])?;
+        }
+        Ok(removed)
+    }
+
+    fn delete_vector_index_record_by_scope(
+        &self,
+        chunk_id: ChunkId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<usize> {
+        let workspace_ids = self.vector_workspaces_for_chunk_scope(chunk_id, model, dimensions)?;
+        let removed = self.conn.execute(
+            "DELETE FROM vector_index WHERE chunk_id = ?1 AND model = ?2 AND dimensions = ?3",
+            params![chunk_id, model, dimensions as i64],
+        )?;
+        for workspace_id in workspace_ids {
+            let table_name = vec0_table_name(workspace_id, model, dimensions);
+            if self.table_exists(&table_name)? {
+                let sql = format!("DELETE FROM {table_name} WHERE chunk_id = ?1");
+                self.conn.execute(&sql, params![chunk_id])?;
+            }
+        }
+        Ok(removed)
+    }
+
+    fn vector_workspaces_for_chunk_scope(
+        &self,
+        chunk_id: ChunkId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<Vec<WorkspaceId>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT workspace_id
+               FROM vector_index
+              WHERE chunk_id = ?1 AND model = ?2 AND dimensions = ?3",
+        )?;
+        let rows = stmt.query_map(params![chunk_id, model, dimensions as i64], |row| {
+            row.get::<_, WorkspaceId>(0)
+        })?;
+        let mut workspace_ids = Vec::new();
+        for row in rows {
+            workspace_ids.push(row?);
+        }
+        Ok(workspace_ids)
+    }
+
+    fn clear_vector_index_scope(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM vector_index WHERE workspace_id = ?1 AND model = ?2 AND dimensions = ?3",
+            params![workspace_id, model, dimensions as i64],
+        )?;
+        let table_name = self.ensure_vec0_table(workspace_id, model, dimensions)?;
+        let sql = format!("DELETE FROM {table_name}");
+        self.conn.execute(&sql, [])?;
+        Ok(())
+    }
+
+    fn sqlite_vec_version(&self) -> Result<Option<String>> {
+        match self
+            .conn
+            .query_row("SELECT vec_version()", [], |row| row.get::<_, String>(0))
+        {
+            Ok(version) => Ok(Some(version.trim_start_matches('v').to_string())),
+            Err(rusqlite::Error::SqliteFailure(_, Some(message))) => {
+                Err(anyhow!("sqlite-vec extension unavailable: {message}"))
+            }
+            Err(rusqlite::Error::SqliteFailure(err, None)) => {
+                Err(anyhow!("sqlite-vec extension unavailable: {err}"))
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    fn ensure_vec0_table(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<String> {
+        if dimensions == 0 {
+            return Err(anyhow!("vector index dimensions must be greater than zero"));
+        }
+        self.sqlite_vec_version()?;
+        let table_name = vec0_table_name(workspace_id, model, dimensions);
+        let sql = format!(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS {table_name} USING vec0(
+              chunk_id INTEGER PRIMARY KEY,
+              embedding FLOAT[{dimensions}] distance_metric=cosine,
+              +content_hash TEXT
+            )"
+        );
+        self.conn.execute(&sql, [])?;
+        Ok(table_name)
+    }
+
+    fn upsert_vec0_record(
+        &self,
+        workspace_id: WorkspaceId,
+        chunk_id: ChunkId,
+        model: &str,
+        dimensions: usize,
+        content_hash: &str,
+        vector_blob: &[u8],
+    ) -> Result<()> {
+        if dimensions == 0 {
+            return Ok(());
+        }
+        let table_name = self.ensure_vec0_table(workspace_id, model, dimensions)?;
+        let delete_sql = format!("DELETE FROM {table_name} WHERE chunk_id = ?1");
+        self.conn.execute(&delete_sql, params![chunk_id])?;
+        let insert_sql = format!(
+            "INSERT INTO {table_name}(chunk_id, embedding, content_hash) VALUES (?1, vec_f32(?2), ?3)"
+        );
+        self.conn
+            .execute(&insert_sql, params![chunk_id, vector_blob, content_hash])?;
+        Ok(())
+    }
+
+    fn semantic_vec0_search(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+        query_vector: &[f32],
+        limit: usize,
+        min_score: f32,
+    ) -> Result<Option<VectorSearchOutcome>> {
+        let fresh_records = self.fresh_vector_index_count(workspace_id, model, dimensions)?;
+        if fresh_records == 0 {
+            self.prune_stale_vector_records()?;
+            let canonical_records =
+                self.canonical_embedding_count(workspace_id, model, dimensions)?;
+            let indexed_records = self.vector_index_count(workspace_id, model, dimensions)?;
+            if canonical_records == 0 || indexed_records > 0 {
+                return Ok(None);
+            }
+            let hydrated = self.hydrate_vector_index(workspace_id, model, dimensions)?;
+            if hydrated == 0 {
+                return Ok(None);
+            }
+        }
+        self.ensure_vec0_table(workspace_id, model, dimensions)?;
+
+        let table_name = vec0_table_name(workspace_id, model, dimensions);
+        if self.vec0_record_count(&table_name)? < fresh_records {
+            self.sync_vec0_from_vector_index(workspace_id, model, dimensions)?;
+        }
+        let query_blob = vector_to_blob(query_vector);
+        let sql = format!(
+            "SELECT chunk_id, distance
+             FROM {table_name}
+             WHERE embedding MATCH vec_f32(?1) AND k = ?2
+             ORDER BY distance ASC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![query_blob, limit as i64], |row| {
+            Ok((row.get::<_, ChunkId>(0)?, row.get::<_, f32>(1)?))
+        })?;
+
+        let mut records = Vec::new();
+        for row in rows {
+            let (chunk_id, distance) = row?;
+            let Some(chunk_content_hash) = self.chunk_content_hash(chunk_id)? else {
+                continue;
+            };
+            let Some(index_content_hash) =
+                self.vector_index_content_hash(chunk_id, workspace_id, model, dimensions)?
+            else {
+                continue;
+            };
+            if chunk_content_hash != index_content_hash {
+                continue;
+            }
+            let score = cosine_distance_to_similarity(distance);
+            if score >= min_score {
+                records.push(VectorSearchRecord { chunk_id, score });
+            }
+        }
+
+        let scanned_records = fresh_records.max(records.len()).min(limit);
+        Ok(Some(VectorSearchOutcome {
+            records,
+            backend: VectorSearchBackend::VectorDb,
+            degraded: false,
+            degraded_reason: None,
+            scanned_records,
+        }))
+    }
+
+    fn semantic_sqlite_scan(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+        query_vector: &[f32],
+        limit: usize,
+        min_score: f32,
+        degraded_reason: String,
+    ) -> Result<VectorSearchOutcome> {
+        let records = self.embedding_records_for_scope(workspace_id, model, dimensions)?;
+        let scanned_records = records.len();
+        let mut matches: Vec<VectorSearchRecord> = records
+            .iter()
+            .map(|r| VectorSearchRecord {
+                chunk_id: r.chunk_id,
+                score: cosine_similarity(query_vector, &r.vector),
+            })
+            .filter(|r| r.score >= min_score)
+            .collect();
+        matches.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        matches.truncate(limit);
+
+        Ok(VectorSearchOutcome {
+            records: matches,
+            backend: VectorSearchBackend::SqliteScan,
+            degraded: true,
+            degraded_reason: Some(degraded_reason),
+            scanned_records,
+        })
+    }
+
+    fn vector_index_count(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM vector_index WHERE workspace_id = ?1 AND model = ?2 AND dimensions = ?3",
+                params![workspace_id, model, dimensions as i64],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count as usize)
+            .map_err(Into::into)
+    }
+
+    fn vec0_record_count(&self, table_name: &str) -> Result<usize> {
+        let sql = format!("SELECT COUNT(*) FROM {table_name}");
+        self.conn
+            .query_row(&sql, [], |row| row.get::<_, i64>(0))
+            .map(|count| count as usize)
+            .map_err(Into::into)
+    }
+
+    fn table_exists(&self, table_name: &str) -> Result<bool> {
+        self.conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+                params![table_name],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|exists| exists != 0)
+            .map_err(Into::into)
+    }
+
+    fn sync_vec0_from_vector_index(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<usize> {
+        let table_name = self.ensure_vec0_table(workspace_id, model, dimensions)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT v.chunk_id, v.content_hash, v.vector
+               FROM vector_index v
+               JOIN chunks c ON c.id = v.chunk_id
+               JOIN files f ON f.id = c.file_id
+              WHERE v.workspace_id = ?1
+                AND v.model = ?2
+                AND v.dimensions = ?3
+                AND c.content_hash = v.content_hash
+                AND f.deleted_at_unix_ms IS NULL",
+        )?;
+        let rows = stmt.query_map(params![workspace_id, model, dimensions as i64], |row| {
+            Ok((
+                row.get::<_, ChunkId>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(row?);
+        }
+        drop(stmt);
+
+        let delete_sql = format!("DELETE FROM {table_name}");
+        self.conn.execute(&delete_sql, [])?;
+
+        let mut synced = 0;
+        for (chunk_id, content_hash, vector_blob) in records {
+            self.upsert_vec0_record(
+                workspace_id,
+                chunk_id,
+                model,
+                dimensions,
+                &content_hash,
+                &vector_blob,
+            )?;
+            synced += 1;
+        }
+        Ok(synced)
+    }
+
+    fn fresh_vector_index_count(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*)
+                   FROM vector_index v
+                   JOIN chunks c ON c.id = v.chunk_id
+                   JOIN files f ON f.id = c.file_id
+                  WHERE v.workspace_id = ?1
+                    AND v.model = ?2
+                    AND v.dimensions = ?3
+                    AND c.content_hash = v.content_hash
+                    AND f.deleted_at_unix_ms IS NULL",
+                params![workspace_id, model, dimensions as i64],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count as usize)
+            .map_err(Into::into)
+    }
+
+    fn canonical_embedding_count(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<usize> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*)
+                   FROM embeddings e
+                   JOIN chunks c ON c.id = e.chunk_id
+                   JOIN files f ON f.id = c.file_id
+                  WHERE f.workspace_id = ?1
+                    AND e.model = ?2
+                    AND e.dimensions = ?3
+                    AND c.content_hash = e.content_hash
+                    AND f.deleted_at_unix_ms IS NULL",
+                params![workspace_id, model, dimensions as i64],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count as usize)
+            .map_err(Into::into)
+    }
+
+    fn vec0_table_names(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?1")?;
+        let pattern = format!("{VECTOR_INDEX_TABLE_PREFIX}_%");
+        let rows = stmt.query_map(params![pattern], |row| row.get::<_, String>(0))?;
+        let mut names = Vec::new();
+        for row in rows {
+            let name = row?;
+            if !name.starts_with(&format!("{VECTOR_INDEX_TABLE_PREFIX}_"))
+                || name.ends_with("_info")
+                || name.ends_with("_chunks")
+                || name.ends_with("_rowids")
+                || name.ends_with("_auxiliary")
+                || name.ends_with("_vector_chunks00")
+            {
+                continue;
+            }
+            names.push(name);
+        }
+        Ok(names)
+    }
+
+    fn embedding_records_for_scope(
+        &self,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<Vec<ScopedVectorRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.chunk_id, e.vector FROM embeddings e
+             JOIN chunks c ON c.id = e.chunk_id
+             JOIN files f ON f.id = c.file_id
+             WHERE f.workspace_id = ?1 AND e.model = ?2 AND e.dimensions = ?3
+               AND c.content_hash = e.content_hash
+               AND f.deleted_at_unix_ms IS NULL",
+        )?;
+        let rows = stmt.query_map(params![workspace_id, model, dimensions as i64], |row| {
+            Ok(ScopedVectorRecord {
+                chunk_id: row.get(0)?,
+                vector: blob_to_vector(&row.get::<_, Vec<u8>>(1)?),
+            })
+        })?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(row?);
+        }
+        Ok(records)
+    }
+
+    fn chunk_content_hash(&self, chunk_id: ChunkId) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT content_hash FROM chunks WHERE id = ?1",
+                params![chunk_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn vector_index_content_hash(
+        &self,
+        chunk_id: ChunkId,
+        workspace_id: WorkspaceId,
+        model: &str,
+        dimensions: usize,
+    ) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT content_hash
+                   FROM vector_index
+                  WHERE chunk_id = ?1
+                    AND workspace_id = ?2
+                    AND model = ?3
+                    AND dimensions = ?4",
+                params![chunk_id, workspace_id, model, dimensions as i64],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+}
+
+fn vector_to_blob(vector: &[f32]) -> Vec<u8> {
+    vector.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+fn blob_to_vector(blob: &[u8]) -> Vec<f32> {
+    blob.chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect()
+}
+
+#[inline]
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0;
+    let mut norm_a = 0.0;
+    let mut norm_b = 0.0;
+    for (va, vb) in a.iter().zip(b.iter()) {
+        dot += va * vb;
+        norm_a += va * va;
+        norm_b += vb * vb;
+    }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot / (norm_a.sqrt() * norm_b.sqrt())
+}
+
+fn cosine_distance_to_similarity(distance: f32) -> f32 {
+    (1.0 - distance).clamp(-1.0, 1.0)
+}
+
+fn vec0_table_name(workspace_id: WorkspaceId, model: &str, dimensions: usize) -> String {
+    format!(
+        "{VECTOR_INDEX_TABLE_PREFIX}_{workspace_id}_{dimensions}_m{}",
+        hex_encode_identifier_component(model.as_bytes())
+    )
+}
+
+fn hex_encode_identifier_component(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return "empty".to_string();
+    }
+
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 impl FileRepository for Database {
@@ -674,6 +1604,15 @@ impl FileRepository for Database {
     }
 
     fn delete_file_facts(&self, file_id: FileId) -> Result<()> {
+        let chunk_ids = self
+            .find_chunks_by_file(file_id)?
+            .into_iter()
+            .map(|chunk| chunk.id)
+            .collect::<Vec<_>>();
+        for chunk_id in chunk_ids {
+            self.delete_vector_index_record_by_chunk(chunk_id)?;
+        }
+
         self.conn
             .execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
 
@@ -2884,11 +3823,110 @@ mod tests {
     fn schema_initialization_creates_core_tables() -> Result<()> {
         let db = setup_db()?;
         let count: i64 = db.connection().query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('files','symbols','graph_edges','chunks','index_state','index_runs')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('files','symbols','graph_edges','chunks','embeddings','vector_index','index_state','index_runs')",
             [],
             |row| row.get(0),
         )?;
-        assert_eq!(count, 6);
+        assert_eq!(count, 8);
+        Ok(())
+    }
+
+    #[test]
+    fn initialization_migrates_legacy_embedding_primary_keys() -> Result<()> {
+        let temp = NamedTempFile::new()?;
+        let conn = Connection::open(temp.path())?;
+        conn.execute_batch(
+            "
+            PRAGMA foreign_keys = ON;
+            CREATE TABLE workspaces (
+              id INTEGER PRIMARY KEY,
+              root_path TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE roots (
+              id INTEGER PRIMARY KEY,
+              workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+              abs_path TEXT NOT NULL,
+              root_kind TEXT NOT NULL,
+              marker_path TEXT,
+              UNIQUE(workspace_id, abs_path)
+            );
+            CREATE TABLE files (
+              id INTEGER PRIMARY KEY,
+              workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+              root_id INTEGER NOT NULL REFERENCES roots(id) ON DELETE CASCADE,
+              package_id INTEGER,
+              rel_path TEXT NOT NULL,
+              language TEXT NOT NULL,
+              size_bytes INTEGER NOT NULL,
+              mtime_unix_ms INTEGER NOT NULL,
+              content_hash TEXT NOT NULL,
+              structure_hash TEXT,
+              public_api_hash TEXT,
+              parse_status TEXT NOT NULL,
+              parse_error TEXT,
+              symbol_count INTEGER NOT NULL DEFAULT 0,
+              chunk_count INTEGER NOT NULL DEFAULT 0,
+              is_barrel INTEGER NOT NULL DEFAULT 0,
+              last_indexed_at_unix_ms INTEGER,
+              deleted_at_unix_ms INTEGER,
+              freshness_state TEXT NOT NULL DEFAULT 'not_current',
+              freshness_reason TEXT,
+              last_freshness_run_id TEXT
+            );
+            CREATE TABLE chunks (
+              id INTEGER PRIMARY KEY,
+              workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+              file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+              symbol_id INTEGER,
+              parent_symbol_id INTEGER,
+              kind TEXT NOT NULL,
+              language TEXT NOT NULL,
+              title TEXT NOT NULL,
+              content TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              token_estimate INTEGER NOT NULL,
+              start_line INTEGER NOT NULL,
+              start_column INTEGER NOT NULL,
+              end_line INTEGER NOT NULL,
+              end_column INTEGER NOT NULL,
+              prev_chunk_id INTEGER,
+              next_chunk_id INTEGER,
+              embedding_status TEXT NOT NULL DEFAULT 'NotQueued'
+            );
+            CREATE TABLE embeddings (
+              chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+              model TEXT NOT NULL,
+              dimensions INTEGER NOT NULL,
+              content_hash TEXT NOT NULL,
+              vector BLOB NOT NULL,
+              created_at_unix_ms INTEGER NOT NULL
+            );
+            CREATE TABLE vector_index (
+              chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+              workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+              model TEXT NOT NULL,
+              dimensions INTEGER NOT NULL,
+              content_hash TEXT NOT NULL,
+              vector BLOB NOT NULL,
+              updated_at_unix_ms INTEGER NOT NULL
+            );
+            ",
+        )?;
+        drop(conn);
+
+        let db = Database::new(temp.path())?;
+        db.initialize()?;
+
+        assert_eq!(
+            table_primary_key_columns(db.connection(), "embeddings")?,
+            vec!["chunk_id", "model", "dimensions"]
+        );
+        assert_eq!(
+            table_primary_key_columns(db.connection(), "vector_index")?,
+            vec!["chunk_id", "model", "dimensions"]
+        );
         Ok(())
     }
 
@@ -3044,6 +4082,269 @@ mod tests {
         assert_eq!(db.find_chunks_by_file(99)?.len(), 1);
         db.delete_file_facts(99)?;
         assert!(db.find_chunks_by_file(99)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn vector_backend_is_local_sqlite_vec() -> Result<()> {
+        let db = setup_db()?;
+        let status = db.vector_backend_status(1, "test-model", 3)?;
+
+        assert_eq!(status.backend, VectorSearchBackend::VectorDb);
+        assert!(status.healthy);
+        assert!(status
+            .degraded_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("sqlite-vec")));
+        Ok(())
+    }
+
+    #[test]
+    fn vector_index_hydrates_and_searches_by_workspace_model_and_dimension() -> Result<()> {
+        let db = setup_db()?;
+        seed_file_chunk(&db, 10, 100, 1, "src/a.ts", "hash-a")?;
+        seed_file_chunk(&db, 11, 101, 1, "src/b.ts", "hash-b")?;
+        db.connection().execute(
+            "INSERT INTO workspaces(id, root_path, created_at, updated_at) VALUES (2, '/tmp/ws-2', 0, 0)",
+            [],
+        )?;
+        db.connection().execute(
+            "INSERT INTO roots(id, workspace_id, abs_path, root_kind, marker_path) VALUES (2, 2, '/tmp/ws-2', 'git_root', NULL)",
+            [],
+        )?;
+        seed_file_chunk(&db, 20, 200, 2, "src/other.ts", "hash-other")?;
+
+        db.upsert_embedding(100, "model-a", 3, "hash-a", &[1.0, 0.0, 0.0])?;
+        db.upsert_embedding(101, "model-a", 3, "hash-b", &[0.0, 1.0, 0.0])?;
+        db.upsert_embedding(200, "model-a", 3, "hash-other", &[1.0, 0.0, 0.0])?;
+
+        assert_eq!(db.hydrate_vector_index(1, "model-a", 3)?, 2);
+
+        let outcome = db.semantic_vector_search(1, "model-a", 3, &[1.0, 0.0, 0.0], 10, 0.0)?;
+        assert_eq!(outcome.backend, VectorSearchBackend::VectorDb);
+        assert!(!outcome.degraded);
+        assert_eq!(
+            outcome.records.first().map(|record| record.chunk_id),
+            Some(100)
+        );
+        assert!(outcome.records.iter().all(|record| record.chunk_id != 200));
+        assert!(db
+            .semantic_vector_search(1, "model-a", 2, &[1.0, 0.0], 10, 0.0)?
+            .records
+            .is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn vector_index_prunes_updated_and_deleted_chunks() -> Result<()> {
+        let db = setup_db()?;
+        seed_file_chunk(&db, 10, 100, 1, "src/a.ts", "hash-a")?;
+        db.upsert_embedding(100, "model-a", 3, "hash-a", &[1.0, 0.0, 0.0])?;
+        assert_eq!(db.hydrate_vector_index(1, "model-a", 3)?, 1);
+
+        db.connection().execute(
+            "UPDATE chunks SET content_hash = 'hash-a-updated' WHERE id = 100",
+            [],
+        )?;
+        assert_eq!(db.prune_stale_vector_records()?, 1);
+        let fallback = db.semantic_vector_search(1, "model-a", 3, &[1.0, 0.0, 0.0], 10, 0.0)?;
+        assert_eq!(fallback.backend, VectorSearchBackend::SqliteScan);
+        assert!(fallback.degraded);
+        assert!(fallback.records.is_empty());
+        assert_eq!(fallback.scanned_records, 0);
+
+        db.upsert_embedding(100, "model-a", 3, "hash-a-updated", &[1.0, 0.0, 0.0])?;
+        db.delete_embedding(100)?;
+        let after_delete = db.semantic_vector_search(1, "model-a", 3, &[1.0, 0.0, 0.0], 10, 0.0)?;
+        assert!(after_delete.records.is_empty());
+        assert_eq!(after_delete.backend, VectorSearchBackend::SqliteScan);
+        Ok(())
+    }
+
+    #[test]
+    fn vector_index_prunes_records_for_deleted_files_even_if_chunks_remain() -> Result<()> {
+        let db = setup_db()?;
+        seed_file_chunk(&db, 10, 100, 1, "src/a.ts", "hash-a")?;
+        db.upsert_embedding(100, "model-a", 3, "hash-a", &[1.0, 0.0, 0.0])?;
+        assert_eq!(db.hydrate_vector_index(1, "model-a", 3)?, 1);
+
+        db.connection().execute(
+            "UPDATE files SET deleted_at_unix_ms = 123 WHERE id = 10",
+            [],
+        )?;
+
+        assert_eq!(db.prune_stale_vector_records()?, 1);
+        let fallback = db.semantic_vector_search(1, "model-a", 3, &[1.0, 0.0, 0.0], 10, 0.0)?;
+        assert_eq!(fallback.backend, VectorSearchBackend::SqliteScan);
+        assert!(fallback.records.is_empty());
+        assert_eq!(fallback.scanned_records, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn embedding_storage_keeps_model_and_dimension_isolated() -> Result<()> {
+        let db = setup_db()?;
+        seed_file_chunk(&db, 10, 100, 1, "src/a.ts", "hash-a")?;
+
+        db.upsert_embedding(100, "model-a", 3, "hash-a", &[1.0, 0.0, 0.0])?;
+        db.upsert_embedding(100, "model-b", 3, "hash-a", &[0.0, 1.0, 0.0])?;
+        db.upsert_embedding(100, "model-a", 2, "hash-a", &[0.0, 1.0])?;
+
+        let model_a = db.semantic_vector_search(1, "model-a", 3, &[1.0, 0.0, 0.0], 10, 0.0)?;
+        assert_eq!(model_a.backend, VectorSearchBackend::VectorDb);
+        assert_eq!(
+            model_a.records.first().map(|record| record.chunk_id),
+            Some(100)
+        );
+
+        let model_b = db.semantic_vector_search(1, "model-b", 3, &[0.0, 1.0, 0.0], 10, 0.0)?;
+        assert_eq!(model_b.backend, VectorSearchBackend::VectorDb);
+        assert_eq!(
+            model_b.records.first().map(|record| record.chunk_id),
+            Some(100)
+        );
+
+        db.delete_embedding_for_model(100, "model-a", 3)?;
+
+        let after_scoped_delete =
+            db.semantic_vector_search(1, "model-a", 3, &[1.0, 0.0, 0.0], 10, 0.0)?;
+        assert_eq!(after_scoped_delete.backend, VectorSearchBackend::SqliteScan);
+        assert!(after_scoped_delete.records.is_empty());
+
+        let model_b_still_indexed =
+            db.semantic_vector_search(1, "model-b", 3, &[0.0, 1.0, 0.0], 10, 0.0)?;
+        assert_eq!(model_b_still_indexed.backend, VectorSearchBackend::VectorDb);
+        assert_eq!(
+            model_b_still_indexed
+                .records
+                .first()
+                .map(|record| record.chunk_id),
+            Some(100)
+        );
+
+        let dimension_scoped = db.semantic_vector_search(1, "model-a", 2, &[0.0, 1.0], 10, 0.0)?;
+        assert_eq!(dimension_scoped.backend, VectorSearchBackend::VectorDb);
+        assert_eq!(
+            dimension_scoped
+                .records
+                .first()
+                .map(|record| record.chunk_id),
+            Some(100)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn vector_index_keeps_colliding_sanitized_model_names_isolated() -> Result<()> {
+        let db = setup_db()?;
+        seed_file_chunk(&db, 10, 100, 1, "src/a.ts", "hash-a")?;
+        seed_file_chunk(&db, 11, 101, 1, "src/b.ts", "hash-b")?;
+
+        db.upsert_embedding(100, "model-a", 3, "hash-a", &[1.0, 0.0, 0.0])?;
+        db.upsert_embedding(101, "model_a", 3, "hash-b", &[0.0, 1.0, 0.0])?;
+
+        assert_ne!(
+            vec0_table_name(1, "model-a", 3),
+            vec0_table_name(1, "model_a", 3),
+            "model IDs that sanitize to the same text must still get distinct vec0 tables"
+        );
+
+        let dashed = db.semantic_vector_search(1, "model-a", 3, &[1.0, 0.0, 0.0], 10, 0.0)?;
+        assert_eq!(dashed.backend, VectorSearchBackend::VectorDb);
+        assert_eq!(
+            dashed.records.first().map(|record| record.chunk_id),
+            Some(100)
+        );
+        assert!(dashed.records.iter().all(|record| record.chunk_id != 101));
+
+        let underscored = db.semantic_vector_search(1, "model_a", 3, &[0.0, 1.0, 0.0], 10, 0.0)?;
+        assert_eq!(underscored.backend, VectorSearchBackend::VectorDb);
+        assert_eq!(
+            underscored.records.first().map(|record| record.chunk_id),
+            Some(101)
+        );
+        assert!(underscored
+            .records
+            .iter()
+            .all(|record| record.chunk_id != 100));
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_vector_delete_tolerates_missing_vec0_table() -> Result<()> {
+        let db = setup_db()?;
+        seed_file_chunk(&db, 10, 100, 1, "src/a.ts", "hash-a")?;
+        db.connection().execute(
+            "INSERT INTO vector_index (chunk_id, workspace_id, model, dimensions, content_hash, vector, updated_at_unix_ms)
+             VALUES (100, 1, 'model-a', 3, 'hash-a', ?1, 1)",
+            params![vector_to_blob(&[1.0, 0.0, 0.0])],
+        )?;
+
+        assert_eq!(
+            db.delete_embedding_for_model(100, "model-a", 3).is_ok(),
+            true
+        );
+        assert_eq!(db.vector_index_count(1, "model-a", 3)?, 0);
+        Ok(())
+    }
+
+    fn seed_file_chunk(
+        db: &Database,
+        file_id: FileId,
+        chunk_id: ChunkId,
+        workspace_id: WorkspaceId,
+        rel_path: &str,
+        content_hash: &str,
+    ) -> Result<()> {
+        db.upsert_file(&File {
+            id: file_id,
+            workspace_id,
+            root_id: workspace_id,
+            package_id: None,
+            rel_path: rel_path.to_string(),
+            language: LanguageId::TypeScript,
+            size_bytes: 10,
+            mtime_unix_ms: 1,
+            content_hash: format!("file-{content_hash}"),
+            structure_hash: None,
+            public_api_hash: None,
+            parse_status: ParseStatus::Parsed,
+            parse_error: None,
+            symbol_count: 0,
+            chunk_count: 1,
+            is_barrel: false,
+            last_indexed_at_unix_ms: None,
+            deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::RefreshedCurrent,
+            freshness_reason: Some(FreshnessReason::ContentChanged),
+            last_freshness_run_id: Some("run-vector-test".to_string()),
+        })?;
+
+        db.insert_chunks(&[Chunk {
+            id: chunk_id,
+            workspace_id,
+            file_id,
+            symbol_id: None,
+            parent_symbol_id: None,
+            kind: ChunkKind::FileHeader,
+            language: LanguageId::TypeScript,
+            title: rel_path.to_string(),
+            content: format!("content for {rel_path}"),
+            content_hash: content_hash.to_string(),
+            token_estimate: 5,
+            span: Span {
+                start_byte: 0,
+                end_byte: 18,
+                start_line: 1,
+                start_column: 0,
+                end_line: 1,
+                end_column: 18,
+            },
+            prev_chunk_id: None,
+            next_chunk_id: None,
+            embedding_status: EmbeddingStatus::NotQueued,
+        }])?;
+
         Ok(())
     }
 

@@ -477,28 +477,29 @@ pub fn run_bridge_server(workspace: PathBuf) -> Result<()> {
     let mut transport = BridgeTransportState::default();
 
     loop {
-        let request = match read_rpc_request(&mut reader, transport.codec, transport.max_frame_bytes) {
-            Ok(value) => value,
-            Err(err) => {
-                eprintln!(
-                    "bridge protocol failure: code={} message={}",
-                    err.rpc_error.symbolic_code, err.rpc_error.message
-                );
-                if let Some(id) = err.request_id.clone() {
-                    let response = err.rpc_error.to_response(Some(id));
-                    write_rpc_response(
-                        &mut writer,
-                        &response,
-                        transport.codec,
-                        transport.max_frame_bytes,
-                    )?;
+        let request =
+            match read_rpc_request(&mut reader, transport.codec, transport.max_frame_bytes) {
+                Ok(value) => value,
+                Err(err) => {
+                    eprintln!(
+                        "bridge protocol failure: code={} message={}",
+                        err.rpc_error.symbolic_code, err.rpc_error.message
+                    );
+                    if let Some(id) = err.request_id.clone() {
+                        let response = err.rpc_error.to_response(Some(id));
+                        write_rpc_response(
+                            &mut writer,
+                            &response,
+                            transport.codec,
+                            transport.max_frame_bytes,
+                        )?;
+                    }
+                    if err.terminal {
+                        break;
+                    }
+                    continue;
                 }
-                if err.terminal {
-                    break;
-                }
-                continue;
-            }
-        };
+            };
 
         let should_shutdown = request.method == "dh.shutdown";
         let response = if request.method == "dh.initialize" {
@@ -525,7 +526,12 @@ pub fn run_bridge_server(workspace: PathBuf) -> Result<()> {
         } else {
             router.route(request)
         };
-        write_rpc_response(&mut writer, &response, transport.codec, transport.max_frame_bytes)?;
+        write_rpc_response(
+            &mut writer,
+            &response,
+            transport.codec,
+            transport.max_frame_bytes,
+        )?;
         if should_shutdown {
             break;
         }
@@ -564,7 +570,9 @@ fn read_frame(
         let mut line = String::new();
         let bytes = reader.read_line(&mut line).map_err(|err| {
             BridgeProtocolError::new(
-                BridgeRpcError::invalid_request(format!("failed to read bridge frame header: {err}")),
+                BridgeRpcError::invalid_request(format!(
+                    "failed to read bridge frame header: {err}"
+                )),
                 None,
                 true,
             )
@@ -583,7 +591,10 @@ fn read_frame(
         if let Some((key, value)) = line.split_once(':') {
             if key.trim().eq_ignore_ascii_case("Content-Length") {
                 let trimmed = value.trim();
-                if content_length.is_some() || trimmed.is_empty() || !trimmed.chars().all(|c| c.is_ascii_digit()) {
+                if content_length.is_some()
+                    || trimmed.is_empty()
+                    || !trimmed.chars().all(|c| c.is_ascii_digit())
+                {
                     return Err(BridgeProtocolError::new(
                         BridgeRpcError::invalid_request("invalid Content-Length header"),
                         None,
@@ -592,7 +603,9 @@ fn read_frame(
                 }
                 content_length = Some(trimmed.parse::<usize>().map_err(|err| {
                     BridgeProtocolError::new(
-                        BridgeRpcError::invalid_request(format!("invalid Content-Length header: {err}")),
+                        BridgeRpcError::invalid_request(format!(
+                            "invalid Content-Length header: {err}"
+                        )),
                         None,
                         true,
                     )
@@ -662,7 +675,9 @@ fn decode_rpc_request(buf: &[u8], codec: BridgeCodec) -> Result<RpcRequest> {
 fn extract_request_id(codec: BridgeCodec, buf: &[u8]) -> Option<Value> {
     let value: Result<Value> = match codec {
         BridgeCodec::Json => serde_json::from_slice(buf).context("invalid json request payload"),
-        BridgeCodec::MessagePack => rmp_serde::from_slice(buf).context("invalid messagepack request payload"),
+        BridgeCodec::MessagePack => {
+            rmp_serde::from_slice(buf).context("invalid messagepack request payload")
+        }
     };
     value.ok().and_then(|value| value.get("id").cloned())
 }
@@ -1596,6 +1611,10 @@ fn handle_request(
                             question_class: "semantic_search".into(),
                             items: vec![json!({
                                 "matches": json_matches,
+                                "backend": result.backend,
+                                "degraded": result.degraded,
+                                "degradedReason": result.degraded_reason,
+                                "scannedRecords": result.scanned_records,
                             })],
                             evidence: Some(to_wire_evidence_packet(result.evidence, None)),
                             language_capability_summary: None,
@@ -1677,26 +1696,37 @@ fn encode_rpc_value(payload: &Value, codec: BridgeCodec) -> Result<Vec<u8>> {
     }
 }
 
-fn negotiate_transport(params: &Value) -> std::result::Result<BridgeTransportState, BridgeRpcError> {
+fn negotiate_transport(
+    params: &Value,
+) -> std::result::Result<BridgeTransportState, BridgeRpcError> {
     let transport_params: InitializeTransportParams = params
         .get("transport")
         .cloned()
         .map(serde_json::from_value)
         .transpose()
-        .map_err(|err| BridgeRpcError::codec_negotiation_failed(format!("invalid transport params: {err}")))?
+        .map_err(|err| {
+            BridgeRpcError::codec_negotiation_failed(format!("invalid transport params: {err}"))
+        })?
         .unwrap_or_default();
 
     let requested_max_frame_bytes = transport_params
         .max_frame_bytes
         .unwrap_or(DEFAULT_BRIDGE_MAX_FRAME_BYTES);
-    if !(MIN_BRIDGE_MAX_FRAME_BYTES..=DEFAULT_BRIDGE_MAX_FRAME_BYTES).contains(&requested_max_frame_bytes) {
+    if !(MIN_BRIDGE_MAX_FRAME_BYTES..=DEFAULT_BRIDGE_MAX_FRAME_BYTES)
+        .contains(&requested_max_frame_bytes)
+    {
         return Err(BridgeRpcError::codec_negotiation_failed(format!(
             "maxFrameBytes must be between {MIN_BRIDGE_MAX_FRAME_BYTES} and {DEFAULT_BRIDGE_MAX_FRAME_BYTES}; received {requested_max_frame_bytes}"
         )));
     }
     let max_frame_bytes = requested_max_frame_bytes;
     let env_override = std::env::var("DH_BRIDGE_CODEC").unwrap_or_else(|_| "auto".into());
-    let override_mode = normalize_codec_override(transport_params.codec_override.as_deref().unwrap_or(&env_override));
+    let override_mode = normalize_codec_override(
+        transport_params
+            .codec_override
+            .as_deref()
+            .unwrap_or(&env_override),
+    );
 
     if override_mode == "json" {
         return Ok(BridgeTransportState {
@@ -2303,10 +2333,14 @@ mod tests {
         MSGPACK_RPC_CODEC,
     };
     use crate::hooks::HookDispatcher;
-    use dh_storage::{Database, FileRepository, GraphEdgeRepository, SymbolRepository};
+    use dh_storage::{
+        ChunkRepository, Database, EmbeddingRepository, FileRepository, GraphEdgeRepository,
+        SymbolRepository,
+    };
     use dh_types::{
-        EdgeConfidence, EdgeKind, EdgeResolution, File, FreshnessReason, FreshnessState, GraphEdge,
-        LanguageId, NodeId, ParseStatus, Span, Symbol, SymbolKind, Visibility,
+        Chunk, ChunkKind, EdgeConfidence, EdgeKind, EdgeResolution, EmbeddingStatus, File,
+        FreshnessReason, FreshnessState, GraphEdge, LanguageId, NodeId, ParseStatus, Span, Symbol,
+        SymbolKind, Visibility,
     };
     use serde_json::json;
     use serde_json::Value;
@@ -2706,6 +2740,42 @@ mod tests {
         Ok(())
     }
 
+    fn seed_semantic_chunk(
+        db: &Database,
+        chunk_id: i64,
+        file_id: i64,
+        title: &str,
+        content_hash: &str,
+        vector: &[f32],
+    ) -> anyhow::Result<()> {
+        db.insert_chunks(&[Chunk {
+            id: chunk_id,
+            workspace_id: 1,
+            file_id,
+            symbol_id: None,
+            parent_symbol_id: None,
+            kind: ChunkKind::FileHeader,
+            language: LanguageId::TypeScript,
+            title: title.to_string(),
+            content: format!("semantic content for {title}"),
+            content_hash: content_hash.to_string(),
+            token_estimate: 5,
+            span: Span {
+                start_byte: 0,
+                end_byte: 20,
+                start_line: 1,
+                start_column: 0,
+                end_line: 1,
+                end_column: 20,
+            },
+            prev_chunk_id: None,
+            next_chunk_id: None,
+            embedding_status: EmbeddingStatus::Indexed,
+        }])?;
+        db.upsert_embedding(chunk_id, "model-a", vector.len(), content_hash, vector)?;
+        Ok(())
+    }
+
     #[test]
     fn bridge_supports_required_question_classes() -> anyhow::Result<()> {
         let (tmp, db) = setup_db()?;
@@ -2976,7 +3046,10 @@ mod tests {
 
         assert_eq!(response["result"]["protocolVersion"], "1");
         assert_eq!(response["result"]["capabilities"]["protocolVersion"], "1");
-        assert_eq!(response["result"]["transport"]["selectedCodec"], JSON_RPC_CODEC);
+        assert_eq!(
+            response["result"]["transport"]["selectedCodec"],
+            JSON_RPC_CODEC
+        );
         assert_eq!(
             response["result"]["transport"]["selectedMode"],
             json!("json-fallback")
@@ -3050,7 +3123,10 @@ mod tests {
             },
         );
 
-        assert_eq!(response["result"]["transport"]["selectedCodec"], MSGPACK_RPC_CODEC);
+        assert_eq!(
+            response["result"]["transport"]["selectedCodec"],
+            MSGPACK_RPC_CODEC
+        );
         assert_eq!(
             response["result"]["transport"]["selectedMode"],
             MSGPACK_RPC_CODEC
@@ -3074,7 +3150,9 @@ mod tests {
             }
         }));
 
-        let response = result.expect_err("forced MessagePack should fail").to_response(Some(json!(1)));
+        let response = result
+            .expect_err("forced MessagePack should fail")
+            .to_response(Some(json!(1)));
         assert_eq!(
             response["error"]["data"]["code"],
             json!("BRIDGE_CODEC_NEGOTIATION_FAILED")
@@ -3092,7 +3170,9 @@ mod tests {
             }
         }));
 
-        let response = result.expect_err("too-small maxFrameBytes should fail").to_response(Some(json!(1)));
+        let response = result
+            .expect_err("too-small maxFrameBytes should fail")
+            .to_response(Some(json!(1)));
         assert_eq!(
             response["error"]["data"]["code"],
             json!("BRIDGE_CODEC_NEGOTIATION_FAILED")
@@ -3113,7 +3193,9 @@ mod tests {
             }
         }));
 
-        let response = result.expect_err("too-large maxFrameBytes should fail").to_response(Some(json!(1)));
+        let response = result
+            .expect_err("too-large maxFrameBytes should fail")
+            .to_response(Some(json!(1)));
         assert_eq!(
             response["error"]["data"]["code"],
             json!("BRIDGE_CODEC_NEGOTIATION_FAILED")
@@ -3143,8 +3225,14 @@ mod tests {
         let decoded = decode_rpc_request(&bytes, BridgeCodec::MessagePack)?;
 
         assert_eq!(decoded.method, "query.buildEvidence");
-        assert_eq!(decoded.params["semanticVector"].as_array().map(Vec::len), Some(1536));
-        assert_eq!(decoded.params["ast"]["children"].as_array().map(Vec::len), Some(256));
+        assert_eq!(
+            decoded.params["semanticVector"].as_array().map(Vec::len),
+            Some(1536)
+        );
+        assert_eq!(
+            decoded.params["ast"]["children"].as_array().map(Vec::len),
+            Some(256)
+        );
         Ok(())
     }
 
@@ -3177,7 +3265,10 @@ mod tests {
         ];
 
         for request in cases {
-            let json_decoded = decode_rpc_request(&encode_rpc_value(&request, BridgeCodec::Json)?, BridgeCodec::Json)?;
+            let json_decoded = decode_rpc_request(
+                &encode_rpc_value(&request, BridgeCodec::Json)?,
+                BridgeCodec::Json,
+            )?;
             let msgpack_decoded = decode_rpc_request(
                 &encode_rpc_value(&request, BridgeCodec::MessagePack)?,
                 BridgeCodec::MessagePack,
@@ -3192,7 +3283,9 @@ mod tests {
 
     #[test]
     fn malformed_msgpack_request_with_id_returns_structured_codec_error() -> anyhow::Result<()> {
-        let partial = vec![0x82, 0xa2, b'i', b'd', 0x2a, 0xa6, b'm', b'e', b't', b'h', b'o', b'd'];
+        let partial = vec![
+            0x82, 0xa2, b'i', b'd', 0x2a, 0xa6, b'm', b'e', b't', b'h', b'o', b'd',
+        ];
         let mut frame = format!(
             "Content-Length: {}\r\nContent-Type: application/x-msgpack\r\n\r\n",
             partial.len()
@@ -3251,9 +3344,8 @@ mod tests {
             .expect_err("duplicate Content-Length should fail");
         assert_eq!(duplicate_err.rpc_error.symbolic_code, "INVALID_REQUEST");
 
-        let mut non_numeric = BufReader::new(Cursor::new(
-            b"Content-Length: 1junk\r\n\r\n{}".to_vec(),
-        ));
+        let mut non_numeric =
+            BufReader::new(Cursor::new(b"Content-Length: 1junk\r\n\r\n{}".to_vec()));
         let non_numeric_err = read_frame(&mut non_numeric, DEFAULT_BRIDGE_MAX_FRAME_BYTES)
             .expect_err("non-numeric Content-Length should fail");
         assert_eq!(non_numeric_err.rpc_error.symbolic_code, "INVALID_REQUEST");
@@ -3359,7 +3451,7 @@ mod tests {
         let dispatcher = HookDispatcher::new();
         let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
 
-        let response = router.route_worker_query(RpcRequest {
+        let response = router.route(RpcRequest {
             id: Some(json!(44)),
             method: "query.definition".into(),
             params: json!({ "symbol": "helper", "workspaceId": 1 }),
@@ -3370,6 +3462,41 @@ mod tests {
         assert!(items.is_some());
         assert!(!items.unwrap().is_empty());
 
+        Ok(())
+    }
+
+    #[test]
+    fn bridge_semantic_search_preserves_matches_and_adds_backend_metadata() -> anyhow::Result<()> {
+        let (tmp, db) = setup_db()?;
+        seed(&db)?;
+        seed_semantic_chunk(&db, 900, 1, "run", "chunk-run", &[1.0, 0.0, 0.0])?;
+        seed_semantic_chunk(&db, 901, 2, "helper", "chunk-helper", &[0.0, 1.0, 0.0])?;
+        let dispatcher = HookDispatcher::new();
+        let router = BridgeRpcRouter::new(tmp.path(), &db, &dispatcher, &db);
+
+        let response = router.route(RpcRequest {
+            id: Some(json!(52)),
+            method: "query.semanticSearch".into(),
+            params: json!({
+                "workspaceId": 1,
+                "model": "model-a",
+                "queryVector": [1.0, 0.0, 0.0],
+                "limit": 5,
+                "minScore": 0.0
+            }),
+        });
+
+        assert!(
+            response.get("error").is_none(),
+            "semantic bridge response should not be an error: {response:?}"
+        );
+        let payload = &response["result"]["items"][0];
+        assert_eq!(payload["backend"], json!("vector_db"));
+        assert_eq!(payload["degraded"], json!(false));
+        assert!(payload["matches"]
+            .as_array()
+            .is_some_and(|matches| !matches.is_empty()));
+        assert_eq!(payload["matches"][0]["chunkId"], json!(900));
         Ok(())
     }
 

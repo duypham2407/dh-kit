@@ -2,7 +2,9 @@
 
 use anyhow::Result;
 use dh_graph::{EdgeResolution, GraphService, HydratedGraphProjection, NodeId};
-use dh_storage::{ChunkRepository, Database, EmbeddingRepository, FileRepository, GraphRepository};
+use dh_storage::{
+    ChunkRepository, Database, FileRepository, GraphRepository, VectorIndexRepository,
+};
 use dh_types::{
     AnswerState, EvidenceBounds, EvidenceConfidence, EvidenceEntry, EvidenceKind, EvidencePacket,
     EvidenceSource, FileId, FreshnessState, LanguageCapability, LanguageCapabilityEntry,
@@ -262,6 +264,10 @@ pub struct SemanticSearchResult {
     pub answer_state: AnswerState,
     pub matches: Vec<dh_types::SemanticMatch>,
     pub evidence: EvidencePacket,
+    pub backend: String,
+    pub degraded: bool,
+    pub degraded_reason: Option<String>,
+    pub scanned_records: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -2119,24 +2125,19 @@ impl QueryEngine for Database {
     }
 
     fn semantic_search(&self, query: SemanticSearchQuery) -> Result<SemanticSearchResult> {
-        let records = self.load_embeddings_for_model(&query.model)?;
-
-        let mut matches: Vec<(dh_types::ChunkId, f32)> = records
-            .iter()
-            .map(|r| {
-                (
-                    r.chunk_id,
-                    cosine_similarity(&query.query_vector, &r.vector),
-                )
-            })
-            .filter(|&(_, score)| score >= query.min_score)
-            .collect();
-
-        matches.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        matches.truncate(query.limit);
+        let dimensions = query.query_vector.len();
+        let vector_outcome = self.semantic_vector_search(
+            query.workspace_id,
+            &query.model,
+            dimensions,
+            &query.query_vector,
+            query.limit,
+            query.min_score,
+        )?;
 
         let mut result_matches = Vec::new();
-        for (chunk_id, score) in matches {
+        for vector_match in &vector_outcome.records {
+            let chunk_id = vector_match.chunk_id;
             if let Ok(Some(chunk)) = self.find_chunk_by_id(query.workspace_id, chunk_id) {
                 let file_path = self
                     .find_file_by_id(query.workspace_id, chunk.file_id)
@@ -2150,7 +2151,7 @@ impl QueryEngine for Database {
                     file_path,
                     title: chunk.title.clone(),
                     content: chunk.content.clone(),
-                    score,
+                    score: vector_match.score,
                     span: chunk.span.clone(),
                 });
             }
@@ -2165,7 +2166,11 @@ impl QueryEngine for Database {
                 line_start: Some(m.span.start_line),
                 line_end: Some(m.span.end_line),
                 snippet: None,
-                reason: format!("Semantic match score: {:.3}", m.score),
+                reason: format!(
+                    "Semantic match score: {:.3} via {}",
+                    m.score,
+                    vector_outcome.backend.as_str()
+                ),
                 source: EvidenceSource::Semantic,
                 confidence: if m.score > 0.85 {
                     EvidenceConfidence::Grounded
@@ -2177,10 +2182,19 @@ impl QueryEngine for Database {
 
         let answer_state = if result_matches.is_empty() {
             AnswerState::Insufficient
+        } else if vector_outcome.degraded {
+            AnswerState::Partial
         } else {
             AnswerState::Grounded
         };
         let entry_count = evidence_entries.len();
+        let mut gaps = Vec::new();
+        if let Some(reason) = vector_outcome.degraded_reason.clone() {
+            gaps.push(reason);
+        }
+        if result_matches.is_empty() && vector_outcome.scanned_records == 0 {
+            gaps.push("no matching embeddings found for workspace/model/dimensions".into());
+        }
 
         Ok(SemanticSearchResult {
             answer_state,
@@ -2192,35 +2206,20 @@ impl QueryEngine for Database {
                 format!("Found {} relevant code snippets.", entry_count),
                 "".into(),
                 evidence_entries,
-                Vec::new(),
+                gaps,
                 EvidenceBounds {
                     hop_count: None,
                     node_limit: Some(query.limit),
-                    traversal_scope: Some("semantic_similarity".into()),
+                    traversal_scope: Some(vector_outcome.backend.as_str().into()),
                     stop_reason: None,
                 },
             ),
+            backend: vector_outcome.backend.as_str().into(),
+            degraded: vector_outcome.degraded,
+            degraded_reason: vector_outcome.degraded_reason,
+            scanned_records: vector_outcome.scanned_records,
         })
     }
-}
-
-#[inline]
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-    let mut dot = 0.0;
-    let mut norm_a = 0.0;
-    let mut norm_b = 0.0;
-    for (va, vb) in a.iter().zip(b.iter()) {
-        dot += va * vb;
-        norm_a += va * va;
-        norm_b += vb * vb;
-    }
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-    dot / (norm_a.sqrt() * norm_b.sqrt())
 }
 
 fn packet(
@@ -2436,8 +2435,8 @@ fn hybrid_evidence_score(entry: &EvidenceEntry) -> f32 {
 mod tests {
     use super::*;
     use dh_storage::{
-        ChunkRepository, Database, FileRepository, GraphEdgeRepository, IndexStateRepository,
-        SymbolRepository,
+        ChunkRepository, Database, EmbeddingRepository, FileRepository, GraphEdgeRepository,
+        IndexStateRepository, SymbolRepository, VectorIndexRepository, VectorSearchBackend,
     };
     use dh_types::{
         Chunk, ChunkKind, EmbeddingStatus, File, FreshnessReason, FreshnessState, IndexRunStatus,
@@ -3230,5 +3229,189 @@ mod tests {
             .any(|gap| gap.contains("stale or partial index coverage")));
 
         Ok(())
+    }
+
+    #[test]
+    fn semantic_search_uses_vector_backend_with_additive_metadata() -> anyhow::Result<()> {
+        let db = setup_db()?;
+        seed(&db)?;
+        db.upsert_embedding(999, "model-a", 3, "chunk-run", &[1.0, 0.0, 0.0])?;
+        db.upsert_embedding(1000, "model-a", 3, "chunk-helper", &[0.0, 1.0, 0.0])?;
+        db.hydrate_vector_index(1, "model-a", 3)?;
+
+        let result = db.semantic_search(SemanticSearchQuery {
+            workspace_id: 1,
+            model: "model-a".into(),
+            query_vector: vec![1.0, 0.0, 0.0],
+            limit: 5,
+            min_score: 0.0,
+        })?;
+
+        assert_eq!(result.backend, "vector_db");
+        assert!(!result.degraded);
+        assert_eq!(result.answer_state, AnswerState::Grounded);
+        assert_eq!(result.matches.first().map(|item| item.chunk_id), Some(999));
+        assert_eq!(
+            result.evidence.bounds.traversal_scope.as_deref(),
+            Some("vector_db")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_vector_backend_matches_exact_cosine_top_k_with_documented_tolerance(
+    ) -> anyhow::Result<()> {
+        const TOP_K: usize = 4;
+        const SCORE_TOLERANCE: f32 = 0.0001;
+        // AC8 tolerance from the solution: sqlite-vec is used in exact vector scan mode, so
+        // this deterministic fixture requires exact top-k chunk order and near-identical
+        // cosine scores versus the canonical SQLite embedding scan.
+        let db = setup_db()?;
+        seed(&db)?;
+        db.upsert_file(&File {
+            id: 3,
+            workspace_id: 1,
+            root_id: 1,
+            package_id: None,
+            rel_path: "src/extra.ts".into(),
+            language: LanguageId::TypeScript,
+            size_bytes: 10,
+            mtime_unix_ms: 1,
+            content_hash: "c".into(),
+            structure_hash: None,
+            public_api_hash: None,
+            parse_status: ParseStatus::Parsed,
+            parse_error: None,
+            symbol_count: 1,
+            chunk_count: 3,
+            is_barrel: false,
+            last_indexed_at_unix_ms: None,
+            deleted_at_unix_ms: None,
+            freshness_state: FreshnessState::RefreshedCurrent,
+            freshness_reason: Some(FreshnessReason::ContentChanged),
+            last_freshness_run_id: Some("run-query-extra".into()),
+        })?;
+        db.insert_chunks(&[
+            test_chunk(1001, 3, "extra-a", "chunk-extra-a"),
+            test_chunk(1002, 3, "extra-b", "chunk-extra-b"),
+            test_chunk(1003, 3, "extra-c", "chunk-extra-c"),
+        ])?;
+
+        let fixtures = [
+            (999, "chunk-run", [1.0, 0.0, 0.0]),
+            (1000, "chunk-helper", [0.0, 1.0, 0.0]),
+            (1001, "chunk-extra-a", [0.7, 0.7, 0.0]),
+            (1002, "chunk-extra-b", [0.2, 0.8, 0.0]),
+            (1003, "chunk-extra-c", [-1.0, 0.0, 0.0]),
+        ];
+        for (chunk_id, content_hash, vector) in fixtures {
+            db.upsert_embedding(chunk_id, "model-a", 3, content_hash, &vector)?;
+        }
+        db.hydrate_vector_index(1, "model-a", 3)?;
+
+        let query_vector = [0.6, 0.8, 0.0];
+        let vector_outcome =
+            db.semantic_vector_search(1, "model-a", 3, &query_vector, TOP_K, -1.0)?;
+        db.connection().execute(
+            "UPDATE vector_index SET vector = x'00' WHERE model = 'model-a' AND dimensions = 3",
+            [],
+        )?;
+        db.connection()
+            .execute("DELETE FROM vector_index_vec0_1_3_m6d6f64656c2d61", [])?;
+        let exact_outcome =
+            db.semantic_vector_search(1, "model-a", 3, &query_vector, TOP_K, -1.0)?;
+
+        assert_eq!(vector_outcome.backend, VectorSearchBackend::VectorDb);
+        assert_eq!(exact_outcome.backend, VectorSearchBackend::SqliteScan);
+        assert_eq!(
+            ranked_chunk_ids(&vector_outcome.records),
+            ranked_chunk_ids(&exact_outcome.records),
+            "vector_db top-k ordering must match exact cosine scan for deterministic AC8 fixture"
+        );
+        for (vector_record, exact_record) in vector_outcome
+            .records
+            .iter()
+            .zip(exact_outcome.records.iter())
+        {
+            let delta = (vector_record.score - exact_record.score).abs();
+            assert!(
+                delta <= SCORE_TOLERANCE,
+                "chunk {} score delta {delta} exceeded deterministic exact-mode tolerance {SCORE_TOLERANCE}",
+                vector_record.chunk_id
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_search_reports_observable_sqlite_scan_fallback() -> anyhow::Result<()> {
+        let db = setup_db()?;
+        seed(&db)?;
+        db.upsert_embedding(999, "model-a", 3, "chunk-run", &[1.0, 0.0, 0.0])?;
+        db.hydrate_vector_index(1, "model-a", 3)?;
+        db.connection().execute(
+            "UPDATE vector_index SET vector = x'00' WHERE chunk_id = 999 AND model = 'model-a' AND dimensions = 3",
+            [],
+        )?;
+        db.connection()
+            .execute("DELETE FROM vector_index_vec0_1_3_m6d6f64656c2d61", [])?;
+
+        let result = db.semantic_search(SemanticSearchQuery {
+            workspace_id: 1,
+            model: "model-a".into(),
+            query_vector: vec![1.0, 0.0, 0.0],
+            limit: 5,
+            min_score: 0.0,
+        })?;
+
+        assert_eq!(result.backend, "sqlite_scan");
+        assert!(result.degraded);
+        assert_eq!(result.answer_state, AnswerState::Partial);
+        assert!(result
+            .degraded_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("vector backend failed")));
+        assert_eq!(result.scanned_records, 1);
+        assert_eq!(
+            result.evidence.bounds.traversal_scope.as_deref(),
+            Some("sqlite_scan")
+        );
+        Ok(())
+    }
+
+    fn test_chunk(
+        id: dh_types::ChunkId,
+        file_id: dh_types::FileId,
+        title: &str,
+        content_hash: &str,
+    ) -> Chunk {
+        Chunk {
+            id,
+            workspace_id: 1,
+            file_id,
+            symbol_id: None,
+            parent_symbol_id: None,
+            kind: ChunkKind::Symbol,
+            language: LanguageId::TypeScript,
+            title: title.into(),
+            content: format!("semantic fixture {title}"),
+            content_hash: content_hash.into(),
+            token_estimate: 4,
+            span: Span {
+                start_byte: 0,
+                end_byte: 1,
+                start_line: 1,
+                start_column: 0,
+                end_line: 1,
+                end_column: 1,
+            },
+            prev_chunk_id: None,
+            next_chunk_id: None,
+            embedding_status: EmbeddingStatus::NotQueued,
+        }
+    }
+
+    fn ranked_chunk_ids(records: &[dh_storage::VectorSearchRecord]) -> Vec<dh_types::ChunkId> {
+        records.iter().map(|record| record.chunk_id).collect()
     }
 }

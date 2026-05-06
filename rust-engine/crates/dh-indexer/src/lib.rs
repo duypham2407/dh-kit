@@ -16,7 +16,7 @@ use dh_parser::{
 };
 use dh_storage::{
     ChunkRepository, Database, FileRepository, GraphEdgeRepository, IndexStateRepository,
-    SymbolRepository,
+    SymbolRepository, VectorIndexRepository,
 };
 use dh_types::{
     EdgeKind, EdgeResolution, File, FileCandidate, FileId, FreshnessReason, FreshnessState,
@@ -552,16 +552,17 @@ impl Indexer {
         let model = client.config().model.clone();
         let dim = client.config().dimensions;
 
-        // Only embed chunks without a stored vector for this model.
+        // Only embed chunks without a current stored vector for this model.
         let existing_vectors: std::collections::HashSet<_> = db
             .load_embeddings_for_model(&model)?
             .into_iter()
-            .map(|r| r.chunk_id)
+            .filter(|record| record.dimensions == dim)
+            .map(|record| (record.chunk_id, record.content_hash))
             .collect();
 
         let pending: Vec<_> = chunks
             .iter()
-            .filter(|c| !existing_vectors.contains(&c.id))
+            .filter(|chunk| !existing_vectors.contains(&(chunk.id, chunk.content_hash.clone())))
             .collect();
 
         if pending.is_empty() {
@@ -2718,6 +2719,9 @@ fn write_file_atomically(
         db.upsert_file(file)
             .with_context(|| format!("upsert file {}", file.rel_path))?;
 
+        db.prune_stale_vector_records()
+            .with_context(|| format!("prune stale vector records for {}", file.rel_path))?;
+
         if !symbols.is_empty() {
             db.insert_symbols(symbols)
                 .with_context(|| format!("insert symbols for {}", file.rel_path))?;
@@ -2787,6 +2791,12 @@ fn mark_deleted_file(
         deleted.freshness_reason = Some(FreshnessReason::DeletedPath);
         deleted.last_freshness_run_id = Some(run_id_marker.to_string());
         db.upsert_file(&deleted)?;
+        db.prune_stale_vector_records().with_context(|| {
+            format!(
+                "prune stale vector records for deleted file {}",
+                deleted.rel_path
+            )
+        })?;
 
         Ok(())
     })();

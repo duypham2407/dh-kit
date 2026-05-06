@@ -45,8 +45,9 @@ describe("worker bundle packaging", () => {
     };
 
     expect(workerBytes.length).toBeGreaterThan(0);
+    const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
     expect(manifest).toMatchObject({
-      workerVersion: "0.1.0",
+      workerVersion: pkg.version,
       protocolVersion: "1",
       entryPath: "worker.mjs",
       requiredNodeMajor: 22,

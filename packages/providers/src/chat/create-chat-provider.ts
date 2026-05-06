@@ -28,7 +28,12 @@ export async function createChatProvider(
       }),
       Provider.layer
     )
-  );
+  ).catch(async () => {
+    // Fallback: when provider/model is not in the registry, use openai-compatible SDK
+    const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+    const sdk = createOpenAICompatible({ name: selection.providerId, baseURL: "" });
+    return sdk.languageModel(selection.modelId);
+  });
 
   return {
     providerId: selection.providerId,

@@ -169,8 +169,8 @@ type RustHostedKnowledgePathView = {
   available: boolean;
   status: LifecycleStatus;
   topology: "rust_host_ts_worker";
-  supportBoundary: "knowledge_commands_first_wave";
-  supportedCommands: Array<"ask" | "explain" | "trace">;
+  supportBoundary: "runtime_authority_spine";
+  supportedCommands: Array<"ask" | "explain" | "trace" | "run">;
   buildEvidenceSupport: "bounded_rust_hosted_broad_ask_only";
   workerRole: "typescript_worker";
   legacyPathLabel: "legacy_ts_host_bridge_compatibility_only";
@@ -387,7 +387,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   }
 
   if (rustHostedKnowledgePath.status !== "healthy") {
-    actions.push("Rust-hosted first-wave knowledge-command readiness is degraded: build/package ts-worker/worker.mjs and ts-worker/manifest.json before claiming ask/explain/trace release readiness.");
+    actions.push("Rust-hosted run/knowledge-command readiness is degraded: build/package ts-worker/worker.mjs and ts-worker/manifest.json before claiming ask/explain/trace/run release readiness.");
   }
 
   if (!embeddingKeyAvailable && semanticMode !== "off") {
@@ -423,7 +423,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   }
 
   if (parityReport.summary.byStatus.supported < parityReport.summary.total) {
-    actions.push("OpenCode parity is incomplete: implement Milestone 1: Rust Runtime Authority For All Command Paths before claiming run/session/provider/MCP parity.");
+    actions.push(`OpenCode parity is incomplete: implement ${parityReport.summary.recommendedNextMilestone} before claiming session/provider/MCP/tool parity.`);
   }
 
   const summaryLines = [
@@ -475,8 +475,8 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     `  rule_scan: ${qualityGateAvailability.gates.rule_scan.availability}`,
     `  security_scan: ${qualityGateAvailability.gates.security_scan.availability}`,
     "",
-    "Rust-hosted knowledge-command lifecycle authority:",
-    "  support boundary: ask/explain/trace first-wave knowledge commands only",
+    "Rust-hosted run/knowledge-command lifecycle authority:",
+    "  support boundary: run direct loop plus ask/explain/trace first-wave knowledge commands",
     `  topology: ${rustHostedKnowledgePath.topology}`,
     "  lifecycle authority: Rust host owns startup, spawn, readiness, health, timeout, recovery, shutdown, cleanup, and final exit on this supported path",
     "  build-evidence support: bounded Rust-hosted broad ask only; finite static subjects use Rust-authored query.buildEvidence packet truth",
@@ -506,7 +506,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     runtimePingLifecycleSeam.summary
       ? `  phase: ${runtimePingLifecycleSeam.summary.phase}`
       : "  phase: unavailable",
-    "  boundary: this seam checks compatibility runtime.ping only; it is not the Rust-hosted ask/explain/trace lifecycle envelope",
+    "  boundary: this seam checks compatibility runtime.ping only; it is not the Rust-hosted run/ask/explain/trace lifecycle envelope",
     "",
     "Capability state (compatibility Rust bridge query truth):",
     rustCapabilitySummary.available
@@ -716,8 +716,8 @@ function summarizeRustHostedKnowledgePath(input: {
     available: workerBundleReady && workerManifestReady,
     status: reasons.length === 0 ? "healthy" : "degraded",
     topology: "rust_host_ts_worker",
-    supportBoundary: "knowledge_commands_first_wave",
-    supportedCommands: ["ask", "explain", "trace"],
+    supportBoundary: "runtime_authority_spine",
+    supportedCommands: ["ask", "explain", "trace", "run"],
     buildEvidenceSupport: "bounded_rust_hosted_broad_ask_only",
     workerRole: "typescript_worker",
     legacyPathLabel: "legacy_ts_host_bridge_compatibility_only",

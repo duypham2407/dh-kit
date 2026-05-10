@@ -8,7 +8,6 @@ import {
 } from "../../../shared/src/types/parity.js";
 
 export const OPENCODE_MISSING_COMMAND_SURFACES = [
-  "run",
   "serve",
   "web",
   "attach",
@@ -27,7 +26,7 @@ export const OPENCODE_MISSING_COMMAND_SURFACES = [
   "acp",
 ] as const;
 
-const RECOMMENDED_NEXT_MILESTONE = "Milestone 1: Rust Runtime Authority For All Command Paths";
+const RECOMMENDED_NEXT_MILESTONE = "Milestone 3: Session Product Parity";
 
 const FEATURES: ParityFeature[] = [
   {
@@ -37,12 +36,13 @@ const FEATURES: ParityFeature[] = [
     dhSurface: [
       "Rust-hosted ask/explain/trace lifecycle",
       "Rust-hosted quick/delivery/migrate lane lifecycle",
+      "Rust-hosted direct run lifecycle",
       "TypeScript worker compatibility boundary",
     ],
     status: "supported",
     priority: "P0",
     missingCommandSurfaces: [],
-    missingRuntimeCapabilities: ["OpenCode run/session/provider/MCP/tool lifecycle authority remains planned in later milestones"],
+    missingRuntimeCapabilities: ["OpenCode session/provider/MCP/tool lifecycle authority remains planned in later milestones"],
     nextMilestone: RECOMMENDED_NEXT_MILESTONE,
     notes: ["Rust is authoritative for first-wave knowledge commands and lane command launch/supervision."],
   },
@@ -69,6 +69,7 @@ const FEATURES: ParityFeature[] = [
       "acp",
     ],
     dhSurface: [
+      "run (rust-hosted)",
       "ask",
       "explain",
       "trace",
@@ -84,9 +85,9 @@ const FEATURES: ParityFeature[] = [
     status: "partial",
     priority: "P0",
     missingCommandSurfaces: [...OPENCODE_MISSING_COMMAND_SURFACES],
-    missingRuntimeCapabilities: ["OpenCode-like direct interactive run loop", "headless server command surface", "session import/export UX"],
-    nextMilestone: "Milestone 2: dh run Direct Interactive Loop",
-    notes: ["Existing DH commands are useful but do not cover the OpenCode daily interactive surface."],
+    missingRuntimeCapabilities: ["headless server command surface", "session import/export UX"],
+    nextMilestone: "Milestone 3: Session Product Parity",
+    notes: ["DH now has a Rust-hosted direct run path; session product commands remain incomplete."],
   },
   {
     category: "session",

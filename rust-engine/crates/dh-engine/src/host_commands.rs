@@ -62,6 +62,26 @@ pub struct HostLaneCommandRequest {
     pub output_json: bool,
 }
 
+/// Request to run the direct assistant loop via `session.runDirect`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostRunCommandRequest {
+    pub message: String,
+    pub workspace_root: PathBuf,
+    pub node_runtime: PathBuf,
+    pub worker_entry: PathBuf,
+    pub worker_manifest: Option<PathBuf>,
+    pub continue_latest: bool,
+    pub session_id: Option<String>,
+    pub fork: bool,
+    pub model: Option<String>,
+    pub agent_id: Option<String>,
+    pub variant: Option<String>,
+    pub files: Vec<String>,
+    pub title: Option<String>,
+    pub auto_approve: bool,
+    pub output_json: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RustHostedKnowledgeReport {
@@ -270,6 +290,11 @@ pub fn render_hosted_knowledge_text(report: &RustHostedKnowledgeReport) -> Strin
             lines.push("".to_string());
             lines.push("answer:".to_string());
             lines.push(format!("  {answer}"));
+        }
+        if let Some(text) = worker_report.get("text").and_then(Value::as_str) {
+            lines.push("".to_string());
+            lines.push("text:".to_string());
+            lines.push(format!("  {text}"));
         }
         if let Some(rust_evidence) = worker_report.get("rustEvidence") {
             append_rust_packet_text(&mut lines, rust_evidence);
@@ -516,6 +541,66 @@ pub fn run_hosted_lane_command(
     }
 }
 
+/// Run the direct assistant loop by sending `session.runDirect` to the TS worker.
+pub fn run_hosted_direct_command(
+    request: HostRunCommandRequest,
+) -> Result<RustHostedKnowledgeReport> {
+    let workspace = request
+        .workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| request.workspace_root.clone());
+    let db_path = workspace.join(DEFAULT_DB_NAME);
+    let db = Database::new(&db_path).with_context(|| format!("open db: {}", db_path.display()))?;
+    db.initialize()?;
+
+    let mut launch = RuntimeLaunchRequest::new(&request.node_runtime, &request.worker_entry);
+    if let Some(manifest) = &request.worker_manifest {
+        launch = launch.with_manifest(manifest);
+    }
+    let config = WorkerSupervisorConfig::new(launch, workspace.clone());
+    let mut supervisor = WorkerSupervisor::new(config);
+
+    match supervisor.launch() {
+        Ok(report) => report,
+        Err(error) => {
+            return Ok(report_from_run_lifecycle_error(
+                error.report,
+                format!("Rust supervisor error: {}", error.message),
+                "Rust host could not launch the TS worker for direct run.",
+            ));
+        }
+    };
+
+    let dispatcher = crate::hooks::HookDispatcher::new();
+    let router = BridgeRpcRouter::new(&workspace, &db, &dispatcher, &db);
+    let run_params = session_run_direct_params(&request, &workspace);
+
+    let worker_outcome = supervisor.send_worker_request_with_host_handler(
+        "session.runDirect",
+        run_params,
+        |worker_message| route_worker_to_host_message(worker_message, &router),
+    );
+
+    match worker_outcome {
+        Ok(outcome) => {
+            let shutdown = supervisor.shutdown();
+            Ok(report_from_run_worker_success(outcome, shutdown, None))
+        }
+        Err(error) => {
+            let shutdown = supervisor.shutdown();
+            let mut report = report_from_run_lifecycle_error(
+                error.report,
+                format!("Rust supervisor error: {}", error.message),
+                "Rust host: session.runDirect failed.",
+            );
+            report.rust_lifecycle = merge_shutdown(report.rust_lifecycle, shutdown);
+            report.final_status = report.rust_lifecycle.final_status;
+            report.degraded_reason = degraded_reason_for_lifecycle(&report.rust_lifecycle, None);
+            Ok(report)
+        }
+    }
+}
+
 fn session_run_lane_params(request: &HostLaneCommandRequest, workspace: &Path) -> Value {
     let lane_str = match request.lane {
         dh_types::WorkflowLane::Quick => "quick",
@@ -529,6 +614,33 @@ fn session_run_lane_params(request: &HostLaneCommandRequest, workspace: &Path) -
     });
     if let Some(resume_id) = &request.resume_session_id {
         params["resumeSessionId"] = Value::String(resume_id.clone());
+    }
+    params
+}
+
+fn session_run_direct_params(request: &HostRunCommandRequest, workspace: &Path) -> Value {
+    let mut params = json!({
+        "message": request.message,
+        "repoRoot": workspace,
+        "continueLatest": request.continue_latest,
+        "fork": request.fork,
+        "files": request.files,
+        "autoApprove": request.auto_approve,
+    });
+    if let Some(session_id) = &request.session_id {
+        params["sessionId"] = Value::String(session_id.clone());
+    }
+    if let Some(model) = &request.model {
+        params["model"] = Value::String(model.clone());
+    }
+    if let Some(agent_id) = &request.agent_id {
+        params["agentId"] = Value::String(agent_id.clone());
+    }
+    if let Some(variant) = &request.variant {
+        params["variant"] = Value::String(variant.clone());
+    }
+    if let Some(title) = &request.title {
+        params["title"] = Value::String(title.clone());
     }
     params
 }
@@ -749,6 +861,64 @@ fn report_from_lane_worker_success(
     }
 }
 
+fn report_from_run_worker_success(
+    outcome: WorkerRequestOutcome,
+    shutdown: HostLifecycleReport,
+    recovery_note: Option<String>,
+) -> RustHostedKnowledgeReport {
+    let worker_result = outcome.result;
+    let worker_report = worker_result.get("report").unwrap_or(&worker_result);
+    let command_exit_code = worker_report
+        .get("exitCode")
+        .or_else(|| worker_result.get("exitCode"))
+        .and_then(Value::as_i64)
+        .map(|code| code as i32);
+    let mut lifecycle = outcome.report;
+    let final_status = final_status_from_run_worker_report(
+        worker_report,
+        command_exit_code,
+        lifecycle.recovery_outcome,
+    );
+    lifecycle = report_for_final_status(
+        lifecycle.platform,
+        WorkerState::Ready,
+        health_state_for_final_status(final_status),
+        if final_status == FinalStatus::RequestFailed {
+            FailurePhase::Request
+        } else {
+            FailurePhase::None
+        },
+        TimeoutClass::None,
+        lifecycle.recovery_outcome,
+        lifecycle.cleanup_outcome,
+        lifecycle.launchability_issue,
+        final_status,
+        command_exit_code,
+    );
+    lifecycle = merge_shutdown(lifecycle, shutdown);
+    let degraded_reason = degraded_reason_for_lifecycle(&lifecycle, recovery_note.as_deref());
+
+    RustHostedKnowledgeReport {
+        command: "run".to_string(),
+        command_family: "run",
+        runtime_authority: "rust",
+        session_id: session_id_from_worker_result(&worker_result),
+        final_status: lifecycle.final_status,
+        degraded_reason,
+        topology: lifecycle.topology,
+        support_boundary: lifecycle.support_boundary,
+        legacy_path_label: "legacy_ts_host_bridge_compatibility_only",
+        rust_lifecycle: lifecycle,
+        worker_result: Some(worker_result),
+        rust_host_notes: vec![
+            "Rust host launched and supervised the TypeScript worker for the direct run loop."
+                .into(),
+            "TypeScript worker result is run body output only; Rust host lifecycle metadata is authoritative."
+                .into(),
+        ],
+    }
+}
+
 fn report_from_lane_lifecycle_error(
     lane: dh_types::WorkflowLane,
     lifecycle: HostLifecycleReport,
@@ -758,6 +928,27 @@ fn report_from_lane_lifecycle_error(
     RustHostedKnowledgeReport {
         command: lane_command_name(lane).to_string(),
         command_family: "lane",
+        runtime_authority: "rust",
+        session_id: None,
+        final_status: lifecycle.final_status,
+        degraded_reason: Some(error_note.clone()),
+        topology: lifecycle.topology,
+        support_boundary: lifecycle.support_boundary,
+        legacy_path_label: "legacy_ts_host_bridge_compatibility_only",
+        rust_lifecycle: lifecycle,
+        worker_result: None,
+        rust_host_notes: vec![note.into(), error_note],
+    }
+}
+
+fn report_from_run_lifecycle_error(
+    lifecycle: HostLifecycleReport,
+    error_note: String,
+    note: &str,
+) -> RustHostedKnowledgeReport {
+    RustHostedKnowledgeReport {
+        command: "run".to_string(),
+        command_family: "run",
         runtime_authority: "rust",
         session_id: None,
         final_status: lifecycle.final_status,
@@ -781,6 +972,36 @@ fn session_id_from_worker_result(worker_result: &Value) -> Option<String> {
         })
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+fn final_status_from_run_worker_report(
+    worker_report: &Value,
+    command_exit_code: Option<i32>,
+    recovery_outcome: RecoveryOutcome,
+) -> FinalStatus {
+    if matches!(command_exit_code, Some(130))
+        || worker_report
+            .get("finalStatus")
+            .and_then(Value::as_str)
+            .is_some_and(|status| status == "cancelled")
+    {
+        return FinalStatus::Cancelled;
+    }
+    if command_exit_code.unwrap_or(0) != 0 {
+        return FinalStatus::RequestFailed;
+    }
+    if recovery_outcome == RecoveryOutcome::AttemptedSucceededDegraded {
+        return FinalStatus::RecoveredDegradedSuccess;
+    }
+
+    match worker_report.get("finalStatus").and_then(Value::as_str) {
+        Some("degraded_success") => FinalStatus::DegradedSuccess,
+        Some("recovered_degraded_success") => FinalStatus::RecoveredDegradedSuccess,
+        Some("request_failed") => FinalStatus::RequestFailed,
+        Some("cleanup_incomplete") => FinalStatus::CleanupIncomplete,
+        Some("clean_success") | None => FinalStatus::CleanSuccess,
+        _ => FinalStatus::CleanSuccess,
+    }
 }
 
 fn degraded_reason_for_lifecycle(
@@ -1178,6 +1399,42 @@ sleep 0.05
         assert_eq!(report.command_family, "lane");
         assert_eq!(report.runtime_authority, "rust");
         assert_eq!(report.session_id.as_deref(), Some("session-rust-lane"));
+        assert_eq!(report.final_status, FinalStatus::CleanSuccess);
+        assert_eq!(report.degraded_reason, None);
+    }
+
+    #[test]
+    fn run_report_uses_run_identity_and_authority_envelope() {
+        let lifecycle = report_for_final_status(
+            "linux",
+            WorkerState::Ready,
+            HealthState::Healthy,
+            FailurePhase::None,
+            TimeoutClass::None,
+            RecoveryOutcome::NotAttempted,
+            CleanupOutcome::Graceful,
+            None,
+            FinalStatus::CleanSuccess,
+            Some(0),
+        );
+        let outcome = WorkerRequestOutcome {
+            result: serde_json::json!({
+                "report": {
+                    "exitCode": 0,
+                    "command": "run",
+                    "sessionId": "session-run-1",
+                    "text": "answer",
+                    "events": []
+                }
+            }),
+            report: lifecycle.clone(),
+        };
+        let report = report_from_run_worker_success(outcome, lifecycle, None);
+
+        assert_eq!(report.command, "run");
+        assert_eq!(report.command_family, "run");
+        assert_eq!(report.runtime_authority, "rust");
+        assert_eq!(report.session_id.as_deref(), Some("session-run-1"));
         assert_eq!(report.final_status, FinalStatus::CleanSuccess);
         assert_eq!(report.degraded_reason, None);
     }

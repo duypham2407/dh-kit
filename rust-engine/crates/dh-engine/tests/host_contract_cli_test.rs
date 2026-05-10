@@ -35,7 +35,7 @@ fn host_contract_cli_prints_lifecycle_and_protocol_contracts() {
     );
     assert_eq!(
         payload["lifecycleContract"]["supportedCommands"],
-        serde_json::json!(["ask", "explain", "trace", "quick", "delivery", "migrate"])
+        serde_json::json!(["ask", "explain", "trace", "quick", "delivery", "migrate", "run"])
     );
     assert_eq!(payload["lifecycleContract"]["authorityOwner"], "rust");
     assert_eq!(
@@ -47,7 +47,7 @@ fn host_contract_cli_prints_lifecycle_and_protocol_contracts() {
         serde_json::json!([
             {"family":"knowledge","state":"supported","owner":"rust"},
             {"family":"lane","state":"supported","owner":"rust"},
-            {"family":"run","state":"planned","owner":"rust"},
+            {"family":"run","state":"supported","owner":"rust"},
             {"family":"session","state":"partial","owner":"rust"},
             {"family":"provider","state":"planned","owner":"rust"},
             {"family":"mcp","state":"planned","owner":"rust"},
@@ -136,6 +136,7 @@ fn shipped_cli_help_does_not_advertise_doctor_command() {
     assert!(stdout.contains("ask"), "help should advertise ask");
     assert!(stdout.contains("explain"), "help should advertise explain");
     assert!(stdout.contains("trace"), "help should advertise trace");
+    assert!(stdout.contains("run"), "help should advertise run");
     assert!(stdout.contains("doctor"), "help should advertise doctor");
 }
 
@@ -200,6 +201,33 @@ fn first_wave_command_without_worker_bundle_is_rust_classified_startup_failure()
         .is_some_and(|notes| notes.iter().any(|note| note
             .as_str()
             .is_some_and(|text| text.contains("No legacy TypeScript-host fallback")))));
+}
+
+#[test]
+fn run_command_without_worker_bundle_is_rust_classified_startup_failure() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let result = Command::new(engine_bin())
+        .args(["run", "inspect runtime", "--workspace"])
+        .arg(tmp.path())
+        .arg("--json")
+        .output()
+        .expect("dh-engine run command should execute");
+
+    let stdout = String::from_utf8_lossy(&result.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&result.stderr).to_string();
+    assert!(
+        !result.status.success(),
+        "run without worker bundle should fail as startup-class lifecycle failure\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+
+    let payload: Value = serde_json::from_str(&stdout).expect("run failure JSON should parse");
+    assert_eq!(payload["command"], "run");
+    assert_eq!(payload["commandFamily"], "run");
+    assert_eq!(payload["runtimeAuthority"], "rust");
+    assert!(["startup_failed", "request_failed"]
+        .contains(&payload["finalStatus"].as_str().unwrap_or("")));
 }
 
 #[test]

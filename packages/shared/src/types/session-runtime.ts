@@ -1,7 +1,9 @@
 import type { WorkflowLane } from "./lane.js";
+import type { RunEventType } from "./run.js";
 import type { WorkflowStage } from "./stage.js";
 
 export type SessionRuntimeEventType =
+  | RunEventType
   | "busy"
   | "idle"
   | "cancel"

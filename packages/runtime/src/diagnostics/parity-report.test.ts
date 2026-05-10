@@ -21,7 +21,6 @@ describe("buildOpenCodeParityReport", () => {
     expect(report.summary.missingCommandSurfaces).toEqual(OPENCODE_MISSING_COMMAND_SURFACES);
     expect(report.summary.missingCommandSurfaces).toEqual(
       expect.arrayContaining([
-        "run",
         "serve",
         "web",
         "attach",
@@ -40,6 +39,7 @@ describe("buildOpenCodeParityReport", () => {
         "acp",
       ]),
     );
+    expect(report.summary.missingCommandSurfaces).not.toContain("run");
     expect(report.summary.missingCommandSurfaces).not.toEqual(
       expect.arrayContaining(["ask", "explain", "trace", "index", "doctor"]),
     );
@@ -51,7 +51,7 @@ describe("buildOpenCodeParityReport", () => {
   it("recommends Rust runtime authority as the next milestone", () => {
     const report = buildOpenCodeParityReport();
 
-    expect(report.summary.recommendedNextMilestone).toBe("Milestone 1: Rust Runtime Authority For All Command Paths");
+    expect(report.summary.recommendedNextMilestone).toBe("Milestone 3: Session Product Parity");
     expect(report.summary.byStatus.partial).toBeGreaterThan(0);
     expect(report.summary.byStatus.planned).toBeGreaterThan(0);
     expect(report.summary.byStatus.deferred).toBeGreaterThan(0);
@@ -72,5 +72,21 @@ describe("buildOpenCodeParityReport", () => {
       "delivery (rust-hosted)",
       "migrate (rust-hosted)",
     ]));
+  });
+
+  it("removes direct run loop from missing surfaces after dh run lands", () => {
+    const report = buildOpenCodeParityReport();
+    const runtime = report.features.find((feature) => feature.category === "runtime");
+    const cli = report.features.find((feature) => feature.category === "cli");
+
+    expect(report.summary.missingCommandSurfaces).not.toContain("run");
+    expect(runtime?.dhSurface).toEqual(expect.arrayContaining(["Rust-hosted direct run lifecycle"]));
+    expect(runtime?.missingRuntimeCapabilities).not.toEqual(
+      expect.arrayContaining(["OpenCode run/session/provider/MCP/tool lifecycle authority remains planned in later milestones"]),
+    );
+    expect(cli?.dhSurface).toEqual(expect.arrayContaining(["run (rust-hosted)"]));
+    expect(cli?.missingRuntimeCapabilities).not.toEqual(
+      expect.arrayContaining(["OpenCode-like direct interactive run loop"]),
+    );
   });
 });

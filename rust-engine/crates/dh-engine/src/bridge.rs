@@ -3089,6 +3089,7 @@ mod tests {
                 "dh.ready",
                 "session.runCommand",
                 "session.runLane",
+                "session.runDirect",
                 "runtime.ping",
                 "dh.shutdown"
             ])
@@ -3387,7 +3388,7 @@ mod tests {
         );
         assert_eq!(
             contract["supportedCommands"],
-            json!(["ask", "explain", "trace", "quick", "delivery", "migrate"])
+            json!(["ask", "explain", "trace", "quick", "delivery", "migrate", "run"])
         );
         assert_eq!(contract["runtimeAuthority"]["owner"], json!("rust"));
         assert_eq!(

@@ -210,7 +210,9 @@ pub fn lifecycle_contract() -> LifecycleContract {
         contract_version: LIFECYCLE_CONTRACT_VERSION,
         topology: TOPOLOGY_RUST_HOST_TS_WORKER,
         support_boundary: SUPPORT_BOUNDARY_RUNTIME_AUTHORITY_SPINE,
-        supported_commands: vec!["ask", "explain", "trace", "quick", "delivery", "migrate"],
+        supported_commands: vec![
+            "ask", "explain", "trace", "quick", "delivery", "migrate", "run",
+        ],
         supported_platforms: SUPPORTED_PLATFORMS.to_vec(),
         authority_owner: LIFECYCLE_AUTHORITY_OWNER,
         worker_role: WORKER_ROLE,
@@ -324,7 +326,7 @@ pub fn runtime_authority_contract() -> RuntimeAuthorityContract {
             },
             RuntimeAuthorityFamilyContract {
                 family: RuntimeAuthorityFamily::Run,
-                state: RuntimeAuthorityState::Planned,
+                state: RuntimeAuthorityState::Supported,
                 owner: LIFECYCLE_AUTHORITY_OWNER,
             },
             RuntimeAuthorityFamilyContract {
@@ -454,7 +456,7 @@ mod tests {
         assert_eq!(value["supportBoundary"], json!("runtime_authority_spine"));
         assert_eq!(
             value["supportedCommands"],
-            json!(["ask", "explain", "trace", "quick", "delivery", "migrate"])
+            json!(["ask", "explain", "trace", "quick", "delivery", "migrate", "run"])
         );
         assert_eq!(value["authorityOwner"], json!("rust"));
         assert_eq!(value["workerRole"], json!("typescript_worker"));
@@ -464,7 +466,7 @@ mod tests {
             json!([
                 {"family":"knowledge","state":"supported","owner":"rust"},
                 {"family":"lane","state":"supported","owner":"rust"},
-                {"family":"run","state":"planned","owner":"rust"},
+                {"family":"run","state":"supported","owner":"rust"},
                 {"family":"session","state":"partial","owner":"rust"},
                 {"family":"provider","state":"planned","owner":"rust"},
                 {"family":"mcp","state":"planned","owner":"rust"},

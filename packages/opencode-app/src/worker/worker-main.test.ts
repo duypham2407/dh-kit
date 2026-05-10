@@ -8,10 +8,12 @@ import { createWorkerRuntime } from "./worker-main.js";
 import { WorkerJsonRpcPeer } from "./worker-jsonrpc-stdio.js";
 
 let repos: string[] = [];
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
 
 function makeRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "dh-worker-main-"));
   fs.mkdirSync(path.join(repo, ".dh"), { recursive: true });
+  process.env.XDG_DATA_HOME = path.join(repo, ".xdg-data");
   repos.push(repo);
   return repo;
 }
@@ -40,6 +42,11 @@ function connectHostAndWorker(repoRoot: string): {
 }
 
 afterEach(() => {
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
   for (const repo of repos) {
     closeDhDatabase(repo);
   }
@@ -232,6 +239,33 @@ describe("worker-main", () => {
         lane: "quick",
         objective: "inspect runtime authority marker",
         runtimeAuthority: "typescript_compatibility",
+      },
+    });
+  });
+
+  it("runs direct run commands inside the TypeScript worker boundary", async () => {
+    const repo = makeRepo();
+    const { hostPeer, start } = connectHostAndWorker(repo);
+    start();
+
+    await hostPeer.request("dh.initialize", {
+      protocolVersion: "1",
+      workspaceRoot: repo,
+      lifecycleAuthority: "rust",
+    });
+    await hostPeer.request("dh.initialized", { accepted: true });
+
+    const result = await hostPeer.request("session.runDirect", {
+      message: "inspect run path",
+      repoRoot: repo,
+    });
+
+    expect(result).toMatchObject({
+      runtimeAuthority: "typescript_worker",
+      report: {
+        command: "run",
+        runtimeAuthority: "typescript_worker",
+        text: expect.stringContaining("inspect run path"),
       },
     });
   });

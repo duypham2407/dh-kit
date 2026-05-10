@@ -34,9 +34,10 @@ pub const BUILD_EVIDENCE_UNSUPPORTED_CLASSES: [&str; 5] = [
 ];
 
 pub const HOST_HANDSHAKE_METHODS: [&str; 2] = ["dh.initialize", "dh.initialized"];
-pub const HOST_TO_WORKER_REQUEST_METHODS: [&str; 5] = [
+pub const HOST_TO_WORKER_REQUEST_METHODS: [&str; 6] = [
     "session.runCommand",
     "session.runLane",
+    "session.runDirect",
     "runtime.ping",
     "session.cancel",
     "dh.shutdown",
@@ -61,11 +62,12 @@ pub const BRIDGE_INITIALIZE_METHODS: [&str; 7] = [
     QUERY_CALL_HIERARCHY_METHOD,
     QUERY_ENTRY_POINTS_METHOD,
 ];
-pub const BRIDGE_LIFECYCLE_CONTROL_METHODS: [&str; 6] = [
+pub const BRIDGE_LIFECYCLE_CONTROL_METHODS: [&str; 7] = [
     "dh.initialized",
     "dh.ready",
     "session.runCommand",
     "session.runLane",
+    "session.runDirect",
     "runtime.ping",
     "dh.shutdown",
 ];
@@ -280,6 +282,9 @@ mod tests {
         assert!(contract
             .host_to_worker_request_methods
             .contains(&"session.runLane"));
+        assert!(contract
+            .host_to_worker_request_methods
+            .contains(&"session.runDirect"));
         assert_eq!(
             serde_json::to_value(&contract.runtime_authority)?["owner"],
             json!("rust")

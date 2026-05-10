@@ -73,6 +73,8 @@ enum Commands {
     Delivery(LaneCommandArgs),
     /// Run a Migration-lane workflow.
     Migrate(LaneCommandArgs),
+    /// Run the direct assistant loop.
+    Run(RunCommandArgs),
     Serve {
         #[arg(long, default_value = ".")]
         workspace: PathBuf,
@@ -170,6 +172,42 @@ struct LaneCommandArgs {
     worker_manifest: Option<PathBuf>,
     #[arg(long = "resume-session")]
     resume_session_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+/// Arguments for `dh-engine run`.
+#[derive(Debug, Args)]
+struct RunCommandArgs {
+    /// The direct run prompt/message.
+    #[arg(required = true, num_args = 1..)]
+    message: Vec<String>,
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
+    #[arg(long = "node-runtime", default_value = "node")]
+    node_runtime: PathBuf,
+    #[arg(long = "worker-entry")]
+    worker_entry: Option<PathBuf>,
+    #[arg(long = "worker-manifest")]
+    worker_manifest: Option<PathBuf>,
+    #[arg(long = "continue", default_value_t = false)]
+    continue_latest: bool,
+    #[arg(long = "session")]
+    session_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    fork: bool,
+    #[arg(long)]
+    model: Option<String>,
+    #[arg(long = "agent")]
+    agent_id: Option<String>,
+    #[arg(long)]
+    variant: Option<String>,
+    #[arg(long = "file")]
+    files: Vec<String>,
+    #[arg(long)]
+    title: Option<String>,
+    #[arg(long = "auto-approve", default_value_t = false)]
+    auto_approve: bool,
     #[arg(long, default_value_t = false)]
     json: bool,
 }
@@ -505,6 +543,7 @@ fn main() -> Result<()> {
         Commands::Quick(args) => run_lane_command(WorkflowLane::Quick, args)?,
         Commands::Delivery(args) => run_lane_command(WorkflowLane::Delivery, args)?,
         Commands::Migrate(args) => run_lane_command(WorkflowLane::Migration, args)?,
+        Commands::Run(args) => run_direct_command(args)?,
         Commands::Serve { workspace } => {
             let workspace = workspace.canonicalize()?;
             bridge::run_bridge_server(workspace)?;
@@ -871,6 +910,146 @@ fn run_lane_command(lane: WorkflowLane, args: LaneCommandArgs) -> Result<()> {
     std::process::exit(exit_code);
 }
 
+fn run_direct_command(args: RunCommandArgs) -> Result<()> {
+    if args.continue_latest && args.session_id.is_some() {
+        let message = "--continue cannot be combined with --session";
+        emit_run_startup_failure(&args, message, 1)?;
+        std::process::exit(1);
+    }
+    if args.fork && args.session_id.is_none() {
+        let message = "--fork requires --session";
+        emit_run_startup_failure(&args, message, 1)?;
+        std::process::exit(1);
+    }
+
+    let worker_bundle = runtime_launch::resolve_worker_bundle_paths(
+        args.worker_entry.clone(),
+        args.worker_manifest.clone(),
+        &knowledge_command_bundle_search_roots(&args.workspace),
+    );
+
+    let platform = runtime_launch::current_platform();
+    let platform_supported = host_lifecycle::classify_platform(&platform).supported;
+    if !platform_supported || !worker_bundle.worker_entry_path.exists() {
+        let launchability_issue = if platform_supported {
+            host_lifecycle::LaunchabilityIssue::BundleMissing
+        } else {
+            host_lifecycle::LaunchabilityIssue::UnsupportedPlatform
+        };
+        let report = host_lifecycle::classify_launchability_failure(platform, launchability_issue);
+        let launch_note = if platform_supported {
+            "Rust-hosted direct run path requires a TypeScript worker bundle."
+        } else {
+            "Rust-hosted direct run path currently supports Linux and macOS only."
+        };
+        let payload = serde_json::json!({
+            "command": "run",
+            "commandFamily": "run",
+            "runtimeAuthority": "rust",
+            "sessionId": null,
+            "finalStatus": report.final_status,
+            "degradedReason": launch_note,
+            "topology": host_lifecycle::TOPOLOGY_RUST_HOST_TS_WORKER,
+            "supportBoundary": host_lifecycle::SUPPORT_BOUNDARY_FIRST_WAVE,
+            "legacyPathLabel": "legacy_ts_host_bridge_compatibility_only",
+            "rustLifecycle": report,
+            "workerResult": null,
+            "rustHostNotes": [
+                launch_note,
+                "No legacy TypeScript-host fallback was used for the direct run path."
+            ]
+        });
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        } else {
+            println!("command: run");
+            println!("command family: run");
+            println!("runtime authority: rust");
+            println!("final status: {:?}", report.final_status);
+            println!("degraded reason: {launch_note}");
+            println!("topology: {}", host_lifecycle::TOPOLOGY_RUST_HOST_TS_WORKER);
+            println!(
+                "support boundary: {}",
+                host_lifecycle::SUPPORT_BOUNDARY_FIRST_WAVE
+            );
+            println!("lifecycle authority: rust");
+            println!("legacy path label: legacy_ts_host_bridge_compatibility_only");
+            println!("rust host lifecycle:");
+            println!("  failure phase: Startup");
+            println!("  final status: StartupFailed");
+            println!("  final exit code: {}", report.final_exit_code);
+            println!("  launchability issue: {:?}", launchability_issue);
+            println!();
+            println!("rust host notes:");
+            println!("  - {launch_note}");
+            println!("  - No legacy TypeScript-host fallback was used for the direct run path.");
+        }
+        std::process::exit(report.final_exit_code);
+    }
+
+    let report = host_commands::run_hosted_direct_command(host_commands::HostRunCommandRequest {
+        message: args.message.join(" "),
+        workspace_root: args.workspace,
+        node_runtime: args.node_runtime,
+        worker_entry: worker_bundle.worker_entry_path,
+        worker_manifest: worker_bundle.manifest_path,
+        continue_latest: args.continue_latest,
+        session_id: args.session_id,
+        fork: args.fork,
+        model: args.model,
+        agent_id: args.agent_id,
+        variant: args.variant,
+        files: args.files,
+        title: args.title,
+        auto_approve: args.auto_approve,
+        output_json: args.json,
+    })?;
+    let exit_code = report.rust_lifecycle.final_exit_code;
+
+    if args.json {
+        println!("{}", host_commands::render_hosted_knowledge_json(&report)?);
+    } else {
+        println!("{}", host_commands::render_hosted_knowledge_text(&report));
+    }
+
+    std::process::exit(exit_code);
+}
+
+fn emit_run_startup_failure(args: &RunCommandArgs, message: &str, exit_code: i32) -> Result<()> {
+    let report = host_lifecycle::report_for_final_status(
+        runtime_launch::current_platform(),
+        host_lifecycle::WorkerState::NotRunning,
+        host_lifecycle::HealthState::Blocked,
+        host_lifecycle::FailurePhase::Request,
+        host_lifecycle::TimeoutClass::None,
+        host_lifecycle::RecoveryOutcome::NotAttempted,
+        host_lifecycle::CleanupOutcome::NotStarted,
+        None,
+        host_lifecycle::FinalStatus::RequestFailed,
+        Some(exit_code),
+    );
+    if args.json {
+        let payload = serde_json::json!({
+            "command": "run",
+            "commandFamily": "run",
+            "runtimeAuthority": "rust",
+            "sessionId": args.session_id,
+            "finalStatus": report.final_status,
+            "degradedReason": message,
+            "topology": host_lifecycle::TOPOLOGY_RUST_HOST_TS_WORKER,
+            "supportBoundary": host_lifecycle::SUPPORT_BOUNDARY_FIRST_WAVE,
+            "legacyPathLabel": "legacy_ts_host_bridge_compatibility_only",
+            "rustLifecycle": report,
+            "workerResult": null,
+            "rustHostNotes": [message],
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        eprintln!("{message}");
+    }
+    Ok(())
+}
+
 fn lane_command_label(lane: WorkflowLane) -> &'static str {
     match lane {
         WorkflowLane::Quick => "quick",
@@ -934,6 +1113,7 @@ fn print_first_run_onboarding() {
     println!("  explain <id>  Explain a symbol, file, or module");
     println!("  trace <query> Trace support is currently bounded and may return unsupported");
     println!("  quick <task>  Run a Quick-lane workflow");
+    println!("  run <message> Run the direct assistant loop");
     println!("  --help        Show the full command list");
     println!("  --version     Print the installed binary version");
     println!();

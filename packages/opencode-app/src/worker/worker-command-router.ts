@@ -1,5 +1,7 @@
 import { runKnowledgeCommand, type KnowledgeCommandReport } from "../workflows/run-knowledge-command.js";
 import { runLaneWorkflow, type LaneWorkflowReport } from "../workflows/run-lane-command.js";
+import { runDirectCommand } from "../workflows/run-direct-command.js";
+import type { RunDirectInput, RunDirectReport } from "../../../shared/src/types/run.js";
 import type { WorkflowLane } from "../../../shared/src/types/lane.js";
 import type { BridgeClient } from "../bridge/dh-jsonrpc-stdio-client.js";
 
@@ -14,6 +16,14 @@ export type WorkerRunLaneParams = {
 
 export type WorkerRunLaneResult = {
   report: LaneWorkflowReport;
+};
+
+export type WorkerRunDirectParams = Omit<RunDirectInput, "repoRoot"> & {
+  repoRoot?: string;
+};
+
+export type WorkerRunDirectResult = {
+  report: RunDirectReport;
 };
 
 export type WorkerRunCommandParams = {
@@ -108,6 +118,32 @@ export class WorkerCommandRouter {
       objective: params.objective,
       repoRoot,
       resumeSessionId: params.resumeSessionId,
+    });
+    return { report };
+  }
+
+  async runDirect(params: WorkerRunDirectParams): Promise<WorkerRunDirectResult> {
+    if (this.cancelled) {
+      return {
+        report: {
+          exitCode: 130,
+          command: "run",
+          sessionId: "",
+          model: params.model ?? "",
+          agentId: params.agentId ?? "",
+          text: "Direct run was cancelled by the Rust host.",
+          events: [],
+          files: [],
+          runtimeAuthority: "typescript_worker",
+          finalStatus: "cancelled",
+          degradedReason: "Direct run was cancelled by the Rust host before TypeScript execution completed.",
+        },
+      };
+    }
+
+    const report = await runDirectCommand({
+      ...params,
+      repoRoot: params.repoRoot ?? this.defaultRepoRoot,
     });
     return { report };
   }

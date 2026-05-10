@@ -45,13 +45,13 @@ describe("runDoctorCommand", () => {
     expect(payload.diagnostics.rustHostedKnowledgePath).toMatchObject({
       source: "rust_host_lifecycle_authority",
       topology: "rust_host_ts_worker",
-      supportBoundary: "knowledge_commands_first_wave",
+      supportBoundary: "runtime_authority_spine",
       workerRole: "typescript_worker",
       legacyPathLabel: "legacy_ts_host_bridge_compatibility_only",
       buildEvidenceSupport: "bounded_rust_hosted_broad_ask_only",
       targetPlatforms: ["linux", "macos"],
     });
-    expect(payload.diagnostics.rustHostedKnowledgePath.supportedCommands).toEqual(["ask", "explain", "trace"]);
+    expect(payload.diagnostics.rustHostedKnowledgePath.supportedCommands).toEqual(["ask", "explain", "trace", "run"]);
     expect(payload.diagnostics.capabilitySummary).toBeDefined();
     expect(payload.diagnostics.parserFreshnessSummary).toBeDefined();
     expect(payload.diagnostics.runtimePingLifecycleSeam).toBeDefined();
@@ -66,10 +66,11 @@ describe("runDoctorCommand", () => {
     expect(payload.snapshot.runtimePingLifecycleSeamState).toBeDefined();
     expect(payload.snapshot.capabilityStateSummary).toBeDefined();
     expect(payload.diagnostics.parity.source).toBe("opencode-gap-roadmap");
-    expect(payload.diagnostics.parity.summary.recommendedNextMilestone).toBe("Milestone 1: Rust Runtime Authority For All Command Paths");
+    expect(payload.diagnostics.parity.summary.recommendedNextMilestone).toBe("Milestone 3: Session Product Parity");
     expect(payload.snapshot.parity.summary.missingCommandSurfaces).toEqual(
-      expect.arrayContaining(["run", "serve", "web", "attach", "session", "providers", "models", "mcp", "agent", "plugin"]),
+      expect.arrayContaining(["serve", "web", "attach", "session", "providers", "models", "mcp", "agent", "plugin"]),
     );
+    expect(payload.snapshot.parity.summary.missingCommandSurfaces).not.toContain("run");
     expect(payload.snapshot.parity.summary.missingCommandSurfaces).not.toEqual(
       expect.arrayContaining(["ask", "explain", "trace", "index", "doctor"]),
     );

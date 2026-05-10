@@ -57,4 +57,28 @@ export class SessionRuntimeEventsRepo {
       createdAt: row.created_at,
     }));
   }
+
+  listByEventType(eventType: SessionRuntimeEventType): SessionRuntimeEventRecord[] {
+    const database = openDhDatabase(this.repoRoot);
+    const rows = database.prepare(`
+      SELECT id, session_id, event_type, event_json, created_at
+      FROM session_runtime_events
+      WHERE event_type = ?
+      ORDER BY created_at DESC, rowid DESC
+    `).all(eventType) as Array<{
+      id: string;
+      session_id: string;
+      event_type: SessionRuntimeEventType;
+      event_json: string;
+      created_at: string;
+    }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      sessionId: row.session_id,
+      eventType: row.event_type,
+      eventJson: JSON.parse(row.event_json) as Record<string, unknown>,
+      createdAt: row.created_at,
+    }));
+  }
 }

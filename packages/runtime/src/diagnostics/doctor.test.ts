@@ -44,7 +44,7 @@ describe("runDoctor", () => {
     expect(report.summary).toContain("Retrieval:");
     expect(report.summary).toContain("Workflow:");
     expect(report.summary).toContain("Verification health:");
-    expect(report.summary).toContain("Rust-hosted knowledge-command lifecycle authority:");
+    expect(report.summary).toContain("Rust-hosted run/knowledge-command lifecycle authority:");
     expect(report.summary).toContain("runtime.ping compatibility seam:");
     expect(report.summary).toContain("Lifecycle classification:");
     expect(report.summary).toContain("overall lifecycle status:");
@@ -95,8 +95,8 @@ describe("runDoctor", () => {
     const repo = makeTmpRepo();
     const report = await runDoctor(repo);
 
-    expect(report.summary).toContain("Rust-hosted knowledge-command lifecycle authority:");
-    expect(report.summary).toContain("support boundary: ask/explain/trace first-wave knowledge commands only");
+    expect(report.summary).toContain("Rust-hosted run/knowledge-command lifecycle authority:");
+    expect(report.summary).toContain("support boundary: run direct loop plus ask/explain/trace first-wave knowledge commands");
     expect(report.summary).toContain("topology: rust_host_ts_worker");
     expect(report.summary).toContain("build-evidence support: bounded Rust-hosted broad ask only; finite static subjects use Rust-authored query.buildEvidence packet truth");
     expect(report.summary).toContain("TypeScript role: worker for workflow/output; not host lifecycle authority on this supported path");
@@ -112,7 +112,7 @@ describe("runDoctor", () => {
     expect(report.summary).not.toContain("Windows is supported");
     expect(report.summary).toContain("runtime.ping compatibility seam:");
     expect(report.summary).toContain("source: legacy TypeScript-hosted Rust bridge runtime.ping compatibility probe");
-    expect(report.summary).toContain("not the Rust-hosted ask/explain/trace lifecycle envelope");
+    expect(report.summary).toContain("not the Rust-hosted run/ask/explain/trace lifecycle envelope");
     expect(report.summary).toContain("Capability state (compatibility Rust bridge query truth):");
     expect(report.summary).toContain("Parser freshness (Rust engine status truth):");
     expect(report.summary).toContain("supported:");
@@ -131,13 +131,13 @@ describe("runDoctor", () => {
     expect(report.snapshot.rustHostedKnowledgePath).toMatchObject({
       source: "rust_host_lifecycle_authority",
       topology: "rust_host_ts_worker",
-      supportBoundary: "knowledge_commands_first_wave",
+      supportBoundary: "runtime_authority_spine",
       workerRole: "typescript_worker",
       legacyPathLabel: "legacy_ts_host_bridge_compatibility_only",
       buildEvidenceSupport: "bounded_rust_hosted_broad_ask_only",
       targetPlatforms: ["linux", "macos"],
     });
-    expect(report.diagnostics.rustHostedKnowledgePath.supportedCommands).toEqual(["ask", "explain", "trace"]);
+    expect(report.diagnostics.rustHostedKnowledgePath.supportedCommands).toEqual(["ask", "explain", "trace", "run"]);
     expect(typeof report.snapshot.rustHostedKnowledgePath.workerBundleReady).toBe("boolean");
     expect(typeof report.snapshot.rustHostedKnowledgePath.workerManifestReady).toBe("boolean");
     expect(typeof report.snapshot.rustHostedKnowledgePath.flatReleaseAssetsReady).toBe("boolean");
@@ -321,6 +321,7 @@ describe("runDoctor", () => {
     expect(report.diagnostics.parity.summary.byCategory.runtime).toBe("supported");
     expect(report.diagnostics.parity.features.find((feature) => feature.category === "cli")?.dhSurface).toEqual(
       expect.arrayContaining([
+        "run (rust-hosted)",
         "quick (rust-hosted)",
         "delivery (rust-hosted)",
         "migrate (rust-hosted)",
@@ -333,17 +334,18 @@ describe("runDoctor", () => {
     const report = await runDoctor(repo);
 
     expect(report.summary).toContain("OpenCode parity:");
-    expect(report.summary).toContain("recommended next milestone: Milestone 1: Rust Runtime Authority For All Command Paths");
+    expect(report.summary).toContain("recommended next milestone: Milestone 3: Session Product Parity");
     expect(report.diagnostics.parity.source).toBe("opencode-gap-roadmap");
     expect(report.snapshot.parity.summary.missingCommandSurfaces).toEqual(
-      expect.arrayContaining(["run", "serve", "web", "attach", "session", "providers", "models", "mcp", "agent", "plugin"]),
+      expect.arrayContaining(["serve", "web", "attach", "session", "providers", "models", "mcp", "agent", "plugin"]),
     );
+    expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toContain("run");
     expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toEqual(
       expect.arrayContaining(["ask", "explain", "trace", "index", "doctor"]),
     );
     expect(report.actions).toEqual(
       expect.arrayContaining([
-        "OpenCode parity is incomplete: implement Milestone 1: Rust Runtime Authority For All Command Paths before claiming run/session/provider/MCP parity.",
+        "OpenCode parity is incomplete: implement Milestone 3: Session Product Parity before claiming session/provider/MCP/tool parity.",
       ]),
     );
   });

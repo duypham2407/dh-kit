@@ -3,7 +3,7 @@ import {
   HOST_BACKED_BRIDGE_PROTOCOL_VERSION,
   createHostBridgeClient,
 } from "./host-bridge-client.js";
-import { WorkerCommandRouter, type WorkerRunCommandParams, type WorkerRunLaneParams } from "./worker-command-router.js";
+import { WorkerCommandRouter, type WorkerRunCommandParams, type WorkerRunDirectParams, type WorkerRunLaneParams } from "./worker-command-router.js";
 import { JsonRpcResponseError, WorkerJsonRpcPeer } from "./worker-jsonrpc-stdio.js";
 import { z } from "zod";
 
@@ -151,6 +151,24 @@ export function createWorkerRuntime(input: {
     };
   });
 
+  input.peer.onRequest("session.runDirect", async (params) => {
+    if (!runtime.initialized || !runtime.router) {
+      throw new JsonRpcResponseError({
+        code: -32000,
+        message: "Worker is not initialized for session.runDirect.",
+      });
+    }
+    if (!runtime.readySent) {
+      await markReady(runtime);
+    }
+
+    const result = await runtime.router.runDirect(asRunDirectParams(params));
+    return {
+      ...result,
+      runtimeAuthority: "typescript_worker",
+    };
+  });
+
   input.peer.onRequest("dh.shutdown", async () => {
     runtime.shutdownRequested = true;
     await runtime.router?.close();
@@ -236,12 +254,38 @@ const WorkerRunLaneParamsSchema = z.object({
   resumeSessionId: z.string().optional(),
 });
 
+const WorkerRunDirectParamsSchema = z.object({
+  message: z.string().optional().default(""),
+  repoRoot: z.string().optional(),
+  continueLatest: z.boolean().optional(),
+  sessionId: z.string().optional(),
+  fork: z.boolean().optional(),
+  model: z.string().optional(),
+  agentId: z.string().optional(),
+  variant: z.string().optional(),
+  files: z.array(z.string()).optional(),
+  title: z.string().optional(),
+  autoApprove: z.boolean().optional(),
+});
+
 function asRunLaneParams(value: unknown): WorkerRunLaneParams {
   const result = WorkerRunLaneParamsSchema.safeParse(value);
   if (!result.success) {
     throw new JsonRpcResponseError({
       code: -32602,
       message: `Invalid session.runLane params: ${result.error.message}`,
+      data: result.error.format(),
+    });
+  }
+  return result.data;
+}
+
+function asRunDirectParams(value: unknown): WorkerRunDirectParams {
+  const result = WorkerRunDirectParamsSchema.safeParse(value);
+  if (!result.success) {
+    throw new JsonRpcResponseError({
+      code: -32602,
+      message: `Invalid session.runDirect params: ${result.error.message}`,
       data: result.error.format(),
     });
   }

@@ -8,6 +8,7 @@ import { runIndexCommand } from "./index.js";
 import { runMigrateCommand } from "./migrate.js";
 import { runOperatorSafeMaintenanceCommand } from "./operator-safe-maintenance.js";
 import { runQuickCommand } from "./quick.js";
+import { runRunCommand } from "./run.js";
 import { runSemanticCleanupCommand } from "./semantic-cleanup.js";
 import { runTraceCommand } from "./trace.js";
 import { DH_VERSION } from "../version.js";
@@ -17,6 +18,7 @@ import { ConfigRepo } from "../../../../packages/storage/src/sqlite/repositories
 const HELP = `dh <command> [args]
 
 Commands:
+  run [message] [--json] [--continue|--session <id>] [--file <path>]  (Rust-hosted direct run path)
   quick <task> [--json]       (Rust-hosted lane workflow path)
   delivery <goal> [--json]    (Rust-hosted lane workflow path)
   migrate <goal> [--json]     (Rust-hosted lane workflow path)
@@ -36,14 +38,14 @@ Commands:
   --version
 
 Lifecycle boundary:
-  Rust-host lifecycle authority covers knowledge commands and lane workflows: ask, explain, trace, quick, delivery, migrate.
+  Rust-host lifecycle authority covers run, knowledge commands, and lane workflows: run, ask, explain, trace, quick, delivery, migrate.
   TypeScript workers still own workflow logic, agent orchestration, prompt context assembly, provider interaction, and command output body.
   Direct TypeScript lane execution is available only with DH_ENABLE_TS_LANE_COMPAT=1.
   Bounded broad ask can use Rust-authored query.buildEvidence only for finite static repository subjects.
   Narrow ask/explain keep search, definition, or relationship methods when those are the truthful surface.
   Legacy retrieval packets and TypeScript-hosted bridge paths are compatibility surfaces, not canonical authority for touched Rust-hosted build-evidence flows.
   Supported target platforms are Linux and macOS only.
-  No universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, or OpenCode run/server/provider/MCP/tool parity is claimed.
+  No universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, or OpenCode server/provider/MCP/tool parity is claimed.
 
 TypeScript CLI setup:
   1. dh --help
@@ -60,6 +62,8 @@ export async function runCli(args: string[], repoRoot: string): Promise<number> 
   const [command, ...rest] = args;
 
   switch (command) {
+    case "run":
+      return runRunCommand(rest, repoRoot);
     case "quick":
       return runQuickCommand(rest, repoRoot);
     case "delivery":

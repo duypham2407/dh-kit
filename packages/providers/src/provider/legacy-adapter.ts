@@ -31,7 +31,9 @@ export async function listModelsAsync(providerId: string, repoRoot = process.cwd
 }
 
 export async function listVariantsAsync(providerId: string, modelId: string): Promise<VariantRegistryEntry[]> {
-  return [
-    { providerId, modelId, variantId: "default" }
-  ];
+  return ["default", "high-reasoning", "tool-use-optimized"].map((variantId) => ({
+    providerId,
+    modelId,
+    variantId,
+  }));
 }

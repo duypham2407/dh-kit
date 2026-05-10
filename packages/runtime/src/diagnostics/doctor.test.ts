@@ -320,6 +320,26 @@ describe("runDoctor", () => {
     expect(["healthy", "degraded", "unsupported", "misconfigured"]).toContain(report.diagnostics.lifecycleClassification.overall);
   });
 
+  it("includes an OpenCode parity contract without claiming missing surfaces", async () => {
+    const repo = makeTmpRepo();
+    const report = await runDoctor(repo);
+
+    expect(report.summary).toContain("OpenCode parity:");
+    expect(report.summary).toContain("recommended next milestone: Milestone 1: Rust Runtime Authority For All Command Paths");
+    expect(report.diagnostics.parity.source).toBe("opencode-gap-roadmap");
+    expect(report.snapshot.parity.summary.missingCommandSurfaces).toEqual(
+      expect.arrayContaining(["run", "serve", "web", "attach", "session", "providers", "models", "mcp", "agent", "plugin"]),
+    );
+    expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toEqual(
+      expect.arrayContaining(["ask", "explain", "trace", "index", "doctor"]),
+    );
+    expect(report.actions).toEqual(
+      expect.arrayContaining([
+        "OpenCode parity is incomplete: implement Milestone 1: Rust Runtime Authority For All Command Paths before claiming run/session/provider/MCP parity.",
+      ]),
+    );
+  });
+
   it("snapshot is JSON-serializable for CI consumption", async () => {
     const repo = makeTmpRepo();
     const report = await runDoctor(repo);

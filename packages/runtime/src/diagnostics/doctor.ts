@@ -23,6 +23,8 @@ import {
 } from "./rust-engine-status.js";
 import { createDhJsonRpcStdioClient, DhBridgeError } from "../../../opencode-app/src/bridge/dh-jsonrpc-stdio-client.js";
 import type { RuntimeProbePingResult } from "./bridge-runtime-probe.js";
+import { buildOpenCodeParityReport } from "./parity-report.js";
+import type { ParityReport } from "../../../shared/src/types/parity.js";
 
 export type DoctorReport = {
   ok: boolean;
@@ -39,6 +41,7 @@ export type DoctorReport = {
     runtimePingLifecycleSeam: RuntimePingLifecycleSeamView;
     capabilitySummary: RustCapabilitySummary;
     parserFreshnessSummary: RustParserFreshnessView;
+    parity: ParityReport;
     providerCoverage: {
       providersWithoutModels: string[];
       totalProviders: number;
@@ -112,6 +115,7 @@ export type DoctorSnapshot = {
   parserFreshnessSummary: RustParserFreshnessView;
   runtimePingLifecycleSeam: RuntimePingLifecycleSeamView;
   runtimePingLifecycleSeamState: RustRuntimePingState;
+  parity: ParityReport;
   capabilityStateSummary: {
     supported: number;
     partial: number;
@@ -273,6 +277,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
 
   const sqliteBridgeReady = availableTables.has("hook_invocation_logs") && runtimeBinaryReady;
   const qualityGateAvailability = getQualityGateAvailabilitySnapshot(repoRoot);
+  const parityReport = buildOpenCodeParityReport();
   const rustCapabilitySummary = await summarizeRustCapabilityState(repoRoot);
   const runtimePingLifecycleSeam = await summarizeRuntimePingLifecycleSeam(repoRoot);
   const rustFreshnessProbe = await probeRustEngineStatus(repoRoot);
@@ -417,6 +422,10 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     );
   }
 
+  if (parityReport.summary.byStatus.supported < parityReport.summary.total) {
+    actions.push("OpenCode parity is incomplete: implement Milestone 1: Rust Runtime Authority For All Command Paths before claiming run/session/provider/MCP parity.");
+  }
+
   const summaryLines = [
     "dh doctor",
     "",
@@ -530,6 +539,14 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
       ? `  counts: refreshed=${parserFreshnessSummary.summary.refreshedCurrentFiles} retained=${parserFreshnessSummary.summary.retainedCurrentFiles} degraded=${parserFreshnessSummary.summary.degradedPartialFiles} not_current=${parserFreshnessSummary.summary.notCurrentFiles}`
       : "  unsupported: parser freshness summary not reported on this surface",
     "",
+    "OpenCode parity:",
+    `  source: ${parityReport.source}`,
+    `  baseline: DH ${parityReport.baseline.dh}; OpenCode ${parityReport.baseline.opencode}`,
+    `  features: total=${parityReport.summary.total}, supported=${parityReport.summary.byStatus.supported}, partial=${parityReport.summary.byStatus.partial}, planned=${parityReport.summary.byStatus.planned}, deferred=${parityReport.summary.byStatus.deferred}, out_of_scope=${parityReport.summary.byStatus.out_of_scope}`,
+    `  missing commands: ${parityReport.summary.missingCommandSurfaces.join(", ")}`,
+    `  recommended next milestone: ${parityReport.summary.recommendedNextMilestone}`,
+    "  boundary: this is a conservative parity contract; unsupported OpenCode surfaces remain missing until implemented and verified",
+    "",
     "Lifecycle classification:",
     `  install/distribution: ${installDistributionStatus}${installDistributionReasons.length > 0 ? ` — ${installDistributionReasons.join(" ")}` : ""}`,
     `  runtime/workspace readiness: ${runtimeWorkspaceReadinessStatus}${runtimeWorkspaceReasons.length > 0 ? ` — ${runtimeWorkspaceReasons.join(" ")}` : ""}`,
@@ -584,6 +601,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
       runtimePingLifecycleSeam,
       capabilitySummary: rustCapabilitySummary,
       parserFreshnessSummary,
+      parity: parityReport,
       providerCoverage: {
         providersWithoutModels,
         totalProviders: providers.length,
@@ -641,6 +659,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
       parserFreshnessSummary,
       runtimePingLifecycleSeam,
       runtimePingLifecycleSeamState: runtimePingLifecycleSeam.state,
+      parity: parityReport,
       capabilityStateSummary,
     },
   };

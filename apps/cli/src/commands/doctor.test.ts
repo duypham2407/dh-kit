@@ -65,6 +65,14 @@ describe("runDoctorCommand", () => {
     expect(payload.snapshot.runtimePingLifecycleSeam).toBeDefined();
     expect(payload.snapshot.runtimePingLifecycleSeamState).toBeDefined();
     expect(payload.snapshot.capabilityStateSummary).toBeDefined();
+    expect(payload.diagnostics.parity.source).toBe("opencode-gap-roadmap");
+    expect(payload.diagnostics.parity.summary.recommendedNextMilestone).toBe("Milestone 1: Rust Runtime Authority For All Command Paths");
+    expect(payload.snapshot.parity.summary.missingCommandSurfaces).toEqual(
+      expect.arrayContaining(["run", "serve", "web", "attach", "session", "providers", "models", "mcp", "agent", "plugin"]),
+    );
+    expect(payload.snapshot.parity.summary.missingCommandSurfaces).not.toEqual(
+      expect.arrayContaining(["ask", "explain", "trace", "index", "doctor"]),
+    );
     expect(payload.debugDumpPath).toBeUndefined();
   });
 

@@ -3088,6 +3088,7 @@ mod tests {
                 "dh.initialized",
                 "dh.ready",
                 "session.runCommand",
+                "session.runLane",
                 "runtime.ping",
                 "dh.shutdown"
             ])
@@ -3382,11 +3383,20 @@ mod tests {
         assert_eq!(contract["topology"], json!("rust_host_ts_worker"));
         assert_eq!(
             contract["supportBoundary"],
-            json!("knowledge_commands_first_wave")
+            json!("runtime_authority_spine")
         );
         assert_eq!(
             contract["supportedCommands"],
-            json!(["ask", "explain", "trace"])
+            json!(["ask", "explain", "trace", "quick", "delivery", "migrate"])
+        );
+        assert_eq!(contract["runtimeAuthority"]["owner"], json!("rust"));
+        assert_eq!(
+            contract["runtimeAuthority"]["families"][1]["family"],
+            json!("lane")
+        );
+        assert_eq!(
+            contract["runtimeAuthority"]["families"][1]["state"],
+            json!("supported")
         );
         assert_eq!(contract["authorityOwner"], json!("rust"));
         assert_eq!(contract["workerRole"], json!("typescript_worker"));

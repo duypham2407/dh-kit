@@ -6,6 +6,7 @@ import { runLaneWorkflow } from "./run-lane-command.js";
 import { closeDhDatabase } from "../../../storage/src/sqlite/db.js";
 import { createChatProviderError, type ChatProvider } from "../../../providers/src/chat/types.js";
 import { SessionRuntimeEventsRepo } from "../../../storage/src/sqlite/repositories/session-runtime-events-repo.js";
+import { SessionCheckpointsRepo } from "../../../storage/src/sqlite/repositories/session-checkpoints-repo.js";
 
 let tmpDirs: string[] = [];
 
@@ -168,5 +169,28 @@ describe("runLaneWorkflow", () => {
     expect(resumed.exitCode).toBe(0);
     expect(resumed.sessionId).toBe(first.sessionId);
     expect(resumed.model).toBe(first.model);
+  });
+
+  it("marks direct TypeScript lane execution as compatibility-only", async () => {
+    const repo = makeTmpRepo();
+
+    const report = await runLaneWorkflow({
+      lane: "quick",
+      objective: "compatibility run",
+      repoRoot: repo,
+    });
+
+    expect(report.exitCode).toBe(0);
+    expect(report.runtimeAuthority).toBe("typescript_compatibility");
+    expect(report.finalStatus).toBe("typescript_compatibility");
+    expect(report.degradedReason).toContain("Direct TypeScript lane execution is a compatibility path");
+
+    const bootstrapCheckpoint = new SessionCheckpointsRepo(repo)
+      .listBySession(report.sessionId)
+      .find((checkpoint) => checkpoint.checkpointType === "session_bootstrap");
+    expect(bootstrapCheckpoint?.metadataJson).toMatchObject({
+      source: "run-lane-command",
+      runtimeAuthority: "typescript_compatibility",
+    });
   });
 });

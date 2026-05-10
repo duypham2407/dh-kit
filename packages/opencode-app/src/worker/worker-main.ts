@@ -144,7 +144,11 @@ export function createWorkerRuntime(input: {
       await markReady(runtime);
     }
 
-    return runtime.router.runLane(asRunLaneParams(params));
+    const result = await runtime.router.runLane(asRunLaneParams(params));
+    return {
+      ...result,
+      runtimeAuthority: "typescript_worker",
+    };
   });
 
   input.peer.onRequest("dh.shutdown", async () => {

@@ -86,6 +86,7 @@ export class StageRunner {
       },
       metadataJson: {
         source: "stage-runner.advance",
+        runtimeAuthority: "typescript_worker",
       },
     });
 

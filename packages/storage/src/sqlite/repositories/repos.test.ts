@@ -6,7 +6,9 @@ import { ToolUsageAuditRepo } from "./tool-usage-audit-repo.js";
 import { SkillActivationAuditRepo } from "./skill-activation-audit-repo.js";
 import { McpRouteAuditRepo } from "./mcp-route-audit-repo.js";
 import { QualityGateAuditRepo } from "./quality-gate-audit-repo.js";
+import { SessionsRepo } from "./sessions-repo.js";
 import { closeDhDatabase, openDhDatabase } from "../db.js";
+import type { SessionState } from "../../../../shared/src/types/session.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -20,11 +22,51 @@ function makeTmpRepo(): string {
   return dir;
 }
 
+function makeSession(overrides: Partial<SessionState> = {}): SessionState {
+  return {
+    sessionId: overrides.sessionId ?? "session-test",
+    repoRoot: overrides.repoRoot ?? "/repo",
+    lane: overrides.lane ?? "quick",
+    laneLocked: overrides.laneLocked ?? true,
+    currentStage: overrides.currentStage ?? "quick_plan",
+    status: overrides.status ?? "in_progress",
+    createdAt: overrides.createdAt ?? "2026-05-10T00:00:00.000Z",
+    updatedAt: overrides.updatedAt ?? "2026-05-10T00:00:00.000Z",
+    semanticMode: overrides.semanticMode ?? "always",
+    toolEnforcementLevel: overrides.toolEnforcementLevel ?? "very-hard",
+    activeWorkItemIds: overrides.activeWorkItemIds ?? [],
+    latestSummaryId: overrides.latestSummaryId,
+    latestCheckpointId: overrides.latestCheckpointId,
+    latestRevertId: overrides.latestRevertId,
+  };
+}
+
 afterEach(() => {
   for (const dir of tmpDirs) {
     closeDhDatabase(dir);
   }
   tmpDirs = [];
+});
+
+describe("SessionsRepo", () => {
+  it("finds the latest session by lane for runtime authority inspection", () => {
+    const repoRoot = makeTmpRepo();
+    const sessions = new SessionsRepo(repoRoot);
+    sessions.save(makeSession({
+      sessionId: "session-old",
+      repoRoot,
+      lane: "quick",
+      updatedAt: "2026-05-10T01:00:00.000Z",
+    }));
+    sessions.save(makeSession({
+      sessionId: "session-new",
+      repoRoot,
+      lane: "quick",
+      updatedAt: "2026-05-10T02:00:00.000Z",
+    }));
+
+    expect(sessions.findLatestByLane("quick")?.sessionId).toBe("session-new");
+  });
 });
 
 describe("ChunksRepo", () => {

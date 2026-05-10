@@ -17,12 +17,19 @@ import { SessionSummaryRepo } from "../../../storage/src/sqlite/repositories/ses
 import { SessionCheckpointsRepo } from "../../../storage/src/sqlite/repositories/session-checkpoints-repo.js";
 import { SessionsRepo } from "../../../storage/src/sqlite/repositories/sessions-repo.js";
 import { nowIso } from "../../../shared/src/utils/time.js";
+import type { RuntimeAuthorityFields } from "../../../shared/src/types/runtime-authority.js";
 import { resolveLane } from "../lane/resolve-lane.js";
 import { runDeliveryWorkflow } from "./delivery.js";
 import { runMigrationWorkflow } from "./migration.js";
 import { runQuickWorkflow } from "./quick.js";
 
-export type LaneWorkflowReport = {
+const TYPESCRIPT_COMPATIBILITY_AUTHORITY: RuntimeAuthorityFields = {
+  runtimeAuthority: "typescript_compatibility",
+  finalStatus: "typescript_compatibility",
+  degradedReason: "Direct TypeScript lane execution is a compatibility path; Rust did not own lifecycle for this run.",
+};
+
+export type LaneWorkflowReport = RuntimeAuthorityFields & {
   exitCode: number;
   lane: WorkflowLane;
   sessionId: string;
@@ -42,6 +49,7 @@ export async function runLaneWorkflow(input: {
 }): Promise<LaneWorkflowReport> {
   if (!input.objective) {
     return {
+      ...TYPESCRIPT_COMPATIBILITY_AUTHORITY,
       exitCode: 1,
       lane: input.lane,
       sessionId: "",
@@ -60,6 +68,7 @@ export async function runLaneWorkflow(input: {
     const resumed = await resumeSession(input.repoRoot, input.resumeSessionId, lane);
     if (!resumed.ok) {
       return {
+        ...TYPESCRIPT_COMPATIBILITY_AUTHORITY,
         exitCode: 1,
         lane,
         sessionId: input.resumeSessionId,
@@ -84,6 +93,7 @@ export async function runLaneWorkflow(input: {
 
   if (isResumed && !initial) {
     return {
+      ...TYPESCRIPT_COMPATIBILITY_AUTHORITY,
       exitCode: 1,
       lane,
       sessionId: input.resumeSessionId!,
@@ -95,7 +105,9 @@ export async function runLaneWorkflow(input: {
     };
   }
 
-  const created = !isResumed ? await sessionManager.createSession(lane, agent) : undefined;
+  const created = !isResumed
+    ? await sessionManager.createSession(lane, agent, { runtimeAuthority: "typescript_compatibility" })
+    : undefined;
 
   const envelope = isResumed
     ? initial!.envelopes[initial!.envelopes.length - 1]
@@ -103,6 +115,7 @@ export async function runLaneWorkflow(input: {
 
   if (!envelope) {
     return {
+      ...TYPESCRIPT_COMPATIBILITY_AUTHORITY,
       exitCode: 1,
       lane,
       sessionId: isResumed ? input.resumeSessionId! : "",
@@ -156,7 +169,10 @@ export async function runLaneWorkflow(input: {
       summarySnapshotJson: {},
       workflowSnapshotJson: workflow as Record<string, unknown>,
       continuationJson: {},
-      metadataJson: { source: "run-lane-command" },
+      metadataJson: {
+        source: "run-lane-command",
+        runtimeAuthority: created!.runtimeAuthority,
+      },
     });
     session = {
       ...session,
@@ -334,6 +350,7 @@ export async function runLaneWorkflow(input: {
   );
 
   return {
+    ...TYPESCRIPT_COMPATIBILITY_AUTHORITY,
     exitCode: 0,
     lane,
     sessionId: session.sessionId,

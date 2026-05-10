@@ -95,6 +95,9 @@ export class WorkerCommandRouter {
           model: "",
           objective: params.objective,
           workflowSummary: ["Lane workflow was cancelled by the Rust host."],
+          runtimeAuthority: "typescript_worker",
+          finalStatus: "cancelled",
+          degradedReason: "Lane workflow was cancelled by the Rust host before TypeScript lane execution completed.",
         },
       };
     }

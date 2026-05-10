@@ -181,6 +181,18 @@ function defaultHostBridgeCapabilities(
         parserBacked: false,
       },
     ],
+    runtimeAuthority: {
+      owner: "rust",
+      families: [
+        { family: "knowledge", state: "supported", owner: "rust" },
+        { family: "lane", state: "supported", owner: "rust" },
+        { family: "run", state: "planned", owner: "rust" },
+        { family: "session", state: "partial", owner: "rust" },
+        { family: "provider", state: "planned", owner: "rust" },
+        { family: "mcp", state: "planned", owner: "rust" },
+        { family: "tool", state: "planned", owner: "rust" },
+      ],
+    },
     transport,
   };
 }

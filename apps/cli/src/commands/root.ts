@@ -17,9 +17,9 @@ import { ConfigRepo } from "../../../../packages/storage/src/sqlite/repositories
 const HELP = `dh <command> [args]
 
 Commands:
-  quick <task> [--json]       (TypeScript-hosted workflow compatibility path)
-  delivery <goal> [--json]    (TypeScript-hosted workflow compatibility path)
-  migrate <goal> [--json]     (TypeScript-hosted workflow compatibility path)
+  quick <task> [--json]       (Rust-hosted lane workflow path)
+  delivery <goal> [--json]    (Rust-hosted lane workflow path)
+  migrate <goal> [--json]     (Rust-hosted lane workflow path)
   ask <question> [--json]     (Rust-hosted first-wave knowledge path)
   explain <symbol> [--json]   (Rust-hosted first-wave knowledge path)
   trace <target> [--json]     (Rust-hosted first-wave lifecycle path; trace result may be unsupported)
@@ -36,12 +36,14 @@ Commands:
   --version
 
 Lifecycle boundary:
-  Rust-host lifecycle authority currently covers first-wave knowledge commands only: ask, explain, trace.
+  Rust-host lifecycle authority covers knowledge commands and lane workflows: ask, explain, trace, quick, delivery, migrate.
+  TypeScript workers still own workflow logic, agent orchestration, prompt context assembly, provider interaction, and command output body.
+  Direct TypeScript lane execution is available only with DH_ENABLE_TS_LANE_COMPAT=1.
   Bounded broad ask can use Rust-authored query.buildEvidence only for finite static repository subjects.
   Narrow ask/explain keep search, definition, or relationship methods when those are the truthful surface.
   Legacy retrieval packets and TypeScript-hosted bridge paths are compatibility surfaces, not canonical authority for touched Rust-hosted build-evidence flows.
   Supported target platforms are Linux and macOS only.
-  No universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, or full workflow-lane parity is claimed.
+  No universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, or OpenCode run/server/provider/MCP/tool parity is claimed.
 
 TypeScript CLI setup:
   1. dh --help

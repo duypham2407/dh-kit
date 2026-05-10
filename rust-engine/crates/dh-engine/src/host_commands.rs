@@ -65,7 +65,12 @@ pub struct HostLaneCommandRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RustHostedKnowledgeReport {
-    pub command: &'static str,
+    pub command: String,
+    pub command_family: &'static str,
+    pub runtime_authority: &'static str,
+    pub session_id: Option<String>,
+    pub final_status: FinalStatus,
+    pub degraded_reason: Option<String>,
     pub topology: &'static str,
     pub support_boundary: &'static str,
     pub legacy_path_label: &'static str,
@@ -195,6 +200,13 @@ pub fn run_hosted_knowledge_command_with_config(
 pub fn render_hosted_knowledge_text(report: &RustHostedKnowledgeReport) -> String {
     let mut lines = vec![
         format!("command: {}", report.command),
+        format!("command family: {}", report.command_family),
+        format!("runtime authority: {}", report.runtime_authority),
+        format!("final status: {:?}", report.final_status),
+        format!(
+            "degraded reason: {}",
+            report.degraded_reason.as_deref().unwrap_or("<none>")
+        ),
         format!("topology: {}", report.topology),
         format!("support boundary: {}", report.support_boundary),
         "lifecycle authority: rust".to_string(),
@@ -218,6 +230,10 @@ pub fn render_hosted_knowledge_text(report: &RustHostedKnowledgeReport) -> Strin
             report.rust_lifecycle.final_exit_code
         ),
     ];
+
+    if let Some(session_id) = &report.session_id {
+        lines.push(format!("session id: {session_id}"));
+    }
 
     if let Some(issue) = report.rust_lifecycle.launchability_issue {
         lines.push(format!("  launchability issue: {issue:?}"));
@@ -455,10 +471,10 @@ pub fn run_hosted_lane_command(
     match supervisor.launch() {
         Ok(report) => report,
         Err(error) => {
-            // Use Ask as a sentinel command for lane-level failures (no knowledge kind equivalent).
-            return Ok(report_from_supervisor_error(
-                HostKnowledgeCommandKind::Ask,
-                error,
+            return Ok(report_from_lane_lifecycle_error(
+                request.lane,
+                error.report,
+                format!("Rust supervisor error: {}", error.message),
                 "Rust host could not launch the TS worker for lane workflow.",
             ));
         }
@@ -477,8 +493,8 @@ pub fn run_hosted_lane_command(
     match worker_outcome {
         Ok(outcome) => {
             let shutdown = supervisor.shutdown();
-            Ok(report_from_worker_success(
-                HostKnowledgeCommandKind::Ask,
+            Ok(report_from_lane_worker_success(
+                request.lane,
                 outcome,
                 shutdown,
                 None,
@@ -486,12 +502,15 @@ pub fn run_hosted_lane_command(
         }
         Err(error) => {
             let shutdown = supervisor.shutdown();
-            let mut report = report_from_supervisor_error(
-                HostKnowledgeCommandKind::Ask,
-                error,
+            let mut report = report_from_lane_lifecycle_error(
+                request.lane,
+                error.report,
+                format!("Rust supervisor error: {}", error.message),
                 "Rust host: session.runLane failed.",
             );
             report.rust_lifecycle = merge_shutdown(report.rust_lifecycle, shutdown);
+            report.final_status = report.rust_lifecycle.final_status;
+            report.degraded_reason = degraded_reason_for_lifecycle(&report.rust_lifecycle, None);
             Ok(report)
         }
     }
@@ -588,7 +607,12 @@ fn report_from_lifecycle_error(
     note: &str,
 ) -> RustHostedKnowledgeReport {
     RustHostedKnowledgeReport {
-        command: kind.as_str(),
+        command: kind.as_str().to_string(),
+        command_family: "knowledge",
+        runtime_authority: "rust",
+        session_id: None,
+        final_status: lifecycle.final_status,
+        degraded_reason: Some(error_note.clone()),
         topology: lifecycle.topology,
         support_boundary: lifecycle.support_boundary,
         legacy_path_label: "legacy_ts_host_bridge_compatibility_only",
@@ -638,6 +662,7 @@ fn report_from_worker_success(
     lifecycle = merge_shutdown(lifecycle, shutdown);
 
     let mut rust_host_notes = Vec::new();
+    let degraded_reason = degraded_reason_for_lifecycle(&lifecycle, recovery_note.as_deref());
     if let Some(note) = recovery_note {
         rust_host_notes.push(note);
         rust_host_notes.push(
@@ -650,13 +675,143 @@ fn report_from_worker_success(
     ]);
 
     RustHostedKnowledgeReport {
-        command: kind.as_str(),
+        command: kind.as_str().to_string(),
+        command_family: "knowledge",
+        runtime_authority: "rust",
+        session_id: session_id_from_worker_result(&worker_result),
+        final_status: lifecycle.final_status,
+        degraded_reason,
         topology: lifecycle.topology,
         support_boundary: lifecycle.support_boundary,
         legacy_path_label: "legacy_ts_host_bridge_compatibility_only",
         rust_lifecycle: lifecycle,
         worker_result: Some(worker_result),
         rust_host_notes,
+    }
+}
+
+fn report_from_lane_worker_success(
+    lane: dh_types::WorkflowLane,
+    outcome: WorkerRequestOutcome,
+    shutdown: HostLifecycleReport,
+    recovery_note: Option<String>,
+) -> RustHostedKnowledgeReport {
+    let worker_result = outcome.result;
+    let command_exit_code = worker_result
+        .get("exitCode")
+        .and_then(Value::as_i64)
+        .map(|code| code as i32);
+    let mut lifecycle = outcome.report;
+    let final_status = if command_exit_code.unwrap_or(0) != 0 {
+        FinalStatus::RequestFailed
+    } else if lifecycle.recovery_outcome == RecoveryOutcome::AttemptedSucceededDegraded {
+        FinalStatus::RecoveredDegradedSuccess
+    } else {
+        FinalStatus::CleanSuccess
+    };
+    lifecycle = report_for_final_status(
+        lifecycle.platform,
+        WorkerState::Ready,
+        health_state_for_final_status(final_status),
+        if final_status == FinalStatus::RequestFailed {
+            FailurePhase::Request
+        } else {
+            FailurePhase::None
+        },
+        TimeoutClass::None,
+        lifecycle.recovery_outcome,
+        lifecycle.cleanup_outcome,
+        lifecycle.launchability_issue,
+        final_status,
+        command_exit_code,
+    );
+    lifecycle = merge_shutdown(lifecycle, shutdown);
+    let degraded_reason = degraded_reason_for_lifecycle(&lifecycle, recovery_note.as_deref());
+
+    RustHostedKnowledgeReport {
+        command: lane_command_name(lane).to_string(),
+        command_family: "lane",
+        runtime_authority: "rust",
+        session_id: session_id_from_worker_result(&worker_result),
+        final_status: lifecycle.final_status,
+        degraded_reason,
+        topology: lifecycle.topology,
+        support_boundary: lifecycle.support_boundary,
+        legacy_path_label: "legacy_ts_host_bridge_compatibility_only",
+        rust_lifecycle: lifecycle,
+        worker_result: Some(worker_result),
+        rust_host_notes: vec![
+            "Rust host launched and supervised the TypeScript worker for this lane workflow."
+                .into(),
+            "TypeScript worker result is workflow body output only; Rust host lifecycle metadata is authoritative."
+                .into(),
+        ],
+    }
+}
+
+fn report_from_lane_lifecycle_error(
+    lane: dh_types::WorkflowLane,
+    lifecycle: HostLifecycleReport,
+    error_note: String,
+    note: &str,
+) -> RustHostedKnowledgeReport {
+    RustHostedKnowledgeReport {
+        command: lane_command_name(lane).to_string(),
+        command_family: "lane",
+        runtime_authority: "rust",
+        session_id: None,
+        final_status: lifecycle.final_status,
+        degraded_reason: Some(error_note.clone()),
+        topology: lifecycle.topology,
+        support_boundary: lifecycle.support_boundary,
+        legacy_path_label: "legacy_ts_host_bridge_compatibility_only",
+        rust_lifecycle: lifecycle,
+        worker_result: None,
+        rust_host_notes: vec![note.into(), error_note],
+    }
+}
+
+fn session_id_from_worker_result(worker_result: &Value) -> Option<String> {
+    worker_result
+        .get("sessionId")
+        .or_else(|| {
+            worker_result
+                .get("report")
+                .and_then(|report| report.get("sessionId"))
+        })
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn degraded_reason_for_lifecycle(
+    lifecycle: &HostLifecycleReport,
+    recovery_note: Option<&str>,
+) -> Option<String> {
+    if let Some(note) = recovery_note {
+        return Some(note.to_string());
+    }
+    match lifecycle.final_status {
+        FinalStatus::CleanSuccess => None,
+        FinalStatus::RecoveredDegradedSuccess => {
+            Some("Rust host recovered after a pre-final worker failure.".into())
+        }
+        FinalStatus::DegradedSuccess => Some("Rust host completed with degraded health.".into()),
+        FinalStatus::StartupFailed => {
+            Some("Rust host startup failed before worker execution.".into())
+        }
+        FinalStatus::RequestFailed => {
+            Some("Rust host request failed during worker execution.".into())
+        }
+        FinalStatus::Cancelled => Some("Rust host cancelled the command.".into()),
+        FinalStatus::CleanupIncomplete => Some("Rust host cleanup was incomplete.".into()),
+    }
+}
+
+fn lane_command_name(lane: dh_types::WorkflowLane) -> &'static str {
+    match lane {
+        dh_types::WorkflowLane::Quick => "quick",
+        dh_types::WorkflowLane::Delivery => "delivery",
+        dh_types::WorkflowLane::Migration => "migrate",
     }
 }
 
@@ -989,6 +1144,44 @@ sleep 0.05
         Ok(())
     }
 
+    #[test]
+    fn lane_report_uses_lane_identity_and_authority_envelope() {
+        let lifecycle = report_for_final_status(
+            "linux",
+            WorkerState::Ready,
+            HealthState::Healthy,
+            FailurePhase::None,
+            TimeoutClass::None,
+            RecoveryOutcome::NotAttempted,
+            CleanupOutcome::Graceful,
+            None,
+            FinalStatus::CleanSuccess,
+            Some(0),
+        );
+        let outcome = WorkerRequestOutcome {
+            result: serde_json::json!({
+                "exitCode": 0,
+                "lane": "quick",
+                "sessionId": "session-rust-lane",
+                "workflowSummary": ["lane ran"]
+            }),
+            report: lifecycle.clone(),
+        };
+        let report = report_from_lane_worker_success(
+            dh_types::WorkflowLane::Quick,
+            outcome,
+            lifecycle,
+            None,
+        );
+
+        assert_eq!(report.command, "quick");
+        assert_eq!(report.command_family, "lane");
+        assert_eq!(report.runtime_authority, "rust");
+        assert_eq!(report.session_id.as_deref(), Some("session-rust-lane"));
+        assert_eq!(report.final_status, FinalStatus::CleanSuccess);
+        assert_eq!(report.degraded_reason, None);
+    }
+
     #[cfg(unix)]
     #[test]
     fn hosted_text_keeps_lifecycle_success_separate_from_unsupported_answer_state(
@@ -1006,7 +1199,12 @@ sleep 0.05
             Some(0),
         );
         let report = RustHostedKnowledgeReport {
-            command: "ask",
+            command: "ask".to_string(),
+            command_family: "knowledge",
+            runtime_authority: "rust",
+            session_id: None,
+            final_status: lifecycle.final_status,
+            degraded_reason: None,
             topology: "rust_host_ts_worker",
             support_boundary: "knowledge_commands_first_wave",
             legacy_path_label: "legacy_ts_host_bridge_compatibility_only",

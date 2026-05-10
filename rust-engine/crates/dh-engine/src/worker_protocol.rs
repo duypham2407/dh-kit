@@ -1,4 +1,7 @@
-use crate::host_lifecycle::{SUPPORTED_COMMANDS_FIRST_WAVE, SUPPORT_BOUNDARY_FIRST_WAVE};
+use crate::host_lifecycle::{
+    runtime_authority_contract, RuntimeAuthorityContract, SUPPORTED_COMMANDS_FIRST_WAVE,
+    SUPPORT_BOUNDARY_FIRST_WAVE,
+};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -31,8 +34,9 @@ pub const BUILD_EVIDENCE_UNSUPPORTED_CLASSES: [&str; 5] = [
 ];
 
 pub const HOST_HANDSHAKE_METHODS: [&str; 2] = ["dh.initialize", "dh.initialized"];
-pub const HOST_TO_WORKER_REQUEST_METHODS: [&str; 4] = [
+pub const HOST_TO_WORKER_REQUEST_METHODS: [&str; 5] = [
     "session.runCommand",
+    "session.runLane",
     "runtime.ping",
     "session.cancel",
     "dh.shutdown",
@@ -57,10 +61,11 @@ pub const BRIDGE_INITIALIZE_METHODS: [&str; 7] = [
     QUERY_CALL_HIERARCHY_METHOD,
     QUERY_ENTRY_POINTS_METHOD,
 ];
-pub const BRIDGE_LIFECYCLE_CONTROL_METHODS: [&str; 5] = [
+pub const BRIDGE_LIFECYCLE_CONTROL_METHODS: [&str; 6] = [
     "dh.initialized",
     "dh.ready",
     "session.runCommand",
+    "session.runLane",
     "runtime.ping",
     "dh.shutdown",
 ];
@@ -92,6 +97,7 @@ pub struct WorkerProtocolContract {
     pub worker_to_host_query_methods: Vec<&'static str>,
     pub worker_to_host_notifications: Vec<&'static str>,
     pub supported_relationships: Vec<&'static str>,
+    pub runtime_authority: RuntimeAuthorityContract,
     pub build_evidence: BuildEvidenceProtocolContract,
 }
 
@@ -145,6 +151,7 @@ pub fn worker_protocol_contract() -> WorkerProtocolContract {
         worker_to_host_query_methods: WORKER_TO_HOST_QUERY_METHODS.to_vec(),
         worker_to_host_notifications: WORKER_TO_HOST_NOTIFICATIONS.to_vec(),
         supported_relationships: QUERY_RELATIONSHIPS.to_vec(),
+        runtime_authority: runtime_authority_contract(),
         build_evidence: build_evidence_protocol_contract(),
     }
 }
@@ -269,6 +276,13 @@ mod tests {
         assert_eq!(
             value["supportedCommands"],
             json!(["ask", "explain", "trace"])
+        );
+        assert!(contract
+            .host_to_worker_request_methods
+            .contains(&"session.runLane"));
+        assert_eq!(
+            serde_json::to_value(&contract.runtime_authority)?["owner"],
+            json!("rust")
         );
         assert_eq!(
             value["framing"]["transport"],

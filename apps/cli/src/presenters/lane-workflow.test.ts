@@ -12,6 +12,9 @@ function makeReport(overrides?: Partial<LaneWorkflowReport>): LaneWorkflowReport
     model: "openai/gpt-5/default",
     objective: "ship feature",
     workflowSummary: ["ok"],
+    runtimeAuthority: "rust",
+    finalStatus: "clean_success",
+    degradedReason: null,
     ...overrides,
   };
 }
@@ -21,6 +24,24 @@ describe("lane workflow presenters", () => {
     const text = renderLaneWorkflowText(makeReport());
     expect(text).toContain("lane: delivery");
     expect(text).toContain("session: sess-1");
+  });
+
+  it("renders runtime authority metadata for lane workflows", () => {
+    const text = renderLaneWorkflowText(makeReport({
+      lane: "quick",
+      sessionId: "session-1",
+      stage: "quick_execute",
+      agent: "Quick Agent",
+      objective: "inspect",
+      workflowSummary: ["done"],
+      runtimeAuthority: "rust",
+      finalStatus: "clean_success",
+      degradedReason: null,
+    }));
+
+    expect(text).toContain("runtime authority: rust");
+    expect(text).toContain("final status: clean_success");
+    expect(text).not.toContain("degraded reason:");
   });
 
   it("renders text output for failure report", () => {

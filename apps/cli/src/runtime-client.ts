@@ -1,5 +1,6 @@
 import { runDoctor } from "../../../packages/runtime/src/diagnostics/doctor.js";
 import { runIndexWorkflow } from "../../../packages/runtime/src/jobs/index-job-runner.js";
+import { runRustHostedLaneWorkflow } from "../../../packages/opencode-app/src/workflows/run-rust-hosted-lane-command.js";
 import {
   cleanupOperatorSafeArtifacts,
   inspectOperatorSafeArtifact,
@@ -43,7 +44,12 @@ export type RuntimeClient = {
 
 export function createRuntimeClient(): RuntimeClient {
   return {
-    runLane: runLaneWorkflow,
+    runLane: (input) => {
+      if (process.env.DH_ENABLE_TS_LANE_COMPAT === "1") {
+        return runLaneWorkflow(input);
+      }
+      return runRustHostedLaneWorkflow(input);
+    },
     runKnowledge: runKnowledgeCommand,
     runDoctor,
     runIndex: runIndexWorkflow,

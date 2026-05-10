@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe("runCli help", () => {
-  it("labels Rust-hosted knowledge commands and legacy workflow compatibility surfaces", async () => {
+  it("labels Rust-hosted knowledge and lane command surfaces", async () => {
     const repo = makeTmpRepo();
     const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
 
@@ -34,11 +34,17 @@ describe("runCli help", () => {
     expect(output).toContain("ask <question> [--json]     (Rust-hosted first-wave knowledge path)");
     expect(output).toContain("explain <symbol> [--json]   (Rust-hosted first-wave knowledge path)");
     expect(output).toContain("trace <target> [--json]     (Rust-hosted first-wave lifecycle path; trace result may be unsupported)");
-    expect(output).toContain("quick <task> [--json]       (TypeScript-hosted workflow compatibility path)");
+    expect(output).toContain("quick <task> [--json]       (Rust-hosted lane workflow path)");
+    expect(output).toContain("delivery <goal> [--json]    (Rust-hosted lane workflow path)");
+    expect(output).toContain("migrate <goal> [--json]     (Rust-hosted lane workflow path)");
+    expect(output).toContain("Rust-host lifecycle authority covers knowledge commands and lane workflows: ask, explain, trace, quick, delivery, migrate.");
+    expect(output).toContain("Direct TypeScript lane execution is available only with DH_ENABLE_TS_LANE_COMPAT=1.");
     expect(output).toContain("Bounded broad ask can use Rust-authored query.buildEvidence only for finite static repository subjects.");
     expect(output).toContain("Legacy retrieval packets and TypeScript-hosted bridge paths are compatibility surfaces, not canonical authority for touched Rust-hosted build-evidence flows.");
     expect(output).toContain("Supported target platforms are Linux and macOS only.");
-    expect(output).toContain("No universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, or full workflow-lane parity is claimed.");
+    expect(output).toContain("No universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, or OpenCode run/server/provider/MCP/tool parity is claimed.");
+    expect(output).not.toContain("TypeScript-hosted workflow compatibility path");
+    expect(output).not.toContain("full workflow-lane parity is claimed");
     expect(output).toContain("bounded Rust query.buildEvidence when a finite static subject is available");
     expect(output).toContain("TypeScript CLI setup:");
     expect(output).toContain("1. dh --help");

@@ -101,4 +101,17 @@ export class SessionsRepo {
       latestRevertId: row.latest_revert_id ?? undefined,
     };
   }
+
+  findLatestByLane(lane: SessionState["lane"]): SessionState | undefined {
+    const database = openDhDatabase(this.repoRoot);
+    const row = database.prepare(`
+      SELECT session_id
+      FROM sessions
+      WHERE lane = ?
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1
+    `).get(lane) as { session_id: string } | undefined;
+
+    return row ? this.findById(row.session_id) : undefined;
+  }
 }

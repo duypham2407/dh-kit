@@ -806,7 +806,12 @@ fn run_lane_command(lane: WorkflowLane, args: LaneCommandArgs) -> Result<()> {
             "Rust-hosted first-wave lane command path currently supports Linux and macOS only."
         };
         let payload = serde_json::json!({
-            "command": "lane",
+            "command": lane_command_label(lane),
+            "commandFamily": "lane",
+            "runtimeAuthority": "rust",
+            "sessionId": null,
+            "finalStatus": report.final_status,
+            "degradedReason": launch_note,
             "topology": host_lifecycle::TOPOLOGY_RUST_HOST_TS_WORKER,
             "supportBoundary": host_lifecycle::SUPPORT_BOUNDARY_FIRST_WAVE,
             "legacyPathLabel": "legacy_ts_host_bridge_compatibility_only",
@@ -820,7 +825,11 @@ fn run_lane_command(lane: WorkflowLane, args: LaneCommandArgs) -> Result<()> {
         if args.json {
             println!("{}", serde_json::to_string_pretty(&payload)?);
         } else {
-            println!("command: lane ({:?})", lane);
+            println!("command: {}", lane_command_label(lane));
+            println!("command family: lane");
+            println!("runtime authority: rust");
+            println!("final status: {:?}", report.final_status);
+            println!("degraded reason: {launch_note}");
             println!("topology: {}", host_lifecycle::TOPOLOGY_RUST_HOST_TS_WORKER);
             println!(
                 "support boundary: {}",
@@ -860,6 +869,14 @@ fn run_lane_command(lane: WorkflowLane, args: LaneCommandArgs) -> Result<()> {
     }
 
     std::process::exit(exit_code);
+}
+
+fn lane_command_label(lane: WorkflowLane) -> &'static str {
+    match lane {
+        WorkflowLane::Quick => "quick",
+        WorkflowLane::Delivery => "delivery",
+        WorkflowLane::Migration => "migrate",
+    }
 }
 
 fn knowledge_command_bundle_search_roots(workspace: &std::path::Path) -> Vec<PathBuf> {

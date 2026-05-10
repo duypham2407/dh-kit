@@ -318,6 +318,14 @@ describe("runDoctor", () => {
 
     expect(report.diagnostics.lifecycleClassification).toBeDefined();
     expect(["healthy", "degraded", "unsupported", "misconfigured"]).toContain(report.diagnostics.lifecycleClassification.overall);
+    expect(report.diagnostics.parity.summary.byCategory.runtime).toBe("supported");
+    expect(report.diagnostics.parity.features.find((feature) => feature.category === "cli")?.dhSurface).toEqual(
+      expect.arrayContaining([
+        "quick (rust-hosted)",
+        "delivery (rust-hosted)",
+        "migrate (rust-hosted)",
+      ]),
+    );
   });
 
   it("includes an OpenCode parity contract without claiming missing surfaces", async () => {

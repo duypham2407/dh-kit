@@ -346,6 +346,26 @@ describe("HostBridgeClient", () => {
     expect("toolExecute" in client).toBe(false);
   });
 
+  it("advertises Rust runtime authority families from host-backed bridge snapshots", async () => {
+    const { workerPeer, hostPeer, start } = connectPeers();
+    start();
+
+    const client = new HostBridgeClient(workerPeer);
+    const snapshot = await client.getInitializeSnapshot();
+
+    expect(snapshot.capabilities.runtimeAuthority).toEqual({
+      owner: "rust",
+      families: expect.arrayContaining([
+        { family: "knowledge", state: "supported", owner: "rust" },
+        { family: "lane", state: "supported", owner: "rust" },
+        { family: "session", state: "partial", owner: "rust" },
+      ]),
+    });
+
+    hostPeer.close();
+    workerPeer.close();
+  });
+
   it("delegates first-wave query classes to the Rust host peer without spawning Rust", async () => {
     const { workerPeer, hostPeer, start } = connectPeers();
     const calls: Array<{ method: string; params: Record<string, unknown> }> = [];

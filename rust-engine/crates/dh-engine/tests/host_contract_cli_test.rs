@@ -31,9 +31,29 @@ fn host_contract_cli_prints_lifecycle_and_protocol_contracts() {
     );
     assert_eq!(
         payload["lifecycleContract"]["supportBoundary"],
-        "knowledge_commands_first_wave"
+        "runtime_authority_spine"
+    );
+    assert_eq!(
+        payload["lifecycleContract"]["supportedCommands"],
+        serde_json::json!(["ask", "explain", "trace", "quick", "delivery", "migrate"])
     );
     assert_eq!(payload["lifecycleContract"]["authorityOwner"], "rust");
+    assert_eq!(
+        payload["lifecycleContract"]["runtimeAuthority"]["owner"],
+        "rust"
+    );
+    assert_eq!(
+        payload["lifecycleContract"]["runtimeAuthority"]["families"],
+        serde_json::json!([
+            {"family":"knowledge","state":"supported","owner":"rust"},
+            {"family":"lane","state":"supported","owner":"rust"},
+            {"family":"run","state":"planned","owner":"rust"},
+            {"family":"session","state":"partial","owner":"rust"},
+            {"family":"provider","state":"planned","owner":"rust"},
+            {"family":"mcp","state":"planned","owner":"rust"},
+            {"family":"tool","state":"planned","owner":"rust"}
+        ])
+    );
     assert_eq!(
         payload["lifecycleContract"]["boundaries"]["daemonMode"],
         false
@@ -45,6 +65,10 @@ fn host_contract_cli_prints_lifecycle_and_protocol_contracts() {
     assert_eq!(
         payload["lifecycleContract"]["boundaries"]["windowsSupport"],
         false
+    );
+    assert_eq!(
+        payload["lifecycleContract"]["boundaries"]["workflowLaneParity"],
+        true
     );
     assert_eq!(
         payload["workerProtocolContract"]["framing"]["transport"],
@@ -129,7 +153,10 @@ fn no_arg_cli_prints_first_run_onboarding_without_usage_error() {
         stdout,
         stderr
     );
-    assert!(stderr.is_empty(), "no-arg onboarding should not write stderr");
+    assert!(
+        stderr.is_empty(),
+        "no-arg onboarding should not write stderr"
+    );
     assert!(stdout.contains("first-run onboarding"));
     assert!(stdout.contains("dh --help"));
     assert!(stdout.contains("dh status"));

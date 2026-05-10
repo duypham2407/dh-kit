@@ -112,6 +112,15 @@ export type BridgeTransportSnapshot = {
   codecVersion: number;
 };
 
+export type BridgeRuntimeAuthorityCapability = {
+  owner: "rust";
+  families: Array<{
+    family: "knowledge" | "lane" | "run" | "session" | "provider" | "mcp" | "tool";
+    state: "supported" | "partial" | "planned";
+    owner: "rust";
+  }>;
+};
+
 export type BridgeInitializeCapabilities = {
   protocolVersion: string;
   methods: readonly string[];
@@ -119,6 +128,7 @@ export type BridgeInitializeCapabilities = {
     supportedRelations: readonly string[];
   };
   languageCapabilityMatrix: BridgeLanguageCapabilityEntry[];
+  runtimeAuthority?: BridgeRuntimeAuthorityCapability;
   transport?: BridgeTransportSnapshot;
 };
 

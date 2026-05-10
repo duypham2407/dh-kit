@@ -5,15 +5,23 @@ export function renderLaneWorkflowText(report: LaneWorkflowReport): string {
     return [...report.workflowSummary].join("\n");
   }
 
-  return [
+  const lines = [
     `lane: ${report.lane}`,
     `session: ${report.sessionId}`,
     `stage: ${report.stage}`,
     `agent: ${report.agent}`,
     `model: ${report.model}`,
     `objective: ${report.objective}`,
+    `runtime authority: ${report.runtimeAuthority}`,
+    `final status: ${report.finalStatus}`,
     ...report.workflowSummary,
-  ].join("\n");
+  ];
+
+  if (report.degradedReason) {
+    lines.push(`degraded reason: ${report.degradedReason}`);
+  }
+
+  return lines.join("\n");
 }
 
 export function renderLaneWorkflowJson(report: LaneWorkflowReport): string {

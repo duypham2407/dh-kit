@@ -19,7 +19,10 @@ import { buildExecutionEnvelope } from "../../../opencode-app/src/planner/build-
 export type SessionBootstrapResult = {
   session: SessionState;
   envelope: ExecutionEnvelopeState;
+  runtimeAuthority: SessionBootstrapRuntimeAuthority;
 };
+
+export type SessionBootstrapRuntimeAuthority = "rust_host" | "typescript_compatibility";
 
 export class SessionManager {
   private readonly assignmentsRepo: AgentModelAssignmentsRepo;
@@ -36,8 +39,13 @@ export class SessionManager {
     this.executionEnvelopesRepo = new ExecutionEnvelopesRepo(repoRoot);
   }
 
-  async createSession(lane: WorkflowLane, agent: AgentRegistryEntry): Promise<SessionBootstrapResult> {
+  async createSession(
+    lane: WorkflowLane,
+    agent: AgentRegistryEntry,
+    options?: { runtimeAuthority?: SessionBootstrapRuntimeAuthority },
+  ): Promise<SessionBootstrapResult> {
     const session = createLaneLockedSession(this.repoRoot, lane);
+    const runtimeAuthority = options?.runtimeAuthority ?? "typescript_compatibility";
     const assignment = await this.assignmentsRepo.findByAgentId(agent.agentId);
     const resolvedModel = await resolveAgentModel(this.repoRoot, agent.agentId, assignment);
     const envelope: ExecutionEnvelopeState = {
@@ -61,7 +69,7 @@ export class SessionManager {
       workflow,
       latestEnvelope: envelope,
     });
-    return { session, envelope };
+    return { session, envelope, runtimeAuthority };
   }
 
   async readSession(sessionId: string) {

@@ -57,4 +57,20 @@ describe("buildOpenCodeParityReport", () => {
     expect(report.summary.byStatus.deferred).toBeGreaterThan(0);
     expect(report.summary.byStatus.out_of_scope).toBeGreaterThan(0);
   });
+
+  it("marks runtime authority as supported once lane commands are Rust-hosted", () => {
+    const report = buildOpenCodeParityReport();
+    const runtime = report.features.find((feature) => feature.category === "runtime");
+    const cli = report.features.find((feature) => feature.category === "cli");
+
+    expect(runtime?.status).toBe("supported");
+    expect(runtime?.missingRuntimeCapabilities).not.toEqual(
+      expect.arrayContaining(["single Rust lifecycle authority for lane, run, session, provider, MCP, and tool paths"]),
+    );
+    expect(cli?.dhSurface).toEqual(expect.arrayContaining([
+      "quick (rust-hosted)",
+      "delivery (rust-hosted)",
+      "migrate (rust-hosted)",
+    ]));
+  });
 });

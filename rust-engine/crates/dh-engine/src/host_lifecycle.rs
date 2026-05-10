@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 pub const LIFECYCLE_CONTRACT_VERSION: &str = "2026-04-22.rust-host-lifecycle.v1";
 pub const TOPOLOGY_RUST_HOST_TS_WORKER: &str = "rust_host_ts_worker";
 pub const SUPPORT_BOUNDARY_FIRST_WAVE: &str = "knowledge_commands_first_wave";
+pub const SUPPORT_BOUNDARY_RUNTIME_AUTHORITY_SPINE: &str = "runtime_authority_spine";
 pub const LIFECYCLE_AUTHORITY_OWNER: &str = "rust";
 pub const WORKER_ROLE: &str = "typescript_worker";
 pub const SUPPORTED_COMMANDS_FIRST_WAVE: [&str; 3] = ["ask", "explain", "trace"];
@@ -94,6 +95,41 @@ pub enum LaunchabilityIssue {
     ProtocolMismatch,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeAuthorityFamily {
+    Knowledge,
+    Lane,
+    Run,
+    Session,
+    Provider,
+    Mcp,
+    Tool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeAuthorityState {
+    Supported,
+    Partial,
+    Planned,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeAuthorityFamilyContract {
+    pub family: RuntimeAuthorityFamily,
+    pub state: RuntimeAuthorityState,
+    pub owner: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeAuthorityContract {
+    pub owner: &'static str,
+    pub families: Vec<RuntimeAuthorityFamilyContract>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LifecycleVocabulary {
@@ -136,6 +172,7 @@ pub struct LifecycleContract {
     pub supported_platforms: Vec<&'static str>,
     pub authority_owner: &'static str,
     pub worker_role: &'static str,
+    pub runtime_authority: RuntimeAuthorityContract,
     pub authority: LifecycleAuthority,
     pub vocabulary: LifecycleVocabulary,
     pub boundaries: LifecycleBoundaries,
@@ -172,11 +209,12 @@ pub fn lifecycle_contract() -> LifecycleContract {
     LifecycleContract {
         contract_version: LIFECYCLE_CONTRACT_VERSION,
         topology: TOPOLOGY_RUST_HOST_TS_WORKER,
-        support_boundary: SUPPORT_BOUNDARY_FIRST_WAVE,
-        supported_commands: SUPPORTED_COMMANDS_FIRST_WAVE.to_vec(),
+        support_boundary: SUPPORT_BOUNDARY_RUNTIME_AUTHORITY_SPINE,
+        supported_commands: vec!["ask", "explain", "trace", "quick", "delivery", "migrate"],
         supported_platforms: SUPPORTED_PLATFORMS.to_vec(),
         authority_owner: LIFECYCLE_AUTHORITY_OWNER,
         worker_role: WORKER_ROLE,
+        runtime_authority: runtime_authority_contract(),
         authority: LifecycleAuthority {
             owner: LIFECYCLE_AUTHORITY_OWNER,
             rust_owns: vec![
@@ -265,8 +303,51 @@ pub fn lifecycle_contract() -> LifecycleContract {
             daemon_mode: false,
             windows_support: false,
             generic_process_supervisor: false,
-            workflow_lane_parity: false,
+            workflow_lane_parity: true,
         },
+    }
+}
+
+pub fn runtime_authority_contract() -> RuntimeAuthorityContract {
+    RuntimeAuthorityContract {
+        owner: LIFECYCLE_AUTHORITY_OWNER,
+        families: vec![
+            RuntimeAuthorityFamilyContract {
+                family: RuntimeAuthorityFamily::Knowledge,
+                state: RuntimeAuthorityState::Supported,
+                owner: LIFECYCLE_AUTHORITY_OWNER,
+            },
+            RuntimeAuthorityFamilyContract {
+                family: RuntimeAuthorityFamily::Lane,
+                state: RuntimeAuthorityState::Supported,
+                owner: LIFECYCLE_AUTHORITY_OWNER,
+            },
+            RuntimeAuthorityFamilyContract {
+                family: RuntimeAuthorityFamily::Run,
+                state: RuntimeAuthorityState::Planned,
+                owner: LIFECYCLE_AUTHORITY_OWNER,
+            },
+            RuntimeAuthorityFamilyContract {
+                family: RuntimeAuthorityFamily::Session,
+                state: RuntimeAuthorityState::Partial,
+                owner: LIFECYCLE_AUTHORITY_OWNER,
+            },
+            RuntimeAuthorityFamilyContract {
+                family: RuntimeAuthorityFamily::Provider,
+                state: RuntimeAuthorityState::Planned,
+                owner: LIFECYCLE_AUTHORITY_OWNER,
+            },
+            RuntimeAuthorityFamilyContract {
+                family: RuntimeAuthorityFamily::Mcp,
+                state: RuntimeAuthorityState::Planned,
+                owner: LIFECYCLE_AUTHORITY_OWNER,
+            },
+            RuntimeAuthorityFamilyContract {
+                family: RuntimeAuthorityFamily::Tool,
+                state: RuntimeAuthorityState::Planned,
+                owner: LIFECYCLE_AUTHORITY_OWNER,
+            },
+        ],
     }
 }
 
@@ -370,20 +451,31 @@ mod tests {
         let value = serde_json::to_value(&contract)?;
 
         assert_eq!(value["topology"], json!("rust_host_ts_worker"));
-        assert_eq!(
-            value["supportBoundary"],
-            json!("knowledge_commands_first_wave")
-        );
+        assert_eq!(value["supportBoundary"], json!("runtime_authority_spine"));
         assert_eq!(
             value["supportedCommands"],
-            json!(["ask", "explain", "trace"])
+            json!(["ask", "explain", "trace", "quick", "delivery", "migrate"])
         );
         assert_eq!(value["authorityOwner"], json!("rust"));
         assert_eq!(value["workerRole"], json!("typescript_worker"));
+        assert_eq!(value["runtimeAuthority"]["owner"], json!("rust"));
+        assert_eq!(
+            value["runtimeAuthority"]["families"],
+            json!([
+                {"family":"knowledge","state":"supported","owner":"rust"},
+                {"family":"lane","state":"supported","owner":"rust"},
+                {"family":"run","state":"planned","owner":"rust"},
+                {"family":"session","state":"partial","owner":"rust"},
+                {"family":"provider","state":"planned","owner":"rust"},
+                {"family":"mcp","state":"planned","owner":"rust"},
+                {"family":"tool","state":"planned","owner":"rust"}
+            ])
+        );
         assert_eq!(value["boundaries"]["localOnly"], json!(true));
         assert_eq!(value["boundaries"]["networkTransport"], json!(false));
         assert_eq!(value["boundaries"]["daemonMode"], json!(false));
         assert_eq!(value["boundaries"]["windowsSupport"], json!(false));
+        assert!(contract.boundaries.workflow_lane_parity);
         assert!(contract
             .vocabulary
             .worker_states

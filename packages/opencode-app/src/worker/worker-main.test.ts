@@ -208,6 +208,34 @@ describe("worker-main", () => {
     ]);
   });
 
+  it("marks lane workflow results as produced by the TypeScript worker boundary", async () => {
+    const repo = makeRepo();
+    const { hostPeer, start } = connectHostAndWorker(repo);
+    start();
+
+    await hostPeer.request("dh.initialize", {
+      protocolVersion: "1",
+      workspaceRoot: repo,
+      lifecycleAuthority: "rust",
+    });
+    await hostPeer.request("dh.initialized", { accepted: true });
+
+    const result = await hostPeer.request("session.runLane", {
+      lane: "quick",
+      objective: "inspect runtime authority marker",
+      repoRoot: repo,
+    });
+
+    expect(result).toMatchObject({
+      runtimeAuthority: "typescript_worker",
+      report: {
+        lane: "quick",
+        objective: "inspect runtime authority marker",
+        runtimeAuthority: "typescript_compatibility",
+      },
+    });
+  });
+
   it("rejects non-Rust lifecycle authority during initialization", async () => {
     const repo = makeRepo();
     const { hostPeer, start } = connectHostAndWorker(repo);

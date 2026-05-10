@@ -8,6 +8,7 @@ import { runExplainCommand } from "./explain.js";
 import { runImportCommand } from "./import.js";
 import { runIndexCommand } from "./index.js";
 import { runMigrateCommand } from "./migrate.js";
+import { runMcpCommand } from "./mcp.js";
 import { runModelsCommand } from "./models.js";
 import { runOperatorSafeMaintenanceCommand } from "./operator-safe-maintenance.js";
 import { runProvidersCommand } from "./providers.js";
@@ -31,6 +32,7 @@ Commands:
   stats [--days <n>] [--models <n>] [--tools <n>] [--json]
   providers <list|login|logout|verify> [options]
   models [provider] [--refresh] [--verbose] [--json]
+  mcp <list|add|auth|logout|debug> [options]
   quick <task> [--json]       (Rust-hosted lane workflow path)
   delivery <goal> [--json]    (Rust-hosted lane workflow path)
   migrate <goal> [--json]     (Rust-hosted lane workflow path)
@@ -88,6 +90,8 @@ export async function runCli(args: string[], repoRoot: string): Promise<number> 
       return runProvidersCommand(rest, repoRoot);
     case "models":
       return runModelsCommand(rest, repoRoot);
+    case "mcp":
+      return runMcpCommand(rest, repoRoot);
     case "quick":
       return runQuickCommand(rest, repoRoot);
     case "delivery":

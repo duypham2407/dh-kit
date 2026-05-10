@@ -29,6 +29,8 @@ function makeClient(overrides: Partial<TuiAppClient> = {}): TuiAppClient {
       query: input.query,
       ledger: { id: "ledger-1", entries: [] },
       coverage: { included: 0, skipped: 0, warnings: [] },
+      cache: { status: "miss", workspaceFingerprint: "fp" },
+      metrics: { latencyMs: { fingerprint: 0, retrieval: 0, planning: 0, total: 0 } },
       generatedAt: "2026-05-10T00:00:00.000Z",
     }),
     run: async () => makeReport(),
@@ -301,6 +303,8 @@ describe("createTuiApp", () => {
         skipped: 0,
         warnings: [{ code: "dependency_graph_unavailable" as const, message: "Graph unavailable." }],
       },
+      cache: { status: "miss" as const, workspaceFingerprint: "fp" },
+      metrics: { latencyMs: { fingerprint: 0, retrieval: 0, planning: 0, total: 0 } },
       generatedAt: "2026-05-10T00:00:00.000Z",
     }));
     const app = createTuiApp({

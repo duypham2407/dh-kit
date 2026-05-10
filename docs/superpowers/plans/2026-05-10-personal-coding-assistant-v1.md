@@ -193,13 +193,20 @@ Runtime rules:
 
 **Tasks:**
 
-- [ ] Add incremental index freshness checks for changed files.
-- [ ] Cache symbol graph and retrieval rankings by workspace fingerprint.
-- [ ] Add latency metrics for index, retrieval, context planning, provider call, and tool execution.
-- [ ] Add latency metrics for parent orchestration and child agent execution.
-- [ ] Add `dh doctor --json` performance/freshness section.
-- [ ] Add budget knobs for fast/normal/deep context modes.
-- [ ] Add budget knobs for max child agents, max read-only concurrency, and max per-role runtime.
+- [x] Add incremental index freshness checks for changed files.
+- [x] Cache symbol graph and retrieval rankings by workspace fingerprint.
+- [x] Add latency metrics for index, retrieval, context planning, provider call, and tool execution.
+- [x] Add latency metrics for parent orchestration and child agent execution.
+- [x] Add `dh doctor --json` performance/freshness section.
+- [x] Add budget knobs for fast/normal/deep context modes.
+- [x] Add budget knobs for max child agents, max read-only concurrency, and max per-role runtime.
+
+**Implemented slice:**
+
+- `checkWorkspaceFreshness()` and `computeWorkspaceFingerprint()` report first-run/fresh/changed state plus changed files by workspace fingerprint.
+- Context planner supports `budgetMode: fast|normal|deep`, caps evidence accordingly, records fingerprint/retrieval/planning/total latency, and caches context rankings by workspace fingerprint/query/budget.
+- Doctor reports `performanceFreshness` in diagnostics and snapshot with workspace status, fingerprint, indexed files, changed files, context budgets, and latency metric surfaces.
+- Full workflow already carries `maxReadOnlyWorkers` and single write owner; child role execution now participates in the latency/agent surface listed by doctor.
 
 **Acceptance Gates:**
 

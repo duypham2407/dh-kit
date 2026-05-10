@@ -42,6 +42,7 @@ describe("runDoctor", () => {
     expect(report.summary).toContain("Database:");
     expect(report.summary).toContain("Providers:");
     expect(report.summary).toContain("Retrieval:");
+    expect(report.summary).toContain("Performance/freshness:");
     expect(report.summary).toContain("Workflow:");
     expect(report.summary).toContain("Verification health:");
     expect(report.summary).toContain("Rust-hosted run/knowledge-command lifecycle authority:");
@@ -50,6 +51,10 @@ describe("runDoctor", () => {
     expect(report.summary).toContain("overall lifecycle status:");
     expect(report.summary).toContain("Hooks:");
     expect(report.summary).toContain("Status:");
+    expect(report.diagnostics.performanceFreshness).toMatchObject({
+      contextBudgetModes: ["fast", "normal", "deep"],
+    });
+    expect(report.snapshot.performanceFreshness.workspaceFingerprint).toEqual(expect.any(String));
   });
 
   it("reports chunk and embedding counts", async () => {

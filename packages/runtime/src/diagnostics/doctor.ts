@@ -25,6 +25,7 @@ import { createDhJsonRpcStdioClient, DhBridgeError } from "../../../opencode-app
 import type { RuntimeProbePingResult } from "./bridge-runtime-probe.js";
 import { buildOpenCodeParityReport } from "./parity-report.js";
 import type { ParityReport } from "../../../shared/src/types/parity.js";
+import { checkWorkspaceFreshness, type WorkspaceFreshnessReport } from "../performance/workspace-freshness.js";
 
 export type DoctorReport = {
   ok: boolean;
@@ -55,6 +56,7 @@ export type DoctorReport = {
       ruleScanAvailability: "available" | "unavailable" | "not_configured";
       securityScanAvailability: "available" | "unavailable" | "not_configured";
     };
+    performanceFreshness: DoctorPerformanceFreshness;
   };
   /** Machine-readable snapshot for CI/monitoring ingestion. */
   snapshot: DoctorSnapshot;
@@ -122,6 +124,16 @@ export type DoctorSnapshot = {
     bestEffort: number;
     unsupported: number;
   };
+  performanceFreshness: DoctorPerformanceFreshness;
+};
+
+export type DoctorPerformanceFreshness = {
+  workspaceStatus: WorkspaceFreshnessReport["status"];
+  workspaceFingerprint: string;
+  indexedFiles: number;
+  changedFiles: string[];
+  contextBudgetModes: Array<"fast" | "normal" | "deep">;
+  latencyMetricSurfaces: string[];
 };
 
 type OperatorReadinessCondition = "ready" | "ready-with-known-degradation" | "blocked";
@@ -281,6 +293,15 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   const rustCapabilitySummary = await summarizeRustCapabilityState(repoRoot);
   const runtimePingLifecycleSeam = await summarizeRuntimePingLifecycleSeam(repoRoot);
   const rustFreshnessProbe = await probeRustEngineStatus(repoRoot);
+  const workspaceFreshness = checkWorkspaceFreshness({ repoRoot, update: false });
+  const performanceFreshness: DoctorPerformanceFreshness = {
+    workspaceStatus: workspaceFreshness.status,
+    workspaceFingerprint: workspaceFreshness.workspaceFingerprint,
+    indexedFiles: workspaceFreshness.indexedFiles,
+    changedFiles: workspaceFreshness.changedFiles,
+    contextBudgetModes: ["fast", "normal", "deep"],
+    latencyMetricSurfaces: ["index", "retrieval", "context_planning", "provider_call", "tool_execution", "full_workflow_orchestration", "child_agent_execution"],
+  };
   const parserFreshnessSummary: RustParserFreshnessView = rustFreshnessProbe.ok && rustFreshnessProbe.freshness
     ? {
       source: "rust_status",
@@ -466,6 +487,13 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
     `  embedding model: ${embeddingModel}`,
     `  api key (${embeddingKeyVar}): ${embeddingKeyAvailable ? "set" : "NOT SET"}`,
     "",
+    "Performance/freshness:",
+    `  workspace: ${performanceFreshness.workspaceStatus}`,
+    `  indexed files: ${performanceFreshness.indexedFiles}`,
+    `  changed files: ${performanceFreshness.changedFiles.length}`,
+    `  context budgets: ${performanceFreshness.contextBudgetModes.join("/")}`,
+    `  latency metrics: ${performanceFreshness.latencyMetricSurfaces.join(", ")}`,
+    "",
     "Workflow:",
     `  mirror: ${workflowMirrorExists ? "yes" : "no"}`,
     "",
@@ -615,6 +643,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
         ruleScanAvailability: qualityGateAvailability.gates.rule_scan.availability,
         securityScanAvailability: qualityGateAvailability.gates.security_scan.availability,
       },
+      performanceFreshness,
     },
     snapshot: {
       timestamp: new Date().toISOString(),
@@ -661,6 +690,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
       runtimePingLifecycleSeamState: runtimePingLifecycleSeam.state,
       parity: parityReport,
       capabilityStateSummary,
+      performanceFreshness,
     },
   };
 }

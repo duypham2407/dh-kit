@@ -26,6 +26,8 @@ describe("runContextCommand", () => {
           skipped: 0,
           warnings: [],
         },
+        cache: { status: "miss", workspaceFingerprint: "fp" },
+        metrics: { latencyMs: { fingerprint: 0, retrieval: 0, planning: 0, total: 0 } },
         generatedAt: "2026-05-10T00:00:00.000Z",
       }),
     });

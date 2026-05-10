@@ -50,6 +50,7 @@ export type ContextInspectInput = {
   repoRoot?: string;
   mode?: "ask" | "explain" | "trace";
   semanticMode?: "always" | "auto" | "off";
+  budgetMode?: "fast" | "normal" | "deep";
   scanOptions?: ContextScanOptions;
 };
 
@@ -60,6 +61,18 @@ export type ContextInspectReport = {
     included: number;
     skipped: number;
     warnings: ContextCoverageWarning[];
+  };
+  cache: {
+    status: "hit" | "miss";
+    workspaceFingerprint: string;
+  };
+  metrics: {
+    latencyMs: {
+      fingerprint: number;
+      retrieval: number;
+      planning: number;
+      total: number;
+    };
   };
   generatedAt: string;
 };

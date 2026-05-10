@@ -66,4 +66,28 @@ describe("context planner", () => {
       code: "reduced_scan_coverage",
     }));
   });
+
+  it("applies context budget modes and reuses ranking cache by workspace fingerprint", async () => {
+    const repo = makeRepo();
+
+    const first = await inspectContext({
+      repoRoot: repo,
+      query: "auth billing",
+      budgetMode: "fast",
+      semanticMode: "off",
+    });
+    const second = await inspectContext({
+      repoRoot: repo,
+      query: "auth billing",
+      budgetMode: "fast",
+      semanticMode: "off",
+    });
+
+    expect(first.ledger.entries.length).toBeLessThanOrEqual(4);
+    expect(first.cache.status).toBe("miss");
+    expect(second.cache.status).toBe("hit");
+    expect(second.cache.workspaceFingerprint).toBe(first.cache.workspaceFingerprint);
+    expect(second.metrics.latencyMs.total).toBeGreaterThanOrEqual(0);
+    expect(fs.existsSync(path.join(repo, ".dh", "cache", "symbol-graph", `${first.cache.workspaceFingerprint}.json`))).toBe(true);
+  });
 });

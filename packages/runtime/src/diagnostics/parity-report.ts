@@ -18,7 +18,7 @@ export const OPENCODE_MISSING_COMMAND_SURFACES = [
   "acp",
 ] as const;
 
-const RECOMMENDED_NEXT_MILESTONE = "Milestone 8: LSP Graph Augmentation";
+const RECOMMENDED_NEXT_MILESTONE = "Milestone 9: Plugin MVP";
 
 const FEATURES: ParityFeature[] = [
   {
@@ -185,13 +185,25 @@ const FEATURES: ParityFeature[] = [
     category: "lsp",
     surface: "LSP graph augmentation",
     opencodeSurface: ["diagnostics", "hover", "definition", "references", "workspace symbols", "call hierarchy"],
-    dhSurface: ["Rust structural graph", "semantic retrieval"],
-    status: "planned",
+    dhSurface: [
+      "Rust structural graph",
+      "semantic retrieval",
+      "LSP service boundary",
+      "lsp diagnostics CLI",
+      "LSP tool wrappers",
+      "live LSP retrieval augmentation",
+    ],
+    status: "partial",
     priority: "P2",
     missingCommandSurfaces: [],
-    missingRuntimeCapabilities: ["LSP client service", "diagnostics tool", "symbol operation tools"],
-    nextMilestone: "Milestone 8: LSP Graph Augmentation",
-    notes: ["Rust graph remains the base; LSP should augment it rather than replace it."],
+    missingRuntimeCapabilities: [
+      "long-lived LSP process supervision",
+      "language server auto-install",
+      "definition/reference/hover client wiring",
+      "call hierarchy implementation",
+    ],
+    nextMilestone: RECOMMENDED_NEXT_MILESTONE,
+    notes: ["Rust graph remains canonical; LSP evidence is live augmentation only."],
   },
   {
     category: "plugin",

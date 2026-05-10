@@ -33,6 +33,7 @@ export async function runRetrieval(input: {
   mode: "ask" | "explain" | "trace";
   semanticMode?: "always" | "auto" | "off";
   scanOptions?: ScanOptions;
+  liveEvidence?: NormalizedRetrievalResult[];
 }) {
   const plan = buildRetrievalPlan({
     query: input.query,
@@ -114,7 +115,8 @@ export async function runRetrieval(input: {
     }
   }
 
-  const normalizedResults = rerankResults([...symbolResults, ...fileResults, ...expandedResults, ...semanticResults]);
+  const liveEvidence = input.liveEvidence ?? [];
+  const normalizedResults = rerankResults([...symbolResults, ...fileResults, ...expandedResults, ...semanticResults, ...liveEvidence]);
   const evidencePackets = await buildEvidencePackets(input.repoRoot, normalizedResults);
 
   return {
@@ -128,6 +130,7 @@ export async function runRetrieval(input: {
     symbols,
     edges,
     results: normalizedResults,
+    liveEvidence,
     evidencePackets,
     embeddingStats,
   };

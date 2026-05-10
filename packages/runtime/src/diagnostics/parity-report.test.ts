@@ -48,10 +48,10 @@ describe("buildOpenCodeParityReport", () => {
     ).toEqual([]);
   });
 
-  it("recommends LSP graph augmentation as the next milestone", () => {
+  it("recommends plugin MVP as the next milestone", () => {
     const report = buildOpenCodeParityReport();
 
-    expect(report.summary.recommendedNextMilestone).toBe("Milestone 8: LSP Graph Augmentation");
+    expect(report.summary.recommendedNextMilestone).toBe("Milestone 9: Plugin MVP");
     expect(report.summary.byStatus.partial).toBeGreaterThan(0);
     expect(report.summary.byStatus.planned).toBeGreaterThan(0);
     expect(report.summary.byStatus.deferred).toBeGreaterThan(0);
@@ -146,6 +146,27 @@ describe("buildOpenCodeParityReport", () => {
     expect(agent?.missingRuntimeCapabilities).toEqual(expect.arrayContaining([
       "advanced multi-agent scheduler",
       "parallel subagent orchestration",
+    ]));
+  });
+
+  it("reports LSP diagnostics and tool wrappers while keeping process-supervision gaps visible", () => {
+    const report = buildOpenCodeParityReport();
+    const lsp = report.features.find((feature) => feature.category === "lsp");
+
+    expect(lsp?.status).toBe("partial");
+    expect(lsp?.dhSurface).toEqual(expect.arrayContaining([
+      "LSP service boundary",
+      "lsp diagnostics CLI",
+      "LSP tool wrappers",
+      "live LSP retrieval augmentation",
+    ]));
+    expect(lsp?.missingRuntimeCapabilities).not.toEqual(expect.arrayContaining([
+      "LSP client service",
+      "diagnostics tool",
+    ]));
+    expect(lsp?.missingRuntimeCapabilities).toEqual(expect.arrayContaining([
+      "long-lived LSP process supervision",
+      "language server auto-install",
     ]));
   });
 });

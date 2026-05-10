@@ -208,4 +208,31 @@ describe("runRetrieval", () => {
     expect(packets[0]!.snippet).not.toBe("Snippet unavailable.");
   });
 
+  it("merges live LSP evidence as non-canonical augmentation", async () => {
+    const repo = makeTmpRepo();
+    fs.writeFileSync(path.join(repo, "src", "auth.ts"), "export function login() { return 'ok'; }\n", "utf8");
+
+    const result = await runRetrieval({
+      repoRoot: repo,
+      query: "login",
+      mode: "ask",
+      semanticMode: "off",
+      liveEvidence: [{
+        entityType: "file",
+        entityId: "lsp-1",
+        filePath: "src/auth.ts",
+        lineRange: [1, 1],
+        sourceTool: "lsp_diagnostics",
+        matchReason: "Live LSP diagnostic for touched file.",
+        rawScore: 0.6,
+        normalizedScore: 0.6,
+        metadata: { evidenceKind: "live_lsp", canonical: false },
+      }],
+    });
+
+    expect(result.liveEvidence).toHaveLength(1);
+    expect(result.liveEvidence[0]?.metadata).toMatchObject({ evidenceKind: "live_lsp", canonical: false });
+    expect(result.results.some((entry) => entry.sourceTool === "lsp_diagnostics")).toBe(true);
+  });
+
 });

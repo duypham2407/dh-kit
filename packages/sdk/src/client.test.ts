@@ -173,4 +173,20 @@ describe("DhClient", () => {
       ]),
     });
   });
+
+  it("inspects context through the server", async () => {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "src", "auth.ts"), "export function login() { return 'ok'; }\n");
+    const started = await startDhServer({ repoRoot: repo, host: "127.0.0.1", port: 0 });
+    servers.push(started.server);
+    const client = new DhClient({ baseUrl: started.url });
+
+    const report = await client.inspectContext({ query: "auth login", semanticMode: "off" });
+
+    expect(report.ledger.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ filePath: "src/auth.ts" }),
+    ]));
+    expect(report.coverage.included).toBeGreaterThan(0);
+  });
 });

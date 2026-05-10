@@ -1,5 +1,6 @@
 import type { RunDirectInput, RunDirectReport, RunEvent } from "../../shared/src/types/run.js";
 import type { SessionDeleteReport, SessionForkReport } from "../../shared/src/types/session.js";
+import type { ContextInspectInput, ContextInspectReport } from "../../shared/src/types/context.js";
 
 export type DhClientOptions = {
   baseUrl: string;
@@ -85,6 +86,10 @@ export class DhClient {
 
   async agents(): Promise<DhAgentsResponse> {
     return await this.request("GET", "/agents");
+  }
+
+  async inspectContext(input: Omit<ContextInspectInput, "repoRoot">): Promise<ContextInspectReport> {
+    return await this.request("POST", "/context/inspect", input);
   }
 
   async run(input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }): Promise<RunDirectReport> {

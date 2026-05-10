@@ -1,4 +1,5 @@
 import type { RunDirectInput, RunDirectReport, RunEvent } from "../../../packages/shared/src/types/run.js";
+import type { ContextInspectInput, ContextInspectReport } from "../../../packages/shared/src/types/context.js";
 import type {
   DhPermissionDecision,
   DhPermissionResponse,
@@ -22,6 +23,7 @@ export type TuiAppClient = {
   sessions: () => Promise<{ sessions: TuiSessionSummary[] }>;
   models?: () => Promise<DhModelsResponse>;
   agents?: () => Promise<DhAgentsResponse>;
+  inspectContext?: (input: Omit<ContextInspectInput, "repoRoot">) => Promise<ContextInspectReport>;
   run: (input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }) => Promise<RunDirectReport>;
   runStream?: (input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }) => AsyncIterable<RunEvent>;
   respondPermission?: (input: DhPermissionResponseInput) => Promise<DhPermissionResponse>;
@@ -72,6 +74,14 @@ export function createTuiApp(options: { serverUrl: string; client: TuiAppClient 
       const trimmed = message.trim();
       if (!trimmed || state.status === "read_only") return;
       state = reduceTuiState(state, { type: "run.started", message: trimmed });
+      if (options.client.inspectContext) {
+        try {
+          const context = await options.client.inspectContext({ query: trimmed });
+          state = reduceTuiState(state, { type: "context.planned", report: context });
+        } catch (error) {
+          state = reduceTuiState(state, { type: "context.failed", reason: errorMessage(error) });
+        }
+      }
       try {
         const input = {
           message: trimmed,

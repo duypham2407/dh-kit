@@ -164,13 +164,22 @@ Runtime rules:
 
 **Tasks:**
 
-- [ ] Add context planner service that merges semantic search, symbol graph, LSP diagnostics, references, and file mentions.
-- [ ] Emit an evidence ledger with file path, line range, reason, score, and source.
-- [ ] Add coverage warnings for unindexed files, stale graph data, unsupported languages, and truncated context.
-- [ ] Add `dh context inspect <query> --json`.
-- [ ] Surface context coverage in TUI before model submission.
-- [ ] Let Context Scout child agents contribute evidence to the same parent-session ledger without duplicating retrieval work.
-- [ ] Let Product Lead, Solution Lead, Code Reviewer, and QA Agent cite shared evidence rather than each rebuilding context from scratch.
+- [x] Add context planner service that merges semantic search, symbol graph, LSP diagnostics, references, and file mentions.
+- [x] Emit an evidence ledger with file path, line range, reason, score, and source.
+- [x] Add coverage warnings for unindexed files, stale graph data, unsupported languages, and truncated context.
+- [x] Add `dh context inspect <query> --json`.
+- [x] Surface context coverage in TUI before model submission.
+- [x] Let Context Scout child agents contribute evidence to the same parent-session ledger without duplicating retrieval work.
+- [x] Let Product Lead, Solution Lead, Code Reviewer, and QA Agent cite shared evidence rather than each rebuilding context from scratch.
+
+**Implemented slice:**
+
+- `inspectContext()` builds a persisted `.dh/context-ledgers/<ledger-id>.json` report from retrieval results, file mentions, graph availability, scan coverage, and LSP availability.
+- Evidence ledger entries include `filePath`, `lineRange`, `reason`, `score`, `source`, and optional symbol names.
+- Coverage warnings include reduced scan coverage, scan stop reasons, dependency graph degradation, LSP unconfigured state, no evidence, and context truncation.
+- CLI exposes `dh context inspect <query> --json`; server/SDK expose `/context/inspect` and `DhClient.inspectContext()`.
+- TUI runs context planning before prompt submission and renders selected evidence plus context warnings.
+- Full workflow `context_scout` stores a shared context ledger ref on the parent state so later role artifacts cite the same evidence refs.
 
 **Acceptance Gates:**
 

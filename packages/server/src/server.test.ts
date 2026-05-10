@@ -228,6 +228,30 @@ describe("DH server", () => {
     });
   });
 
+  it("serves context inspect reports", async () => {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "src", "auth.ts"), "export function login() { return 'ok'; }\n");
+    const started = await startDhServer({ repoRoot: repo, host: "127.0.0.1", port: 0 });
+    servers.push(started.server);
+
+    const response = await fetch(`${started.url}/context/inspect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: "auth login", semanticMode: "off" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ledger: {
+        entries: expect.arrayContaining([
+          expect.objectContaining({ filePath: "src/auth.ts" }),
+        ]),
+      },
+      coverage: { included: expect.any(Number) },
+    });
+  });
+
   it("requires a password for non-localhost bind", () => {
     expect(() => createDhServer({ repoRoot: makeRepo(), host: "0.0.0.0" }))
       .toThrow("dh serve requires --password when binding outside localhost.");

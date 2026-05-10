@@ -7,6 +7,7 @@ import type { SessionState } from "../../shared/src/types/session.js";
 import { deleteSession } from "../../runtime/src/session/session-delete.js";
 import { forkSession } from "../../runtime/src/session/session-fork.js";
 import { listSessions } from "../../runtime/src/session/session-query.js";
+import { inspectContext } from "../../runtime/src/context/context-planner.js";
 
 export type DhServerOptions = {
   repoRoot: string;
@@ -74,6 +75,19 @@ export function createDhServer(options: DhServerOptions): Server {
       if (request.method === "GET" && url.pathname === "/models") {
         const report = new AgentConfigService(options.repoRoot).listAgents();
         writeJson(response, 200, { models: toModelOptions(report.agents) });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/context/inspect") {
+        const body = await readJsonBody(request);
+        const query = readRequiredString(body, "query");
+        const mode = readContextMode(body);
+        const semanticMode = readSemanticMode(body);
+        writeJson(response, 200, await inspectContext({
+          repoRoot: options.repoRoot,
+          query,
+          ...(mode ? { mode } : {}),
+          ...(semanticMode ? { semanticMode } : {}),
+        }));
         return;
       }
       if (request.method === "POST" && url.pathname === "/session/fork") {
@@ -215,4 +229,18 @@ function readPermissionDecision(body: Record<string, unknown>): "allow" | "deny"
   const value = body["decision"];
   if (value === "allow" || value === "deny") return value;
   throw new Error("decision must be allow or deny.");
+}
+
+function readContextMode(body: Record<string, unknown>): "ask" | "explain" | "trace" | undefined {
+  const value = body["mode"];
+  if (value === undefined) return undefined;
+  if (value === "ask" || value === "explain" || value === "trace") return value;
+  throw new Error("mode must be ask, explain, or trace.");
+}
+
+function readSemanticMode(body: Record<string, unknown>): "always" | "auto" | "off" | undefined {
+  const value = body["semanticMode"];
+  if (value === undefined) return undefined;
+  if (value === "always" || value === "auto" || value === "off") return value;
+  throw new Error("semanticMode must be always, auto, or off.");
 }

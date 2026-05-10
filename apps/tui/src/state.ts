@@ -1,4 +1,5 @@
 import type { RunDirectReport, RunEvent } from "../../../packages/shared/src/types/run.js";
+import type { ContextInspectReport } from "../../../packages/shared/src/types/context.js";
 
 export type TuiStatus = "attaching" | "connected" | "running" | "read_only";
 
@@ -67,6 +68,7 @@ export type TuiState = {
   transcript: TuiTranscriptItem[];
   eventLog: TuiEventLogItem[];
   contextItems: TuiContextItem[];
+  contextWarnings: string[];
   prompt: string;
   model: string;
   agentId: string;
@@ -86,6 +88,8 @@ export type TuiAction =
   | { type: "session.deleted"; sessionId: string }
   | { type: "models.loaded"; models: TuiModelOption[] }
   | { type: "agents.loaded"; agents: TuiAgentOption[] }
+  | { type: "context.planned"; report: ContextInspectReport }
+  | { type: "context.failed"; reason: string }
   | { type: "prompt.changed"; value: string }
   | { type: "model.selected"; model: string }
   | { type: "agent.selected"; agentId: string }
@@ -104,6 +108,7 @@ export function createInitialTuiState(options: { serverUrl: string }): TuiState 
     transcript: [],
     eventLog: [],
     contextItems: [],
+    contextWarnings: [],
     prompt: "",
     model: "default",
     agentId: "general",
@@ -137,6 +142,14 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return { ...state, models: action.models };
     case "agents.loaded":
       return { ...state, agents: action.agents };
+    case "context.planned":
+      return {
+        ...state,
+        contextItems: action.report.ledger.entries.map(toContextItemFromLedger),
+        contextWarnings: action.report.coverage.warnings.map((warning) => warning.message),
+      };
+    case "context.failed":
+      return { ...state, contextWarnings: [action.reason] };
     case "prompt.changed":
       return { ...state, prompt: action.value };
     case "model.selected":
@@ -158,6 +171,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         prompt: action.message,
         eventLog: [],
         contextItems: [],
+        contextWarnings: [],
         finalStatus: undefined,
         runtimeDegradedReason: undefined,
         transcript: [...state.transcript, { role: "user", text: action.message, sessionId: state.currentSessionId }],
@@ -180,7 +194,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         prompt: "",
         model: action.report.model,
         agentId: action.report.agentId,
-        contextItems: action.report.files.map(toContextItemFromFile),
+        contextItems: action.report.files.length > 0 ? action.report.files.map(toContextItemFromFile) : state.contextItems,
         finalStatus: action.report.finalStatus,
         runtimeDegradedReason: action.report.degradedReason ?? undefined,
         transcript: [
@@ -345,6 +359,14 @@ function toContextItemFromFile(file: { path: string; byteLength: number }): TuiC
     label: `${file.path} (${file.byteLength} bytes)`,
     reason: "attached file",
     byteLength: file.byteLength,
+  };
+}
+
+function toContextItemFromLedger(entry: ContextInspectReport["ledger"]["entries"][number]): TuiContextItem {
+  return {
+    path: entry.filePath,
+    label: `${entry.filePath}:${entry.lineRange[0]}-${entry.lineRange[1]}`,
+    reason: entry.reason,
   };
 }
 

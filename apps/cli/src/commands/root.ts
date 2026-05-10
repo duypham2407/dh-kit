@@ -2,6 +2,7 @@ import { runAgentCommand } from "./agent.js";
 import { runAskCommand } from "./ask.js";
 import { runCleanCommand } from "./clean.js";
 import { runConfigCommand } from "./config.js";
+import { runContextCommand } from "./context.js";
 import { runDeliveryCommand } from "./delivery.js";
 import { runDoctorCommand } from "./doctor.js";
 import { runExportCommand } from "./export.js";
@@ -42,6 +43,7 @@ Commands:
   models [provider] [--refresh] [--verbose] [--json]
   mcp <list|add|auth|logout|debug> [options]
   agent <list|create> [options]
+  context inspect <query> [--json]
   lsp diagnostics --file <path> [--json]
   plugin <list|add> [options]
   quick <task> [--json]       (Rust-hosted lane workflow path)
@@ -109,6 +111,8 @@ export async function runCli(args: string[], repoRoot: string): Promise<number> 
       return runMcpCommand(rest, repoRoot);
     case "agent":
       return runAgentCommand(rest, repoRoot);
+    case "context":
+      return runContextCommand(rest, repoRoot);
     case "lsp":
       return runLspCommand(rest, repoRoot);
     case "plugin":

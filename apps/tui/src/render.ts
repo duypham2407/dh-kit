@@ -51,6 +51,7 @@ export function renderTuiScreen(state: TuiState): string {
   } else {
     for (const item of state.contextItems.slice(-8)) lines.push(`  ${item.label} - ${item.reason}`);
   }
+  for (const warning of state.contextWarnings) lines.push(`  context warning: ${warning}`);
 
   if (state.permissionPrompt) {
     lines.push(

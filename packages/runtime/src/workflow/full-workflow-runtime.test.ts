@@ -152,6 +152,8 @@ describe("full workflow runtime", () => {
       stage: "full_product",
       type: "role_output",
     }));
+    expect(scouted.state.evidenceLedgerRefs[0]).toMatch(/^context-ledger-/);
+    expect(fs.existsSync(path.join(repo, ".dh", "context-ledgers", `${scouted.state.evidenceLedgerRefs[0]}.json`))).toBe(true);
     expect(blocked.state.status).toBe("blocked");
     expect(blocked.state.rerouteIssues).toContainEqual(expect.objectContaining({
       finding: "needs product clarification",

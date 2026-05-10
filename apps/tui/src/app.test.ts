@@ -25,6 +25,12 @@ function makeClient(overrides: Partial<TuiAppClient> = {}): TuiAppClient {
     sessions: async () => ({ sessions: [{ id: "session-1", title: "Current work" }] }),
     models: async () => ({ models: [{ id: "openai/gpt-5-codex", name: "GPT-5 Codex", providerId: "openai", modelId: "gpt-5-codex" }] }),
     agents: async () => ({ agents: [{ id: "build", displayName: "Build", role: "implementer", permission: "builder" }] }),
+    inspectContext: async (input) => ({
+      query: input.query,
+      ledger: { id: "ledger-1", entries: [] },
+      coverage: { included: 0, skipped: 0, warnings: [] },
+      generatedAt: "2026-05-10T00:00:00.000Z",
+    }),
     run: async () => makeReport(),
     respondPermission: async (input) => ({ ...input, recorded: true }),
     forkSession: async (input) => ({ sourceSessionId: input.sessionId, sessionId: "session-fork", copied: { runtimeEvents: 0, summaries: 0, checkpoints: 0, reverts: 0 } }),
@@ -274,5 +280,39 @@ describe("createTuiApp", () => {
     });
     expect(app.render()).toContain("model: openai/gpt-5-codex");
     expect(app.render()).toContain("agent: build");
+  });
+
+  it("plans context before submitting a prompt", async () => {
+    const inspectContext = vi.fn(async (input: { query: string }) => ({
+      query: input.query,
+      ledger: {
+        id: "ledger-1",
+        entries: [{
+          id: "evidence-1",
+          filePath: "src/auth.ts",
+          lineRange: [1, 20] as [number, number],
+          reason: "Matched query.",
+          score: 0.95,
+          source: "symbol",
+        }],
+      },
+      coverage: {
+        included: 1,
+        skipped: 0,
+        warnings: [{ code: "dependency_graph_unavailable" as const, message: "Graph unavailable." }],
+      },
+      generatedAt: "2026-05-10T00:00:00.000Z",
+    }));
+    const app = createTuiApp({
+      serverUrl: "http://127.0.0.1:3000",
+      client: makeClient({ inspectContext }),
+    });
+    await app.attach();
+
+    await app.submitPrompt("inspect auth");
+
+    expect(inspectContext).toHaveBeenCalledWith({ query: "inspect auth" });
+    expect(app.render()).toContain("src/auth.ts:1-20 - Matched query.");
+    expect(app.render()).toContain("context warning: Graph unavailable.");
   });
 });

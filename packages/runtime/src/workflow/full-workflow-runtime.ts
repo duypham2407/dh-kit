@@ -20,6 +20,7 @@ import { SessionsRepo } from "../../../storage/src/sqlite/repositories/sessions-
 import { SessionRuntimeEventsRepo } from "../../../storage/src/sqlite/repositories/session-runtime-events-repo.js";
 import { WorkflowStateRepo } from "../../../storage/src/sqlite/repositories/workflow-state-repo.js";
 import { runSubagentTask } from "../../../opencode-app/src/agent/subagent-runtime.js";
+import { inspectContext } from "../context/context-planner.js";
 
 export const FULL_WORKFLOW_ROLES: FullWorkflowRoleContract[] = [
   { id: "master_orchestrator", displayName: "Master Orchestrator", permission: "read_only", responsibility: "Own parent session, route stages, enforce gates, and surface status." },
@@ -231,6 +232,14 @@ async function runRoleTask(
   };
   state.childSessions.push(child);
   recordAudit(repoRoot, state, "full.role.started", role, stage);
+  if (role === "context_scout") {
+    const context = await inspectContext({
+      repoRoot,
+      query: state.objective,
+      semanticMode: "off",
+    });
+    state.evidenceLedgerRefs = [...new Set([...state.evidenceLedgerRefs, context.ledger.id])];
+  }
   const summary = await runSubagentTask({
     agentId: role,
     prompt: `${stage}: ${state.objective}`,

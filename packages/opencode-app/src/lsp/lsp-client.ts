@@ -46,3 +46,12 @@ export type LspDiagnosticsReport = {
   reason?: string;
   diagnostics: LspDiagnostic[];
 };
+
+export type LspHoverReport = {
+  available: boolean;
+  file: string;
+  serverId?: string;
+  language?: string;
+  reason?: string;
+  contents?: string;
+};

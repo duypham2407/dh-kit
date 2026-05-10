@@ -1,4 +1,5 @@
 import type { RunDirectInput, RunDirectReport, RunEvent } from "../../shared/src/types/run.js";
+import type { SessionDeleteReport, SessionForkReport } from "../../shared/src/types/session.js";
 
 export type DhClientOptions = {
   baseUrl: string;
@@ -8,6 +9,9 @@ export type DhClientOptions = {
 export type DhSessionSummary = {
   id: string;
   title?: string;
+  status?: string;
+  stage?: string;
+  updatedAt?: string;
 };
 
 export type DhSessionsResponse = {
@@ -26,6 +30,15 @@ export type DhPermissionResponseInput = {
 export type DhPermissionResponse = DhPermissionResponseInput & {
   recorded: boolean;
 };
+
+export type DhSessionForkInput = {
+  sessionId: string;
+  title?: string;
+};
+
+export type DhSessionForkResponse = SessionForkReport;
+
+export type DhSessionDeleteResponse = SessionDeleteReport;
 
 export class DhClient {
   private readonly baseUrl: string;
@@ -48,6 +61,14 @@ export class DhClient {
 
   async respondPermission(input: DhPermissionResponseInput): Promise<DhPermissionResponse> {
     return await this.request("POST", "/permission/respond", input);
+  }
+
+  async forkSession(input: DhSessionForkInput): Promise<DhSessionForkResponse> {
+    return await this.request("POST", "/session/fork", input);
+  }
+
+  async deleteSession(sessionId: string): Promise<DhSessionDeleteResponse> {
+    return await this.request("DELETE", `/session/${encodeURIComponent(sessionId)}`);
   }
 
   async *runStream(input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }): AsyncGenerator<RunEvent> {
@@ -73,7 +94,7 @@ export class DhClient {
     if (buffer.trim()) yield JSON.parse(buffer) as RunEvent;
   }
 
-  private async request<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  private async request<T>(method: "DELETE" | "GET" | "POST", path: string, body?: unknown): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers: this.buildHeaders(body),

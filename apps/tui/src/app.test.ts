@@ -25,6 +25,8 @@ function makeClient(overrides: Partial<TuiAppClient> = {}): TuiAppClient {
     sessions: async () => ({ sessions: [{ id: "session-1", title: "Current work" }] }),
     run: async () => makeReport(),
     respondPermission: async (input) => ({ ...input, recorded: true }),
+    forkSession: async (input) => ({ sourceSessionId: input.sessionId, sessionId: "session-fork", copied: { runtimeEvents: 0, summaries: 0, checkpoints: 0, reverts: 0 } }),
+    deleteSession: async (sessionId) => ({ sessionId, deleted: { session: 1, runtimeEvents: 0, summaries: 0, checkpoints: 0, reverts: 0 } }),
     ...overrides,
   };
 }
@@ -189,5 +191,60 @@ describe("createTuiApp", () => {
     });
     expect(app.getState().permissionPrompt).toBeUndefined();
     expect(app.render()).toContain("permission.denied: write not needed");
+  });
+
+  it("resumes selected sessions and sends subsequent prompts to that session", async () => {
+    const run = vi.fn(async (input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }) =>
+      makeReport({ sessionId: input.sessionId ?? "session-1", text: `answer: ${input.message}` }),
+    );
+    const app = createTuiApp({
+      serverUrl: "http://127.0.0.1:3000",
+      client: makeClient({
+        sessions: async () => ({
+          sessions: [
+            { id: "session-1", title: "Current work" },
+            { id: "session-2", title: "Bug fix" },
+          ],
+        }),
+        run,
+      }),
+    });
+    await app.attach();
+
+    app.selectSession("session-2");
+    await app.submitPrompt("resume this");
+
+    expect(run).toHaveBeenCalledWith({
+      message: "resume this",
+      sessionId: "session-2",
+      model: "default",
+      agentId: "general",
+    });
+    expect(app.getState().currentSessionId).toBe("session-2");
+  });
+
+  it("forks and deletes the active session through the client", async () => {
+    const forkSession = vi.fn(async (input: { sessionId: string; title?: string }) => ({
+      sourceSessionId: input.sessionId,
+      sessionId: "session-fork",
+      copied: { runtimeEvents: 1, summaries: 0, checkpoints: 0, reverts: 0 },
+    }));
+    const deleteSession = vi.fn(async (sessionId: string) => ({
+      sessionId,
+      deleted: { session: 1, runtimeEvents: 1, summaries: 0, checkpoints: 0, reverts: 0 },
+    }));
+    const app = createTuiApp({
+      serverUrl: "http://127.0.0.1:3000",
+      client: makeClient({ forkSession, deleteSession }),
+    });
+    await app.attach();
+
+    await app.forkCurrentSession("Forked work");
+    await app.deleteSession("session-fork");
+
+    expect(forkSession).toHaveBeenCalledWith({ sessionId: "session-1", title: "Forked work" });
+    expect(deleteSession).toHaveBeenCalledWith("session-fork");
+    expect(app.getState().currentSessionId).toBe("session-1");
+    expect(app.render()).toContain("session.deleted: session-fork");
   });
 });

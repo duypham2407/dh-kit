@@ -3,7 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Server } from "node:http";
+import type { SessionState } from "../../shared/src/types/session.js";
 import { closeDhDatabase } from "../../storage/src/sqlite/db.js";
+import { SessionsRepo } from "../../storage/src/sqlite/repositories/sessions-repo.js";
 import { createDhServer, startDhServer } from "./server.js";
 
 let repos: string[] = [];
@@ -14,6 +16,22 @@ function makeRepo(): string {
   fs.mkdirSync(path.join(repo, ".dh"), { recursive: true });
   repos.push(repo);
   return repo;
+}
+
+function makeSession(repoRoot: string, overrides: Partial<SessionState> = {}): SessionState {
+  return {
+    sessionId: overrides.sessionId ?? "session-1",
+    repoRoot,
+    lane: overrides.lane ?? "quick",
+    laneLocked: true,
+    currentStage: overrides.currentStage ?? "quick_plan",
+    status: overrides.status ?? "in_progress",
+    createdAt: overrides.createdAt ?? "2026-05-10T00:00:00.000Z",
+    updatedAt: overrides.updatedAt ?? "2026-05-10T00:00:00.000Z",
+    activeWorkItemIds: overrides.activeWorkItemIds ?? [],
+    semanticMode: overrides.semanticMode ?? "auto",
+    toolEnforcementLevel: overrides.toolEnforcementLevel ?? "very-hard",
+  };
 }
 
 async function closeServer(server: Server): Promise<void> {
@@ -153,6 +171,41 @@ describe("DH server", () => {
       decision: "deny",
       reason: "not needed",
       recorded: true,
+    });
+  });
+
+  it("lists, forks, and deletes persisted sessions", async () => {
+    const repo = makeRepo();
+    new SessionsRepo(repo).save(makeSession(repo, { sessionId: "session-1" }));
+    const started = await startDhServer({ repoRoot: repo, host: "127.0.0.1", port: 0 });
+    servers.push(started.server);
+
+    const listResponse = await fetch(`${started.url}/sessions`);
+    expect(await listResponse.json()).toEqual({
+      sessions: [
+        {
+          id: "session-1",
+          title: "quick quick_plan",
+          status: "in_progress",
+          stage: "quick_plan",
+          updatedAt: "2026-05-10T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const forkResponse = await fetch(`${started.url}/session/fork`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "session-1", title: "Forked work" }),
+    });
+    const forked = await forkResponse.json() as { sessionId: string; sourceSessionId: string };
+    expect(forked.sourceSessionId).toBe("session-1");
+    expect(forked.sessionId).toMatch(/^session-/);
+
+    const deleteResponse = await fetch(`${started.url}/session/${forked.sessionId}`, { method: "DELETE" });
+    expect(await deleteResponse.json()).toMatchObject({
+      sessionId: forked.sessionId,
+      deleted: { session: 1 },
     });
   });
 

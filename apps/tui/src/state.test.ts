@@ -42,6 +42,37 @@ describe("TUI state reducer", () => {
     expect(loaded.currentSessionId).toBe("session-1");
   });
 
+  it("switches, forks, and deletes sessions from the active shell", () => {
+    let state = createInitialTuiState({ serverUrl: "http://127.0.0.1:3000" });
+    state = reduceTuiState(state, {
+      type: "sessions.loaded",
+      sessions: [
+        { id: "session-1", title: "Current work" },
+        { id: "session-2", title: "Bug fix" },
+      ],
+    });
+
+    state = reduceTuiState(state, { type: "session.selected", sessionId: "session-2" });
+    state = reduceTuiState(state, {
+      type: "session.forked",
+      sourceSessionId: "session-2",
+      sessionId: "session-3",
+      title: "Forked bug fix",
+    });
+    state = reduceTuiState(state, { type: "session.deleted", sessionId: "session-3" });
+
+    expect(state.currentSessionId).toBe("session-1");
+    expect(state.sessions).toEqual([
+      { id: "session-1", title: "Current work" },
+      { id: "session-2", title: "Bug fix" },
+    ]);
+    expect(state.eventLog.map((event) => event.label)).toEqual([
+      "session.selected: session-2",
+      "session.forked: session-2 -> session-3",
+      "session.deleted: session-3",
+    ]);
+  });
+
   it("captures prompt, model, agent, transcript, and permission request state", () => {
     let state = createInitialTuiState({ serverUrl: "http://127.0.0.1:3000" });
     state = reduceTuiState(state, { type: "prompt.changed", value: "summarize repo" });

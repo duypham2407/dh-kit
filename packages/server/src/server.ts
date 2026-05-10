@@ -1,6 +1,10 @@
 import http, { type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { runDirectCommand } from "../../opencode-app/src/workflows/run-direct-command.js";
 import type { RunDirectInput, RunDirectReport } from "../../shared/src/types/run.js";
+import type { SessionState } from "../../shared/src/types/session.js";
+import { deleteSession } from "../../runtime/src/session/session-delete.js";
+import { forkSession } from "../../runtime/src/session/session-fork.js";
+import { listSessions } from "../../runtime/src/session/session-query.js";
 
 export type DhServerOptions = {
   repoRoot: string;
@@ -56,7 +60,21 @@ export function createDhServer(options: DhServerOptions): Server {
         return;
       }
       if (request.method === "GET" && url.pathname === "/sessions") {
-        writeJson(response, 200, { sessions: [] });
+        const report = listSessions(options.repoRoot, { limit: 50 });
+        writeJson(response, 200, { sessions: report.sessions.map(toSessionSummary) });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/session/fork") {
+        const body = await readJsonBody(request);
+        const sessionId = readRequiredString(body, "sessionId");
+        const title = typeof body["title"] === "string" ? body["title"] : undefined;
+        writeJson(response, 200, forkSession(options.repoRoot, sessionId, { title }));
+        return;
+      }
+      if (request.method === "DELETE" && url.pathname.startsWith("/session/")) {
+        const sessionId = decodeURIComponent(url.pathname.slice("/session/".length));
+        if (!sessionId) throw new Error("session id is required.");
+        writeJson(response, 200, deleteSession(options.repoRoot, sessionId));
         return;
       }
       if (request.method === "POST" && url.pathname === "/permission/respond") {
@@ -121,6 +139,22 @@ function writeNdjson(response: ServerResponse, statusCode: number, payloads: unk
   response.writeHead(statusCode, { "content-type": "application/x-ndjson" });
   for (const payload of payloads) response.write(`${JSON.stringify(payload)}\n`);
   response.end();
+}
+
+function toSessionSummary(session: SessionState): {
+  id: string;
+  title: string;
+  status: SessionState["status"];
+  stage: SessionState["currentStage"];
+  updatedAt: string;
+} {
+  return {
+    id: session.sessionId,
+    title: `${session.lane} ${session.currentStage}`,
+    status: session.status,
+    stage: session.currentStage,
+    updatedAt: session.updatedAt,
+  };
 }
 
 function readRequiredString(body: Record<string, unknown>, key: string): string {

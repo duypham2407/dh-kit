@@ -57,6 +57,25 @@ function isExitCommand(line: string): boolean {
 
 async function handleInputLine(app: ReturnType<typeof createTuiApp>, line: string): Promise<void> {
   const trimmed = line.trim();
+  if (trimmed === "/next") {
+    app.nextSession();
+    return;
+  }
+  if (trimmed.startsWith("/resume ") || trimmed.startsWith("/session ")) {
+    const sessionId = trimmed.slice(trimmed.indexOf(" ") + 1).trim();
+    if (sessionId) app.selectSession(sessionId);
+    return;
+  }
+  if (trimmed === "/fork" || trimmed.startsWith("/fork ")) {
+    const title = trimmed.slice("/fork".length).trim();
+    await app.forkCurrentSession(title || undefined);
+    return;
+  }
+  if (trimmed === "/delete" || trimmed.startsWith("/delete ")) {
+    const sessionId = trimmed.slice("/delete".length).trim();
+    await app.deleteSession(sessionId || undefined);
+    return;
+  }
   if (trimmed === "/approve") {
     await app.respondPermission("allow");
     return;

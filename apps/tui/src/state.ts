@@ -5,6 +5,9 @@ export type TuiStatus = "attaching" | "connected" | "running" | "read_only";
 export type TuiSessionSummary = {
   id: string;
   title?: string;
+  status?: string;
+  stage?: string;
+  updatedAt?: string;
 };
 
 export type TuiTranscriptItem = {
@@ -19,8 +22,10 @@ export type TuiPermissionPrompt = {
   reason?: string;
 };
 
+export type TuiEventLogItemType = RunEvent["type"] | "session.selected" | "session.forked" | "session.deleted";
+
 export type TuiEventLogItem = {
-  type: RunEvent["type"];
+  type: TuiEventLogItemType;
   sessionId: string;
   label: string;
 };
@@ -43,6 +48,10 @@ export type TuiAction =
   | { type: "server.connected" }
   | { type: "server.failed"; reason: string }
   | { type: "sessions.loaded"; sessions: TuiSessionSummary[] }
+  | { type: "session.selected"; sessionId: string }
+  | { type: "session.next" }
+  | { type: "session.forked"; sourceSessionId: string; sessionId: string; title?: string }
+  | { type: "session.deleted"; sessionId: string }
   | { type: "prompt.changed"; value: string }
   | { type: "model.selected"; model: string }
   | { type: "agent.selected"; agentId: string }
@@ -74,9 +83,19 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return {
         ...state,
         sessions: action.sessions,
-        currentSessionId: state.currentSessionId ?? action.sessions[0]?.id,
+        currentSessionId: state.currentSessionId && action.sessions.some((session) => session.id === state.currentSessionId)
+          ? state.currentSessionId
+          : action.sessions[0]?.id,
       };
     }
+    case "session.selected":
+      return selectSession(state, action.sessionId);
+    case "session.next":
+      return selectNextSession(state);
+    case "session.forked":
+      return forkSession(state, action.sourceSessionId, action.sessionId, action.title);
+    case "session.deleted":
+      return deleteSession(state, action.sessionId);
     case "prompt.changed":
       return { ...state, prompt: action.value };
     case "model.selected":
@@ -117,6 +136,50 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       };
     }
   }
+}
+
+function selectSession(state: TuiState, sessionId: string): TuiState {
+  if (!state.sessions.some((session) => session.id === sessionId)) return state;
+  return {
+    ...state,
+    currentSessionId: sessionId,
+    eventLog: [...state.eventLog, { type: "session.selected", sessionId, label: `session.selected: ${sessionId}` }],
+  };
+}
+
+function selectNextSession(state: TuiState): TuiState {
+  if (state.sessions.length === 0) return state;
+  const currentIndex = state.sessions.findIndex((session) => session.id === state.currentSessionId);
+  const next = state.sessions[(currentIndex + 1) % state.sessions.length] ?? state.sessions[0];
+  return next ? selectSession(state, next.id) : state;
+}
+
+function forkSession(state: TuiState, sourceSessionId: string, sessionId: string, title?: string): TuiState {
+  return {
+    ...state,
+    currentSessionId: sessionId,
+    sessions: upsertSession(state.sessions, {
+      id: sessionId,
+      title: title ?? `Fork of ${sourceSessionId}`,
+    }),
+    eventLog: [
+      ...state.eventLog,
+      { type: "session.forked", sessionId, label: `session.forked: ${sourceSessionId} -> ${sessionId}` },
+    ],
+  };
+}
+
+function deleteSession(state: TuiState, sessionId: string): TuiState {
+  const sessions = state.sessions.filter((session) => session.id !== sessionId);
+  return {
+    ...state,
+    sessions,
+    currentSessionId: state.currentSessionId === sessionId ? sessions[0]?.id : state.currentSessionId,
+    eventLog: [
+      ...state.eventLog,
+      { type: "session.deleted", sessionId, label: `session.deleted: ${sessionId}` },
+    ],
+  };
 }
 
 function applyPermissionResponse(state: TuiState, decision: "allow" | "deny", reason?: string): TuiState {

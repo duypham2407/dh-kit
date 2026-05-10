@@ -1,5 +1,12 @@
 import type { RunDirectInput, RunDirectReport, RunEvent } from "../../../packages/shared/src/types/run.js";
-import type { DhPermissionDecision, DhPermissionResponse, DhPermissionResponseInput } from "../../../packages/sdk/src/client.js";
+import type {
+  DhPermissionDecision,
+  DhPermissionResponse,
+  DhPermissionResponseInput,
+  DhSessionDeleteResponse,
+  DhSessionForkInput,
+  DhSessionForkResponse,
+} from "../../../packages/sdk/src/client.js";
 import { renderTuiScreen } from "./render.js";
 import {
   createInitialTuiState,
@@ -14,6 +21,8 @@ export type TuiAppClient = {
   run: (input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }) => Promise<RunDirectReport>;
   runStream?: (input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }) => AsyncIterable<RunEvent>;
   respondPermission?: (input: DhPermissionResponseInput) => Promise<DhPermissionResponse>;
+  forkSession?: (input: DhSessionForkInput) => Promise<DhSessionForkResponse>;
+  deleteSession?: (sessionId: string) => Promise<DhSessionDeleteResponse>;
 };
 
 export type TuiApp = {
@@ -21,6 +30,10 @@ export type TuiApp = {
   submitPrompt: (message: string) => Promise<void>;
   applyEvent: (event: RunEvent) => void;
   respondPermission: (decision: DhPermissionDecision, reason?: string) => Promise<void>;
+  selectSession: (sessionId: string) => void;
+  nextSession: () => void;
+  forkCurrentSession: (title?: string) => Promise<void>;
+  deleteSession: (sessionId?: string) => Promise<void>;
   getState: () => TuiState;
   render: () => string;
 };
@@ -64,6 +77,42 @@ export function createTuiApp(options: { serverUrl: string; client: TuiAppClient 
     },
     applyEvent(event: RunEvent) {
       state = reduceTuiState(state, { type: "run.event", event });
+    },
+    selectSession(sessionId: string) {
+      state = reduceTuiState(state, { type: "session.selected", sessionId });
+    },
+    nextSession() {
+      state = reduceTuiState(state, { type: "session.next" });
+    },
+    async forkCurrentSession(title?: string) {
+      if (!state.currentSessionId) return;
+      try {
+        if (!options.client.forkSession) throw new Error("session fork is not supported by this server.");
+        const input = {
+          sessionId: state.currentSessionId,
+          ...(title ? { title } : {}),
+        };
+        const report = await options.client.forkSession(input);
+        state = reduceTuiState(state, {
+          type: "session.forked",
+          sourceSessionId: report.sourceSessionId,
+          sessionId: report.sessionId,
+          title,
+        });
+      } catch (error) {
+        state = reduceTuiState(state, { type: "server.failed", reason: errorMessage(error) });
+      }
+    },
+    async deleteSession(sessionId?: string) {
+      const targetSessionId = sessionId ?? state.currentSessionId;
+      if (!targetSessionId) return;
+      try {
+        if (!options.client.deleteSession) throw new Error("session delete is not supported by this server.");
+        const report = await options.client.deleteSession(targetSessionId);
+        state = reduceTuiState(state, { type: "session.deleted", sessionId: report.sessionId });
+      } catch (error) {
+        state = reduceTuiState(state, { type: "server.failed", reason: errorMessage(error) });
+      }
     },
     async respondPermission(decision: DhPermissionDecision, reason?: string) {
       if (!state.permissionPrompt) return;

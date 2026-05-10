@@ -1,4 +1,5 @@
 export type BashGuardLevel = "strict" | "advisory";
+export type ShellPermissionLevel = "deny" | "ask" | "allow" | "auto_approve_with_policy";
 
 export type BashGuardDecision = {
   allowed: boolean;
@@ -6,6 +7,11 @@ export type BashGuardDecision = {
   reason: string;
   suggestion?: string;
   category?: string;
+};
+
+export type ShellPermissionDecision = BashGuardDecision & {
+  permissionLevel: ShellPermissionLevel;
+  requiresPermission: boolean;
 };
 
 export type BashSubstitutionRule = {
@@ -63,6 +69,38 @@ export function evaluateBashCommand(command: string, level: BashGuardLevel): Bas
     reason: `Blocked by bash guard (${match.category}).`,
     suggestion: match.suggestion,
     category: match.category,
+  };
+}
+
+export function evaluateShellPermission(command: string, permissionLevel: ShellPermissionLevel): ShellPermissionDecision {
+  if (permissionLevel === "deny") {
+    return {
+      allowed: false,
+      blocked: true,
+      requiresPermission: false,
+      permissionLevel,
+      reason: "Shell command denied by permission policy.",
+    };
+  }
+
+  if (permissionLevel === "ask") {
+    return {
+      allowed: false,
+      blocked: false,
+      requiresPermission: true,
+      permissionLevel,
+      reason: "Shell command requires permission before execution.",
+    };
+  }
+
+  const guard = evaluateBashCommand(
+    command,
+    permissionLevel === "auto_approve_with_policy" ? "strict" : "advisory",
+  );
+  return {
+    ...guard,
+    permissionLevel,
+    requiresPermission: false,
   };
 }
 

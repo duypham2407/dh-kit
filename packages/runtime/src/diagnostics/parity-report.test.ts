@@ -29,7 +29,6 @@ describe("buildOpenCodeParityReport", () => {
         "import",
         "providers",
         "models",
-        "mcp",
         "agent",
         "plugin",
         "stats",
@@ -40,6 +39,7 @@ describe("buildOpenCodeParityReport", () => {
       ]),
     );
     expect(report.summary.missingCommandSurfaces).not.toContain("run");
+    expect(report.summary.missingCommandSurfaces).not.toContain("mcp");
     expect(report.summary.missingCommandSurfaces).not.toEqual(
       expect.arrayContaining(["ask", "explain", "trace", "index", "doctor"]),
     );
@@ -88,5 +88,19 @@ describe("buildOpenCodeParityReport", () => {
     expect(cli?.missingRuntimeCapabilities).not.toEqual(
       expect.arrayContaining(["OpenCode-like direct interactive run loop"]),
     );
+  });
+
+  it("removes MCP command surface while keeping runtime and OAuth gaps visible", () => {
+    const report = buildOpenCodeParityReport();
+    const mcp = report.features.find((feature) => feature.category === "mcp");
+
+    expect(report.summary.missingCommandSurfaces).not.toContain("mcp");
+    expect(mcp?.dhSurface).toEqual(expect.arrayContaining(["mcp list/add/auth/logout/debug local lifecycle"]));
+    expect(mcp?.missingCommandSurfaces).toEqual([]);
+    expect(mcp?.missingRuntimeCapabilities).toEqual(expect.arrayContaining([
+      "OAuth callback handling",
+      "runtime MCP server lifecycle",
+      "MCP stdio tool execution",
+    ]));
   });
 });

@@ -68,9 +68,10 @@ describe("runDoctorCommand", () => {
     expect(payload.diagnostics.parity.source).toBe("opencode-gap-roadmap");
     expect(payload.diagnostics.parity.summary.recommendedNextMilestone).toBe("Milestone 3: Session Product Parity");
     expect(payload.snapshot.parity.summary.missingCommandSurfaces).toEqual(
-      expect.arrayContaining(["serve", "web", "attach", "session", "providers", "models", "mcp", "agent", "plugin"]),
+      expect.arrayContaining(["serve", "web", "attach", "session", "providers", "models", "agent", "plugin"]),
     );
     expect(payload.snapshot.parity.summary.missingCommandSurfaces).not.toContain("run");
+    expect(payload.snapshot.parity.summary.missingCommandSurfaces).not.toContain("mcp");
     expect(payload.snapshot.parity.summary.missingCommandSurfaces).not.toEqual(
       expect.arrayContaining(["ask", "explain", "trace", "index", "doctor"]),
     );

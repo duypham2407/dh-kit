@@ -26,6 +26,16 @@ const BUNDLED_PROVIDERS: Record<string, () => Promise<(opts: any) => BundledSDK>
   "@ai-sdk/gateway": () => import("@ai-sdk/gateway").then((m) => m.createGateway),
 };
 
+export function isBundledProviderSdk(npm: string): boolean {
+  return npm in BUNDLED_PROVIDERS;
+}
+
+export async function loadBundledProviderSdk(npm: string): Promise<(opts: any) => BundledSDK> {
+  const loader = BUNDLED_PROVIDERS[npm];
+  if (!loader) throw new Error("Unsupported provider SDK: " + npm);
+  return loader();
+}
+
 export interface Interface {
   readonly list: () => Effect.Effect<Record<ProviderID, Info>, never, never>
   readonly getProvider: (providerID: ProviderID) => Effect.Effect<Info, never, never>
@@ -53,10 +63,7 @@ export const layer = Layer.effect(
       getLanguage: (model: Model) => Effect.gen(function* () {
         const api = (model as any).api as { npm?: string; url?: string; id?: string } | undefined;
         const npm = api?.npm || "@ai-sdk/openai-compatible";
-        const loader = BUNDLED_PROVIDERS[npm];
-        if (!loader) yield* Effect.fail(new Error("Unsupported provider SDK: " + npm));
-
-        const sdkCreator = yield* Effect.promise(() => loader());
+        const sdkCreator = yield* Effect.promise(() => loadBundledProviderSdk(npm));
         const sdk = sdkCreator({ baseURL: api?.url });
 
         return sdk.languageModel(api?.id ?? model.id ?? "default");

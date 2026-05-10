@@ -77,6 +77,45 @@ describe("renderTuiScreen", () => {
     expect(output).toContain("tool.started: read README.md");
   });
 
+  it("renders model agent options, context evidence, and runtime status", () => {
+    let state = connectedState();
+    state = reduceTuiState(state, {
+      type: "models.loaded",
+      models: [{ id: "openai/gpt-5-codex", name: "GPT-5 Codex", providerId: "openai", modelId: "gpt-5-codex" }],
+    });
+    state = reduceTuiState(state, {
+      type: "agents.loaded",
+      agents: [{ id: "build", displayName: "Build", role: "implementer", permission: "builder" }],
+    });
+    state = reduceTuiState(state, {
+      type: "run.reported",
+      report: {
+        exitCode: 0,
+        command: "run",
+        sessionId: "session-1",
+        model: "openai/gpt-5-codex",
+        agentId: "build",
+        text: "done",
+        events: [],
+        files: [{ path: "src/auth.ts", byteLength: 120 }],
+        runtimeAuthority: "typescript_worker",
+        finalStatus: "degraded_success",
+        degradedReason: "rust host unavailable",
+      },
+    });
+
+    const output = renderTuiScreen(state);
+
+    expect(output).toContain("model options:");
+    expect(output).toContain("* openai/gpt-5-codex GPT-5 Codex");
+    expect(output).toContain("agent options:");
+    expect(output).toContain("* build Build");
+    expect(output).toContain("context:");
+    expect(output).toContain("src/auth.ts (120 bytes) - attached file");
+    expect(output).toContain("final: degraded_success");
+    expect(output).toContain("degraded: rust host unavailable");
+  });
+
 
   it("renders read-only fallback", () => {
     const state = reduceTuiState(

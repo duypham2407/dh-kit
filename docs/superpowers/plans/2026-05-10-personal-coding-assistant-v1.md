@@ -106,12 +106,12 @@ Runtime rules:
 **Tasks:**
 
 - [x] Add event streaming from `dh serve` to TUI through `/command/run/stream` NDJSON and SDK `runStream()`.
-- [ ] Render streaming text, tool start/delta/finish, runtime degradation, and session status.
+- [x] Render streaming text, tool start/delta/finish, runtime degradation, and session status.
 - [x] Add interactive permission approval/deny flow.
 - [x] Add session switch, resume, fork, delete shortcuts.
-- [ ] Add model and agent switch dialogs.
-- [ ] Add file/context panel showing selected evidence.
-- [ ] Keep non-interactive fallback testable with reducer/controller tests.
+- [x] Add model and agent switch dialogs.
+- [x] Add file/context panel showing selected evidence.
+- [x] Keep non-interactive fallback testable with reducer/controller tests.
 
 **Implemented slice:**
 
@@ -121,6 +121,8 @@ Runtime rules:
 - TUI state/rendering now handles streamed `text.delta`, tool events, permission events, and message/session finish status.
 - `dh serve` exposes `/permission/respond`, `packages/sdk` exposes `DhClient.respondPermission()`, and TUI supports `/approve` plus `/deny [reason]` for the active permission prompt.
 - `dh serve` exposes persisted session list/fork/delete endpoints, `packages/sdk` exposes session lifecycle methods, and TUI supports `/resume <id>`, `/session <id>`, `/next`, `/fork [title]`, and `/delete [id]`.
+- `dh serve` exposes builtin agent/model option endpoints, `packages/sdk` exposes `agents()` and `models()`, and TUI supports `/model [id]` plus `/agent [id]` selection commands.
+- TUI renders final/degraded runtime status and a context panel populated from attached files plus streamed tool paths.
 
 **Acceptance Gates:**
 

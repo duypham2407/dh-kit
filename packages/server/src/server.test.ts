@@ -209,6 +209,25 @@ describe("DH server", () => {
     });
   });
 
+  it("lists builtin agent and model options for the TUI", async () => {
+    const started = await startDhServer({ repoRoot: makeRepo(), host: "127.0.0.1", port: 0 });
+    servers.push(started.server);
+
+    const agentsResponse = await fetch(`${started.url}/agents`);
+    const modelsResponse = await fetch(`${started.url}/models`);
+
+    expect(await agentsResponse.json()).toMatchObject({
+      agents: expect.arrayContaining([
+        expect.objectContaining({ id: "build", displayName: "Build", role: "implementer", permission: "builder" }),
+      ]),
+    });
+    expect(await modelsResponse.json()).toMatchObject({
+      models: expect.arrayContaining([
+        expect.objectContaining({ id: "openai/gpt-5-codex", providerId: "openai", modelId: "gpt-5-codex" }),
+      ]),
+    });
+  });
+
   it("requires a password for non-localhost bind", () => {
     expect(() => createDhServer({ repoRoot: makeRepo(), host: "0.0.0.0" }))
       .toThrow("dh serve requires --password when binding outside localhost.");

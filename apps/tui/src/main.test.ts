@@ -11,12 +11,14 @@ function makeClient(): TuiAppClient {
         { id: "session-2", title: "Bug fix" },
       ],
     }),
+    models: async () => ({ models: [{ id: "openai/gpt-5-codex", name: "GPT-5 Codex", providerId: "openai", modelId: "gpt-5-codex" }] }),
+    agents: async () => ({ agents: [{ id: "build", displayName: "Build", role: "implementer", permission: "builder" }] }),
     run: async (input) => ({
       exitCode: 0,
       command: "run",
       sessionId: input.sessionId ?? "session-1",
-      model: "openai/gpt-5",
-      agentId: "general",
+      model: input.model ?? "openai/gpt-5",
+      agentId: input.agentId ?? "general",
       text: `answer: ${input.message}`,
       events: [],
       files: [],
@@ -95,5 +97,29 @@ describe("runTui", () => {
     expect(output).toContain("assistant: answer: continue");
     expect(output).toContain("session.forked: session-2 -> session-fork");
     expect(output).toContain("session.deleted: session-fork");
+  });
+
+  it("supports model and agent commands in interactive mode", async () => {
+    const chunks: string[] = [];
+    const input = {
+      isTTY: true,
+    };
+    const questions = ["/model openai/gpt-5-codex", "/agent build", "use selection", "/quit"];
+
+    await runTui({
+      serverUrl: "http://127.0.0.1:3000",
+      client: makeClient(),
+      input,
+      output: { write: (chunk: string) => chunks.push(chunk) },
+      createQuestionLoop: () => ({
+        question: async () => questions.shift() ?? "/quit",
+        close: () => undefined,
+      }),
+    });
+
+    const output = chunks.join("");
+    expect(output).toContain("model: openai/gpt-5-codex");
+    expect(output).toContain("agent: build");
+    expect(output).toContain("assistant: answer: use selection");
   });
 });

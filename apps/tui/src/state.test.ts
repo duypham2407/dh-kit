@@ -97,6 +97,42 @@ describe("TUI state reducer", () => {
     });
   });
 
+  it("tracks model and agent options plus selected context evidence", () => {
+    let state = createInitialTuiState({ serverUrl: "http://127.0.0.1:3000" });
+    state = reduceTuiState(state, {
+      type: "models.loaded",
+      models: [{ id: "openai/gpt-5-codex", name: "GPT-5 Codex", providerId: "openai", modelId: "gpt-5-codex" }],
+    });
+    state = reduceTuiState(state, {
+      type: "agents.loaded",
+      agents: [{ id: "build", displayName: "Build", role: "implementer", permission: "builder" }],
+    });
+    state = reduceTuiState(state, { type: "model.selected", model: "openai/gpt-5-codex" });
+    state = reduceTuiState(state, { type: "agent.selected", agentId: "build" });
+    state = reduceTuiState(state, {
+      type: "run.reported",
+      report: makeReport({
+        model: "openai/gpt-5-codex",
+        agentId: "build",
+        finalStatus: "degraded_success",
+        degradedReason: "rust host unavailable",
+        files: [{ path: "src/auth.ts", byteLength: 120 }],
+      }),
+    });
+
+    expect(state.model).toBe("openai/gpt-5-codex");
+    expect(state.agentId).toBe("build");
+    expect(state.models).toEqual([{ id: "openai/gpt-5-codex", name: "GPT-5 Codex", providerId: "openai", modelId: "gpt-5-codex" }]);
+    expect(state.agents).toEqual([{ id: "build", displayName: "Build", role: "implementer", permission: "builder" }]);
+    expect(state.contextItems).toEqual([
+      { path: "src/auth.ts", label: "src/auth.ts (120 bytes)", reason: "attached file", byteLength: 120 },
+    ]);
+    expect(state.finalStatus).toBe("degraded_success");
+    expect(state.runtimeDegradedReason).toBe("rust host unavailable");
+    expect(state.eventLog.map((event) => event.label)).toContain("model.selected: openai/gpt-5-codex");
+    expect(state.eventLog.map((event) => event.label)).toContain("agent.selected: build");
+  });
+
   it("applies streamed text deltas and tool events", () => {
     let state = createInitialTuiState({ serverUrl: "http://127.0.0.1:3000" });
     state = reduceTuiState(state, { type: "run.started", message: "inspect auth" });
@@ -156,6 +192,47 @@ describe("TUI state reducer", () => {
     });
 
     expect(state.status).toBe("connected");
+  });
+
+  it("renders runtime degradation and tool paths from streamed events as context", () => {
+    let state = createInitialTuiState({ serverUrl: "http://127.0.0.1:3000" });
+    state = reduceTuiState(state, { type: "run.started", message: "inspect auth" });
+    state = reduceTuiState(state, {
+      type: "run.event",
+      event: {
+        type: "tool.started",
+        sessionId: "session-1",
+        sequence: 1,
+        timestamp: "2026-05-10T00:00:00.000Z",
+        payload: { tool: "read", path: "src/auth.ts" },
+      },
+    });
+    state = reduceTuiState(state, {
+      type: "run.event",
+      event: {
+        type: "runtime.degraded",
+        sessionId: "session-1",
+        sequence: 2,
+        timestamp: "2026-05-10T00:00:00.001Z",
+        payload: { reason: "rust host unavailable" },
+      },
+    });
+    state = reduceTuiState(state, {
+      type: "run.event",
+      event: {
+        type: "message.finished",
+        sessionId: "session-1",
+        sequence: 3,
+        timestamp: "2026-05-10T00:00:00.002Z",
+        payload: { finalStatus: "degraded_success" },
+      },
+    });
+
+    expect(state.contextItems).toEqual([
+      { path: "src/auth.ts", label: "src/auth.ts", reason: "tool.started: read" },
+    ]);
+    expect(state.runtimeDegradedReason).toBe("rust host unavailable");
+    expect(state.finalStatus).toBe("degraded_success");
   });
 
   it("clears permission prompt after approval or denial", () => {

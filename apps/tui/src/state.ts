@@ -10,6 +10,27 @@ export type TuiSessionSummary = {
   updatedAt?: string;
 };
 
+export type TuiModelOption = {
+  id: string;
+  name: string;
+  providerId: string;
+  modelId: string;
+};
+
+export type TuiAgentOption = {
+  id: string;
+  displayName: string;
+  role: string;
+  permission: string;
+};
+
+export type TuiContextItem = {
+  path: string;
+  label: string;
+  reason: string;
+  byteLength?: number;
+};
+
 export type TuiTranscriptItem = {
   role: "assistant" | "user" | "system";
   sessionId?: string;
@@ -22,7 +43,13 @@ export type TuiPermissionPrompt = {
   reason?: string;
 };
 
-export type TuiEventLogItemType = RunEvent["type"] | "session.selected" | "session.forked" | "session.deleted";
+export type TuiEventLogItemType =
+  | RunEvent["type"]
+  | "agent.selected"
+  | "model.selected"
+  | "session.selected"
+  | "session.forked"
+  | "session.deleted";
 
 export type TuiEventLogItem = {
   type: TuiEventLogItemType;
@@ -35,11 +62,16 @@ export type TuiState = {
   status: TuiStatus;
   sessions: TuiSessionSummary[];
   currentSessionId?: string;
+  models: TuiModelOption[];
+  agents: TuiAgentOption[];
   transcript: TuiTranscriptItem[];
   eventLog: TuiEventLogItem[];
+  contextItems: TuiContextItem[];
   prompt: string;
   model: string;
   agentId: string;
+  finalStatus?: string;
+  runtimeDegradedReason?: string;
   permissionPrompt?: TuiPermissionPrompt;
   readOnlyReason?: string;
 };
@@ -52,6 +84,8 @@ export type TuiAction =
   | { type: "session.next" }
   | { type: "session.forked"; sourceSessionId: string; sessionId: string; title?: string }
   | { type: "session.deleted"; sessionId: string }
+  | { type: "models.loaded"; models: TuiModelOption[] }
+  | { type: "agents.loaded"; agents: TuiAgentOption[] }
   | { type: "prompt.changed"; value: string }
   | { type: "model.selected"; model: string }
   | { type: "agent.selected"; agentId: string }
@@ -65,8 +99,11 @@ export function createInitialTuiState(options: { serverUrl: string }): TuiState 
     serverUrl: options.serverUrl,
     status: "attaching",
     sessions: [],
+    models: [],
+    agents: [],
     transcript: [],
     eventLog: [],
+    contextItems: [],
     prompt: "",
     model: "default",
     agentId: "general",
@@ -96,18 +133,33 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return forkSession(state, action.sourceSessionId, action.sessionId, action.title);
     case "session.deleted":
       return deleteSession(state, action.sessionId);
+    case "models.loaded":
+      return { ...state, models: action.models };
+    case "agents.loaded":
+      return { ...state, agents: action.agents };
     case "prompt.changed":
       return { ...state, prompt: action.value };
     case "model.selected":
-      return { ...state, model: action.model };
+      return {
+        ...state,
+        model: action.model,
+        eventLog: [...state.eventLog, { type: "model.selected", sessionId: state.currentSessionId ?? "", label: `model.selected: ${action.model}` }],
+      };
     case "agent.selected":
-      return { ...state, agentId: action.agentId };
+      return {
+        ...state,
+        agentId: action.agentId,
+        eventLog: [...state.eventLog, { type: "agent.selected", sessionId: state.currentSessionId ?? "", label: `agent.selected: ${action.agentId}` }],
+      };
     case "run.started":
       return {
         ...state,
         status: "running",
         prompt: action.message,
         eventLog: [],
+        contextItems: [],
+        finalStatus: undefined,
+        runtimeDegradedReason: undefined,
         transcript: [...state.transcript, { role: "user", text: action.message, sessionId: state.currentSessionId }],
       };
     case "run.event":
@@ -128,6 +180,9 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         prompt: "",
         model: action.report.model,
         agentId: action.report.agentId,
+        contextItems: action.report.files.map(toContextItemFromFile),
+        finalStatus: action.report.finalStatus,
+        runtimeDegradedReason: action.report.degradedReason ?? undefined,
         transcript: [
           ...state.transcript,
           { role: "assistant", sessionId: action.report.sessionId, text: action.report.text },
@@ -204,6 +259,12 @@ function applyRunEvent(state: TuiState, event: RunEvent): TuiState {
     ...state,
     currentSessionId: event.sessionId,
     status: event.type === "message.finished" || event.type === "session.finished" ? "connected" : state.status,
+    finalStatus: event.type === "message.finished" || event.type === "session.finished"
+      ? stringPayload(event.payload.finalStatus) ?? state.finalStatus
+      : state.finalStatus,
+    runtimeDegradedReason: event.type === "runtime.degraded"
+      ? stringPayload(event.payload.reason) ?? state.runtimeDegradedReason
+      : state.runtimeDegradedReason,
   };
 
   if (event.type === "text.delta") {
@@ -221,6 +282,20 @@ function applyRunEvent(state: TuiState, event: RunEvent): TuiState {
         tool: stringPayload(event.payload.tool) ?? "unknown",
         reason: stringPayload(event.payload.reason),
       },
+      eventLog: [...base.eventLog, toEventLogItem(event)],
+    };
+  }
+
+  if (event.type === "tool.started" || event.type === "tool.delta" || event.type === "tool.finished") {
+    const path = stringPayload(event.payload.path);
+    const tool = stringPayload(event.payload.tool);
+    return {
+      ...base,
+      contextItems: path ? upsertContextItem(base.contextItems, {
+        path,
+        label: path,
+        reason: `${event.type}${tool ? `: ${tool}` : ""}`,
+      }) : base.contextItems,
       eventLog: [...base.eventLog, toEventLogItem(event)],
     };
   }
@@ -262,6 +337,22 @@ function upsertSession(sessions: TuiSessionSummary[], session: TuiSessionSummary
     return sessions.map((entry) => (entry.id === session.id ? { ...entry, ...session } : entry));
   }
   return [session, ...sessions];
+}
+
+function toContextItemFromFile(file: { path: string; byteLength: number }): TuiContextItem {
+  return {
+    path: file.path,
+    label: `${file.path} (${file.byteLength} bytes)`,
+    reason: "attached file",
+    byteLength: file.byteLength,
+  };
+}
+
+function upsertContextItem(items: TuiContextItem[], item: TuiContextItem): TuiContextItem[] {
+  if (items.some((entry) => entry.path === item.path)) {
+    return items.map((entry) => (entry.path === item.path ? { ...entry, ...item } : entry));
+  }
+  return [...items, item];
 }
 
 function findPermissionPrompt(report: RunDirectReport): TuiPermissionPrompt | undefined {

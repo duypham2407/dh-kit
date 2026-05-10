@@ -3,6 +3,8 @@ import type {
   DhPermissionDecision,
   DhPermissionResponse,
   DhPermissionResponseInput,
+  DhAgentsResponse,
+  DhModelsResponse,
   DhSessionDeleteResponse,
   DhSessionForkInput,
   DhSessionForkResponse,
@@ -18,6 +20,8 @@ import {
 export type TuiAppClient = {
   health: () => Promise<{ ok: boolean; product: string }>;
   sessions: () => Promise<{ sessions: TuiSessionSummary[] }>;
+  models?: () => Promise<DhModelsResponse>;
+  agents?: () => Promise<DhAgentsResponse>;
   run: (input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }) => Promise<RunDirectReport>;
   runStream?: (input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }) => AsyncIterable<RunEvent>;
   respondPermission?: (input: DhPermissionResponseInput) => Promise<DhPermissionResponse>;
@@ -32,6 +36,10 @@ export type TuiApp = {
   respondPermission: (decision: DhPermissionDecision, reason?: string) => Promise<void>;
   selectSession: (sessionId: string) => void;
   nextSession: () => void;
+  selectModel: (model: string) => void;
+  nextModel: () => void;
+  selectAgent: (agentId: string) => void;
+  nextAgent: () => void;
   forkCurrentSession: (title?: string) => Promise<void>;
   deleteSession: (sessionId?: string) => Promise<void>;
   getState: () => TuiState;
@@ -48,6 +56,14 @@ export function createTuiApp(options: { serverUrl: string; client: TuiAppClient 
         state = reduceTuiState(state, { type: "server.connected" });
         const sessions = await options.client.sessions();
         state = reduceTuiState(state, { type: "sessions.loaded", sessions: sessions.sessions });
+        if (options.client.models) {
+          const models = await options.client.models();
+          state = reduceTuiState(state, { type: "models.loaded", models: models.models });
+        }
+        if (options.client.agents) {
+          const agents = await options.client.agents();
+          state = reduceTuiState(state, { type: "agents.loaded", agents: agents.agents });
+        }
       } catch (error) {
         state = reduceTuiState(state, { type: "server.failed", reason: errorMessage(error) });
       }
@@ -83,6 +99,24 @@ export function createTuiApp(options: { serverUrl: string; client: TuiAppClient 
     },
     nextSession() {
       state = reduceTuiState(state, { type: "session.next" });
+    },
+    selectModel(model: string) {
+      state = reduceTuiState(state, { type: "model.selected", model });
+    },
+    nextModel() {
+      if (state.models.length === 0) return;
+      const currentIndex = state.models.findIndex((model) => model.id === state.model);
+      const next = state.models[(currentIndex + 1) % state.models.length] ?? state.models[0];
+      if (next) state = reduceTuiState(state, { type: "model.selected", model: next.id });
+    },
+    selectAgent(agentId: string) {
+      state = reduceTuiState(state, { type: "agent.selected", agentId });
+    },
+    nextAgent() {
+      if (state.agents.length === 0) return;
+      const currentIndex = state.agents.findIndex((agent) => agent.id === state.agentId);
+      const next = state.agents[(currentIndex + 1) % state.agents.length] ?? state.agents[0];
+      if (next) state = reduceTuiState(state, { type: "agent.selected", agentId: next.id });
     },
     async forkCurrentSession(title?: string) {
       if (!state.currentSessionId) return;

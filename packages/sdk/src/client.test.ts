@@ -156,4 +156,21 @@ describe("DhClient", () => {
       deleted: { session: 1 },
     });
   });
+
+  it("lists model and agent options", async () => {
+    const started = await startDhServer({ repoRoot: makeRepo(), host: "127.0.0.1", port: 0 });
+    servers.push(started.server);
+    const client = new DhClient({ baseUrl: started.url });
+
+    await expect(client.agents()).resolves.toMatchObject({
+      agents: expect.arrayContaining([
+        expect.objectContaining({ id: "build", displayName: "Build", role: "implementer", permission: "builder" }),
+      ]),
+    });
+    await expect(client.models()).resolves.toMatchObject({
+      models: expect.arrayContaining([
+        expect.objectContaining({ id: "openai/gpt-5-codex", name: "gpt-5-codex", providerId: "openai", modelId: "gpt-5-codex" }),
+      ]),
+    });
+  });
 });

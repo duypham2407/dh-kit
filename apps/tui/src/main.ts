@@ -61,6 +61,24 @@ async function handleInputLine(app: ReturnType<typeof createTuiApp>, line: strin
     app.nextSession();
     return;
   }
+  if (trimmed === "/model") {
+    app.nextModel();
+    return;
+  }
+  if (trimmed.startsWith("/model ")) {
+    const model = trimmed.slice("/model".length).trim();
+    if (model) app.selectModel(model);
+    return;
+  }
+  if (trimmed === "/agent") {
+    app.nextAgent();
+    return;
+  }
+  if (trimmed.startsWith("/agent ")) {
+    const agentId = trimmed.slice("/agent".length).trim();
+    if (agentId) app.selectAgent(agentId);
+    return;
+  }
   if (trimmed.startsWith("/resume ") || trimmed.startsWith("/session ")) {
     const sessionId = trimmed.slice(trimmed.indexOf(" ") + 1).trim();
     if (sessionId) app.selectSession(sessionId);

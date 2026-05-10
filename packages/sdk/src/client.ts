@@ -18,6 +18,30 @@ export type DhSessionsResponse = {
   sessions: DhSessionSummary[];
 };
 
+export type DhModelOption = {
+  id: string;
+  name: string;
+  providerId: string;
+  modelId: string;
+};
+
+export type DhModelsResponse = {
+  models: DhModelOption[];
+};
+
+export type DhAgentOption = {
+  id: string;
+  displayName: string;
+  role: string;
+  permission: string;
+  defaultProvider?: string;
+  defaultModel?: string;
+};
+
+export type DhAgentsResponse = {
+  agents: DhAgentOption[];
+};
+
 export type DhPermissionDecision = "allow" | "deny";
 
 export type DhPermissionResponseInput = {
@@ -53,6 +77,14 @@ export class DhClient {
 
   async sessions(): Promise<DhSessionsResponse> {
     return await this.request("GET", "/sessions");
+  }
+
+  async models(): Promise<DhModelsResponse> {
+    return await this.request("GET", "/models");
+  }
+
+  async agents(): Promise<DhAgentsResponse> {
+    return await this.request("GET", "/agents");
   }
 
   async run(input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }): Promise<RunDirectReport> {

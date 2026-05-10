@@ -23,6 +23,8 @@ function makeClient(overrides: Partial<TuiAppClient> = {}): TuiAppClient {
   return {
     health: async () => ({ ok: true, product: "dh" }),
     sessions: async () => ({ sessions: [{ id: "session-1", title: "Current work" }] }),
+    models: async () => ({ models: [{ id: "openai/gpt-5-codex", name: "GPT-5 Codex", providerId: "openai", modelId: "gpt-5-codex" }] }),
+    agents: async () => ({ agents: [{ id: "build", displayName: "Build", role: "implementer", permission: "builder" }] }),
     run: async () => makeReport(),
     respondPermission: async (input) => ({ ...input, recorded: true }),
     forkSession: async (input) => ({ sourceSessionId: input.sessionId, sessionId: "session-fork", copied: { runtimeEvents: 0, summaries: 0, checkpoints: 0, reverts: 0 } }),
@@ -41,6 +43,8 @@ describe("createTuiApp", () => {
       status: "connected",
       currentSessionId: "session-1",
       sessions: [{ id: "session-1", title: "Current work" }],
+      models: [{ id: "openai/gpt-5-codex", name: "GPT-5 Codex", providerId: "openai", modelId: "gpt-5-codex" }],
+      agents: [{ id: "build", displayName: "Build", role: "implementer", permission: "builder" }],
     });
     expect(app.render()).toContain("status: connected");
   });
@@ -246,5 +250,29 @@ describe("createTuiApp", () => {
     expect(deleteSession).toHaveBeenCalledWith("session-fork");
     expect(app.getState().currentSessionId).toBe("session-1");
     expect(app.render()).toContain("session.deleted: session-fork");
+  });
+
+  it("selects model and agent options for subsequent prompts", async () => {
+    const run = vi.fn(async (input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }) =>
+      makeReport({ model: input.model ?? "default", agentId: input.agentId ?? "general" }),
+    );
+    const app = createTuiApp({
+      serverUrl: "http://127.0.0.1:3000",
+      client: makeClient({ run }),
+    });
+    await app.attach();
+
+    app.selectModel("openai/gpt-5-codex");
+    app.selectAgent("build");
+    await app.submitPrompt("use selected runtime");
+
+    expect(run).toHaveBeenCalledWith({
+      message: "use selected runtime",
+      sessionId: "session-1",
+      model: "openai/gpt-5-codex",
+      agentId: "build",
+    });
+    expect(app.render()).toContain("model: openai/gpt-5-codex");
+    expect(app.render()).toContain("agent: build");
   });
 });

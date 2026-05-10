@@ -1,5 +1,7 @@
 import http, { type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { AgentConfigService } from "../../opencode-app/src/agent/agent-config-service.js";
 import { runDirectCommand } from "../../opencode-app/src/workflows/run-direct-command.js";
+import type { AgentPublicEntry } from "../../shared/src/types/agent.js";
 import type { RunDirectInput, RunDirectReport } from "../../shared/src/types/run.js";
 import type { SessionState } from "../../shared/src/types/session.js";
 import { deleteSession } from "../../runtime/src/session/session-delete.js";
@@ -62,6 +64,16 @@ export function createDhServer(options: DhServerOptions): Server {
       if (request.method === "GET" && url.pathname === "/sessions") {
         const report = listSessions(options.repoRoot, { limit: 50 });
         writeJson(response, 200, { sessions: report.sessions.map(toSessionSummary) });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/agents") {
+        const report = new AgentConfigService(options.repoRoot).listAgents();
+        writeJson(response, 200, { agents: report.agents.map(toAgentOption) });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/models") {
+        const report = new AgentConfigService(options.repoRoot).listAgents();
+        writeJson(response, 200, { models: toModelOptions(report.agents) });
         return;
       }
       if (request.method === "POST" && url.pathname === "/session/fork") {
@@ -155,6 +167,42 @@ function toSessionSummary(session: SessionState): {
     stage: session.currentStage,
     updatedAt: session.updatedAt,
   };
+}
+
+function toAgentOption(agent: AgentPublicEntry): {
+  id: string;
+  displayName: string;
+  role: AgentPublicEntry["role"];
+  permission: AgentPublicEntry["permission"];
+  defaultProvider?: string;
+  defaultModel?: string;
+} {
+  return {
+    id: agent.agentId,
+    displayName: agent.displayName,
+    role: agent.role,
+    permission: agent.permission,
+    defaultProvider: agent.defaultProvider,
+    defaultModel: agent.defaultModel,
+  };
+}
+
+function toModelOptions(agents: AgentPublicEntry[]): Array<{ id: string; name: string; providerId: string; modelId: string }> {
+  const seen = new Set<string>();
+  const models: Array<{ id: string; name: string; providerId: string; modelId: string }> = [];
+  for (const agent of agents) {
+    if (!agent.defaultProvider || !agent.defaultModel) continue;
+    const id = `${agent.defaultProvider}/${agent.defaultModel}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    models.push({
+      id,
+      name: agent.defaultModel,
+      providerId: agent.defaultProvider,
+      modelId: agent.defaultModel,
+    });
+  }
+  return models;
 }
 
 function readRequiredString(body: Record<string, unknown>, key: string): string {

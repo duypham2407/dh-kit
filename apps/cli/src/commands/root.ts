@@ -1,3 +1,4 @@
+import { runAgentCommand } from "./agent.js";
 import { runAskCommand } from "./ask.js";
 import { runCleanCommand } from "./clean.js";
 import { runConfigCommand } from "./config.js";
@@ -33,6 +34,7 @@ Commands:
   providers <list|login|logout|verify> [options]
   models [provider] [--refresh] [--verbose] [--json]
   mcp <list|add|auth|logout|debug> [options]
+  agent <list|create> [options]
   quick <task> [--json]       (Rust-hosted lane workflow path)
   delivery <goal> [--json]    (Rust-hosted lane workflow path)
   migrate <goal> [--json]     (Rust-hosted lane workflow path)
@@ -92,6 +94,8 @@ export async function runCli(args: string[], repoRoot: string): Promise<number> 
       return runModelsCommand(rest, repoRoot);
     case "mcp":
       return runMcpCommand(rest, repoRoot);
+    case "agent":
+      return runAgentCommand(rest, repoRoot);
     case "quick":
       return runQuickCommand(rest, repoRoot);
     case "delivery":

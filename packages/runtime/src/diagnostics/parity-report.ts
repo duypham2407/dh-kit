@@ -16,7 +16,7 @@ export const OPENCODE_MISSING_COMMAND_SURFACES = [
   "acp",
 ] as const;
 
-const RECOMMENDED_NEXT_MILESTONE = "Milestone 11: TUI MVP";
+const RECOMMENDED_NEXT_MILESTONE = "Milestone 12: Web/Desktop Decision";
 
 const FEATURES: ParityFeature[] = [
   {
@@ -61,6 +61,7 @@ const FEATURES: ParityFeature[] = [
     dhSurface: [
       "run (rust-hosted)",
       "serve",
+      "tui",
       "ask",
       "explain",
       "trace",
@@ -246,13 +247,27 @@ const FEATURES: ParityFeature[] = [
     category: "tui",
     surface: "Terminal UI",
     opencodeSurface: ["OpenTUI interactive client", "attach"],
-    dhSurface: [],
-    status: "planned",
+    dhSurface: [
+      "tui command",
+      "local server attach/start",
+      "session list rendering",
+      "prompt submission",
+      "permission request rendering",
+      "read-only fallback",
+    ],
+    status: "partial",
     priority: "P2",
     missingCommandSurfaces: ["attach"],
-    missingRuntimeCapabilities: ["TUI client", "permission UI", "model/agent switch UI", "session attachment"],
-    nextMilestone: "Milestone 11: TUI MVP",
-    notes: ["TUI should attach to the same event stream as dh run and server."],
+    missingRuntimeCapabilities: [
+      "attach command",
+      "WebSocket/event streaming",
+      "interactive permission approval API",
+      "model/agent switch dialogs",
+      "session resume/fork/delete shortcuts",
+      "TUI plugin hooks",
+    ],
+    nextMilestone: RECOMMENDED_NEXT_MILESTONE,
+    notes: ["Dependency-free TUI MVP attaches to the server/SDK contract; richer streaming UI remains deferred."],
   },
   {
     category: "github",

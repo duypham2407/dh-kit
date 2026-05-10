@@ -48,12 +48,12 @@ describe("buildOpenCodeParityReport", () => {
     ).toEqual([]);
   });
 
-  it("recommends TUI as the next milestone", () => {
+  it("recommends web and desktop decision as the next milestone", () => {
     const report = buildOpenCodeParityReport();
 
-    expect(report.summary.recommendedNextMilestone).toBe("Milestone 11: TUI MVP");
+    expect(report.summary.recommendedNextMilestone).toBe("Milestone 12: Web/Desktop Decision");
     expect(report.summary.byStatus.partial).toBeGreaterThan(0);
-    expect(report.summary.byStatus.planned).toBeGreaterThan(0);
+    expect(report.summary.byStatus.planned).toBe(0);
     expect(report.summary.byStatus.deferred).toBeGreaterThan(0);
     expect(report.summary.byStatus.out_of_scope).toBeGreaterThan(0);
   });
@@ -189,6 +189,30 @@ describe("buildOpenCodeParityReport", () => {
     ]));
     expect(plugin?.missingRuntimeCapabilities).toEqual(expect.arrayContaining([
       "executable JS/WASM plugin API",
+      "TUI plugin hooks",
+    ]));
+  });
+
+  it("reports the TUI MVP while keeping attach and streaming gaps visible", () => {
+    const report = buildOpenCodeParityReport();
+    const tui = report.features.find((feature) => feature.category === "tui");
+
+    expect(tui?.status).toBe("partial");
+    expect(tui?.dhSurface).toEqual(expect.arrayContaining([
+      "tui command",
+      "local server attach/start",
+      "session list rendering",
+      "prompt submission",
+      "permission request rendering",
+    ]));
+    expect(tui?.missingRuntimeCapabilities).not.toEqual(expect.arrayContaining([
+      "TUI client",
+      "session attachment",
+    ]));
+    expect(tui?.missingRuntimeCapabilities).toEqual(expect.arrayContaining([
+      "attach command",
+      "WebSocket/event streaming",
+      "interactive permission approval API",
       "TUI plugin hooks",
     ]));
   });

@@ -33,6 +33,7 @@ describe("runCli help", () => {
     const output = String(stdout.mock.calls[0]?.[0] ?? "");
     expect(output).toContain("run [message] [--json] [--continue|--session <id>] [--file <path>]  (Rust-hosted direct run path)");
     expect(output).toContain("serve [--host <host>] [--port <port>] [--password <password>] [--json]");
+    expect(output).toContain("tui [--server <url>] [--password <password>]");
     expect(output).toContain("session <list|show|delete|fork> [options]");
     expect(output).toContain("export [session-id] [--sanitize]");
     expect(output).toContain("import <file>");

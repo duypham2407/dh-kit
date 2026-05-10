@@ -11,14 +11,13 @@ export const OPENCODE_MISSING_COMMAND_SURFACES = [
   "serve",
   "web",
   "attach",
-  "plugin",
   "db",
   "github",
   "pr",
   "acp",
 ] as const;
 
-const RECOMMENDED_NEXT_MILESTONE = "Milestone 9: Plugin MVP";
+const RECOMMENDED_NEXT_MILESTONE = "Milestone 10: Server/SDK";
 
 const FEATURES: ParityFeature[] = [
   {
@@ -78,6 +77,7 @@ const FEATURES: ParityFeature[] = [
       "models",
       "mcp",
       "agent",
+      "plugin",
       "config",
       "semantic-cleanup",
       "operator-safe-maintenance",
@@ -85,7 +85,7 @@ const FEATURES: ParityFeature[] = [
     status: "partial",
     priority: "P0",
     missingCommandSurfaces: [...OPENCODE_MISSING_COMMAND_SURFACES],
-    missingRuntimeCapabilities: ["headless server command surface", "plugin/db/github/pr/acp command surfaces"],
+    missingRuntimeCapabilities: ["headless server command surface", "db/github/pr/acp command surfaces"],
     nextMilestone: RECOMMENDED_NEXT_MILESTONE,
     notes: ["DH now has run, session, provider/model, and local MCP lifecycle command surfaces."],
   },
@@ -209,13 +209,26 @@ const FEATURES: ParityFeature[] = [
     category: "plugin",
     surface: "Plugin ecosystem",
     opencodeSurface: ["server hooks", "TUI hooks", "command hooks", "tool hooks", "chat hooks", "session hooks"],
-    dhSurface: ["extension-state fingerprint", "drift reporting", "minimal plugin contract docs"],
-    status: "planned",
+    dhSurface: [
+      "extension-state fingerprint",
+      "drift reporting",
+      "minimal plugin contract docs",
+      "local plugin registry",
+      "plugin list/add",
+      "deterministic declarative hooks",
+      "plugin timeout/error isolation",
+    ],
+    status: "partial",
     priority: "P2",
-    missingCommandSurfaces: ["plugin"],
-    missingRuntimeCapabilities: ["server plugin API", "deterministic hook order", "bounded compatibility contract"],
-    nextMilestone: "Milestone 9: Plugin MVP",
-    notes: ["Existing extension observability is not a plugin ecosystem."],
+    missingCommandSurfaces: [],
+    missingRuntimeCapabilities: [
+      "executable JS/WASM plugin API",
+      "TUI plugin hooks",
+      "session/chat transform runtime integration",
+      "remote/npm plugin installation",
+    ],
+    nextMilestone: RECOMMENDED_NEXT_MILESTONE,
+    notes: ["Local declarative plugin hooks exist; executable plugin APIs remain intentionally deferred."],
   },
   {
     category: "server",

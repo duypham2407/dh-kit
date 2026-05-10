@@ -24,7 +24,6 @@ describe("buildOpenCodeParityReport", () => {
         "serve",
         "web",
         "attach",
-        "plugin",
         "db",
         "github",
         "pr",
@@ -40,6 +39,7 @@ describe("buildOpenCodeParityReport", () => {
     expect(report.summary.missingCommandSurfaces).not.toContain("models");
     expect(report.summary.missingCommandSurfaces).not.toContain("stats");
     expect(report.summary.missingCommandSurfaces).not.toContain("agent");
+    expect(report.summary.missingCommandSurfaces).not.toContain("plugin");
     expect(report.summary.missingCommandSurfaces).not.toEqual(
       expect.arrayContaining(["ask", "explain", "trace", "index", "doctor"]),
     );
@@ -48,10 +48,10 @@ describe("buildOpenCodeParityReport", () => {
     ).toEqual([]);
   });
 
-  it("recommends plugin MVP as the next milestone", () => {
+  it("recommends server SDK as the next milestone", () => {
     const report = buildOpenCodeParityReport();
 
-    expect(report.summary.recommendedNextMilestone).toBe("Milestone 9: Plugin MVP");
+    expect(report.summary.recommendedNextMilestone).toBe("Milestone 10: Server/SDK");
     expect(report.summary.byStatus.partial).toBeGreaterThan(0);
     expect(report.summary.byStatus.planned).toBeGreaterThan(0);
     expect(report.summary.byStatus.deferred).toBeGreaterThan(0);
@@ -167,6 +167,29 @@ describe("buildOpenCodeParityReport", () => {
     expect(lsp?.missingRuntimeCapabilities).toEqual(expect.arrayContaining([
       "long-lived LSP process supervision",
       "language server auto-install",
+    ]));
+  });
+
+  it("reports local plugin MVP while keeping executable plugin gaps visible", () => {
+    const report = buildOpenCodeParityReport();
+    const plugin = report.features.find((feature) => feature.category === "plugin");
+
+    expect(report.summary.missingCommandSurfaces).not.toContain("plugin");
+    expect(plugin?.status).toBe("partial");
+    expect(plugin?.dhSurface).toEqual(expect.arrayContaining([
+      "local plugin registry",
+      "plugin list/add",
+      "deterministic declarative hooks",
+      "plugin timeout/error isolation",
+    ]));
+    expect(plugin?.missingCommandSurfaces).toEqual([]);
+    expect(plugin?.missingRuntimeCapabilities).not.toEqual(expect.arrayContaining([
+      "server plugin API",
+      "deterministic hook order",
+    ]));
+    expect(plugin?.missingRuntimeCapabilities).toEqual(expect.arrayContaining([
+      "executable JS/WASM plugin API",
+      "TUI plugin hooks",
     ]));
   });
 });

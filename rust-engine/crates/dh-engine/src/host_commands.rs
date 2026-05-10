@@ -842,7 +842,7 @@ send '{"jsonrpc":"2.0","id":3,"result":{"protocolVersion":"1","workerId":"fixtur
 send '{"jsonrpc":"2.0","method":"dh.ready","params":{"ready":true}}'
 send '{"jsonrpc":"2.0","id":4,"result":{"report":{"exitCode":0,"command":"ask","answer":"recovered answer","bridgeEvidence":{"rustBacked":true}}}}'
 send '{"jsonrpc":"2.0","id":5,"result":{"accepted":true}}'
-sleep 0.05
+sleep 0.5
 "#
         .replace("__MARKER__", &marker.to_string_lossy())
     }

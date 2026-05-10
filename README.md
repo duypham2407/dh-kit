@@ -178,7 +178,7 @@ scripts/upgrade-github-release.sh
 
 ```sh
 npm install
-make release-all VERSION=0.3.1-rc.4
+make release-all VERSION=0.3.1-rc.5
 scripts/install-from-release.sh dist/releases
 ```
 

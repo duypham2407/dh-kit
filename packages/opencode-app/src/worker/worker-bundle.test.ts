@@ -112,7 +112,8 @@ describe("worker bundle packaging", () => {
     const releaseDir = makeTempDir();
     const binaryName = `dh-${releasePlatform()}-${releaseArch()}`;
     const binaryPath = path.join(sourceDir, binaryName);
-    const staleBinaryPath = path.join(releaseDir, "dh-linux-amd64");
+    const staleBinaryName = binaryName === "dh-linux-amd64" ? "dh-darwin-amd64" : "dh-linux-amd64";
+    const staleBinaryPath = path.join(releaseDir, staleBinaryName);
 
     execFileSync("sh", [path.join(repoRoot, "scripts", "build-worker-bundle.sh"), "--out-dir", workerOutDir], {
       cwd: repoRoot,
@@ -135,7 +136,7 @@ describe("worker bundle packaging", () => {
 
     expect(fs.existsSync(path.join(releaseDir, binaryName))).toBe(true);
     expect(fs.existsSync(staleBinaryPath)).toBe(false);
-    expect(manifest.files.map((entry) => entry.name)).not.toContain("dh-linux-amd64");
+    expect(manifest.files.map((entry) => entry.name)).not.toContain(staleBinaryName);
   });
 
   it("copies adjacent worker metadata on direct binary install when release sidecars are present", () => {

@@ -11,7 +11,6 @@ export const OPENCODE_MISSING_COMMAND_SURFACES = [
   "serve",
   "web",
   "attach",
-  "agent",
   "plugin",
   "db",
   "github",
@@ -19,7 +18,7 @@ export const OPENCODE_MISSING_COMMAND_SURFACES = [
   "acp",
 ] as const;
 
-const RECOMMENDED_NEXT_MILESTONE = "Milestone 7: Agent/Subagent Runtime";
+const RECOMMENDED_NEXT_MILESTONE = "Milestone 8: LSP Graph Augmentation";
 
 const FEATURES: ParityFeature[] = [
   {
@@ -78,6 +77,7 @@ const FEATURES: ParityFeature[] = [
       "providers",
       "models",
       "mcp",
+      "agent",
       "config",
       "semantic-cleanup",
       "operator-safe-maintenance",
@@ -85,7 +85,7 @@ const FEATURES: ParityFeature[] = [
     status: "partial",
     priority: "P0",
     missingCommandSurfaces: [...OPENCODE_MISSING_COMMAND_SURFACES],
-    missingRuntimeCapabilities: ["headless server command surface", "agent/plugin/db/github/pr/acp command surfaces"],
+    missingRuntimeCapabilities: ["headless server command surface", "plugin/db/github/pr/acp command surfaces"],
     nextMilestone: RECOMMENDED_NEXT_MILESTONE,
     notes: ["DH now has run, session, provider/model, and local MCP lifecycle command surfaces."],
   },
@@ -150,7 +150,6 @@ const FEATURES: ParityFeature[] = [
       "model tool-call loop integration",
       "interactive permission prompt UI",
       "full apply_patch execution",
-      "task subagent execution",
       "webfetch/websearch tools",
       "LSP-backed tool implementations",
     ],
@@ -161,13 +160,26 @@ const FEATURES: ParityFeature[] = [
     category: "agent",
     surface: "Agent and subagent runtime",
     opencodeSurface: ["agent create", "agent list", "task subagent", "build/plan/general agents"],
-    dhSurface: ["workflow lanes", "role registry", "team roles"],
+    dhSurface: [
+      "workflow lanes",
+      "role registry",
+      "team roles",
+      "agent list/create",
+      "built-in build/plan/general agents",
+      "repo-local custom agents",
+      "bounded task subagent runtime",
+      "agent selection in run loop",
+    ],
     status: "partial",
     priority: "P1",
-    missingCommandSurfaces: ["agent"],
-    missingRuntimeCapabilities: ["runtime agent registry", "subagent task delegation", "agent selection in run loop"],
-    nextMilestone: "Milestone 7: Agent/Subagent Runtime",
-    notes: ["DH roles can map into agents, but the runtime agent surface is not exposed."],
+    missingCommandSurfaces: [],
+    missingRuntimeCapabilities: [
+      "advanced multi-agent scheduler",
+      "parallel subagent orchestration",
+      "rich prompt-template inheritance",
+    ],
+    nextMilestone: RECOMMENDED_NEXT_MILESTONE,
+    notes: ["DH exposes selectable built-in/custom agents and bounded task subagents; advanced scheduling remains planned."],
   },
   {
     category: "lsp",

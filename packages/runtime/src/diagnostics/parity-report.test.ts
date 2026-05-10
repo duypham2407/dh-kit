@@ -24,7 +24,6 @@ describe("buildOpenCodeParityReport", () => {
         "serve",
         "web",
         "attach",
-        "agent",
         "plugin",
         "db",
         "github",
@@ -40,6 +39,7 @@ describe("buildOpenCodeParityReport", () => {
     expect(report.summary.missingCommandSurfaces).not.toContain("providers");
     expect(report.summary.missingCommandSurfaces).not.toContain("models");
     expect(report.summary.missingCommandSurfaces).not.toContain("stats");
+    expect(report.summary.missingCommandSurfaces).not.toContain("agent");
     expect(report.summary.missingCommandSurfaces).not.toEqual(
       expect.arrayContaining(["ask", "explain", "trace", "index", "doctor"]),
     );
@@ -48,10 +48,10 @@ describe("buildOpenCodeParityReport", () => {
     ).toEqual([]);
   });
 
-  it("recommends agent runtime as the next milestone", () => {
+  it("recommends LSP graph augmentation as the next milestone", () => {
     const report = buildOpenCodeParityReport();
 
-    expect(report.summary.recommendedNextMilestone).toBe("Milestone 7: Agent/Subagent Runtime");
+    expect(report.summary.recommendedNextMilestone).toBe("Milestone 8: LSP Graph Augmentation");
     expect(report.summary.byStatus.partial).toBeGreaterThan(0);
     expect(report.summary.byStatus.planned).toBeGreaterThan(0);
     expect(report.summary.byStatus.deferred).toBeGreaterThan(0);
@@ -118,10 +118,34 @@ describe("buildOpenCodeParityReport", () => {
       "OpenCode-equivalent tool schemas",
       "streaming tool output",
       "tool result envelopes",
+      "task subagent execution",
     ]));
     expect(tool?.missingRuntimeCapabilities).toEqual(expect.arrayContaining([
       "model tool-call loop integration",
       "interactive permission prompt UI",
+    ]));
+  });
+
+  it("reports agent command and bounded subagent runtime while keeping scheduler gaps visible", () => {
+    const report = buildOpenCodeParityReport();
+    const agent = report.features.find((feature) => feature.category === "agent");
+
+    expect(report.summary.missingCommandSurfaces).not.toContain("agent");
+    expect(agent?.dhSurface).toEqual(expect.arrayContaining([
+      "agent list/create",
+      "built-in build/plan/general agents",
+      "repo-local custom agents",
+      "bounded task subagent runtime",
+    ]));
+    expect(agent?.missingCommandSurfaces).toEqual([]);
+    expect(agent?.missingRuntimeCapabilities).not.toEqual(expect.arrayContaining([
+      "runtime agent registry",
+      "subagent task delegation",
+      "agent selection in run loop",
+    ]));
+    expect(agent?.missingRuntimeCapabilities).toEqual(expect.arrayContaining([
+      "advanced multi-agent scheduler",
+      "parallel subagent orchestration",
     ]));
   });
 });

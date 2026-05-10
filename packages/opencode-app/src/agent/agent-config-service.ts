@@ -42,7 +42,7 @@ export class AgentConfigService {
       throw new Error(`Agent '${input.id}' already exists.`);
     }
 
-    const model = input.model ? parseModel(input.model) : {};
+    const model = input.model ? parseModel(input.model) : undefined;
     const agent: AgentRegistryEntry = {
       agentId: input.id,
       displayName: humanizeAgentId(input.id),
@@ -52,8 +52,8 @@ export class AgentConfigService {
       mode: input.mode,
       prompt: input.prompt,
       permission,
-      defaultProvider: model.provider ?? "openai",
-      defaultModel: model.model ?? "gpt-5",
+      defaultProvider: model?.provider ?? "openai",
+      defaultModel: model?.model ?? "gpt-5",
       defaultVariant: "default",
     };
     const store = this.readStore();

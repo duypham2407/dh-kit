@@ -44,8 +44,12 @@ function runCreate(args: string[], repoRoot: string, deps: AgentDeps): number {
   if (!mode) throw new Error("dh agent create requires --mode <primary|subagent>.");
   if (!isAgentMode(mode)) throw new Error("--mode must be primary or subagent.");
   if (!prompt) throw new Error("dh agent create requires --prompt <text>.");
-  if (permission && !isAgentPermission(permission)) {
-    throw new Error("--permission must be read_only, standard, builder, or restricted.");
+  let parsedPermission: AgentPermissionPolicy | undefined;
+  if (permission) {
+    if (!isAgentPermission(permission)) {
+      throw new Error("--permission must be read_only, standard, builder, or restricted.");
+    }
+    parsedPermission = permission;
   }
 
   const report = deps.createAgent(repoRoot, {
@@ -53,7 +57,7 @@ function runCreate(args: string[], repoRoot: string, deps: AgentDeps): number {
     mode,
     prompt,
     model: readFlag(args, "--model"),
-    permission,
+    permission: parsedPermission,
   });
   process.stdout.write(args.includes("--json") ? `${JSON.stringify(report, null, 2)}\n` : `created agent: ${report.agent.agentId}\n`);
   return 0;

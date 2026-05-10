@@ -1,8 +1,14 @@
 import type { AgentModelAssignment, ResolvedModelSelection } from "../../../shared/src/types/model.js";
+import type { AgentRegistryEntry } from "../../../shared/src/types/agent.js";
 import { listModelsAsync, listProvidersAsync, listVariantsAsync } from "../provider/legacy-adapter.js";
 import { resolveFallbackModel } from "./resolve-fallback-model.js";
 
-export async function resolveAgentModel(repoRoot: string, agentId: string, assignment?: AgentModelAssignment): Promise<ResolvedModelSelection> {
+export async function resolveAgentModel(
+  repoRoot: string,
+  agentId: string,
+  assignment?: AgentModelAssignment,
+  fallbackAgent?: AgentRegistryEntry,
+): Promise<ResolvedModelSelection> {
   if (assignment) {
     await validateResolvedModel(repoRoot, agentId, assignment.providerId, assignment.modelId, assignment.variantId);
     return {
@@ -12,7 +18,7 @@ export async function resolveAgentModel(repoRoot: string, agentId: string, assig
     };
   }
 
-  return resolveFallbackModel(repoRoot, agentId);
+  return resolveFallbackModel(repoRoot, agentId, fallbackAgent);
 }
 
 export async function validateResolvedModel(repoRoot: string, agentId: string, providerId: string, modelId: string, variantId: string): Promise<void> {

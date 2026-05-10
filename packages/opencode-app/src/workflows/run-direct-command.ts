@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { DEFAULT_AGENT_REGISTRY } from "../../../shared/src/constants/roles.js";
 import type { AgentRegistryEntry } from "../../../shared/src/types/agent.js";
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
 import type { RunDirectReport, RunFileAttachment } from "../../../shared/src/types/run.js";
@@ -9,6 +8,7 @@ import { SessionEventStream } from "../../../runtime/src/session/session-event-s
 import { SessionManager } from "../../../runtime/src/session/session-manager.js";
 import { SessionRuntimeEventsRepo } from "../../../storage/src/sqlite/repositories/session-runtime-events-repo.js";
 import type { ChatProvider } from "../../../providers/src/chat/types.js";
+import { AgentRuntime } from "../agent/agent-runtime.js";
 
 type ResolvedRunSession = {
   session: SessionState;
@@ -31,7 +31,7 @@ export async function runDirectCommand(input: {
   autoApprove?: boolean;
   provider?: ChatProvider;
 }): Promise<RunDirectReport> {
-  const agent = resolveRunAgent(input.agentId);
+  const agent = resolveRunAgent(input.repoRoot, input.agentId);
   const sessionManager = new SessionManager(input.repoRoot);
   const resolved = await resolveRunSession({
     repoRoot: input.repoRoot,
@@ -106,13 +106,8 @@ export async function runDirectCommand(input: {
   };
 }
 
-function resolveRunAgent(agentId: string | undefined): AgentRegistryEntry {
-  const selected = DEFAULT_AGENT_REGISTRY.find((entry) => entry.agentId === (agentId ?? "quick-agent"))
-    ?? DEFAULT_AGENT_REGISTRY[0];
-  if (!selected) {
-    throw new Error("No agent is registered for dh run.");
-  }
-  return selected;
+function resolveRunAgent(repoRoot: string, agentId: string | undefined): AgentRegistryEntry {
+  return new AgentRuntime(repoRoot).resolveAgent(agentId);
 }
 
 async function resolveRunSession(input: {

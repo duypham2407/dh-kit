@@ -47,7 +47,7 @@ export class SessionManager {
     const session = createLaneLockedSession(this.repoRoot, lane);
     const runtimeAuthority = options?.runtimeAuthority ?? "typescript_compatibility";
     const assignment = await this.assignmentsRepo.findByAgentId(agent.agentId);
-    const resolvedModel = await resolveAgentModel(this.repoRoot, agent.agentId, assignment);
+    const resolvedModel = await resolveAgentModel(this.repoRoot, agent.agentId, assignment, agent);
     const envelope: ExecutionEnvelopeState = {
       ...buildExecutionEnvelope(this.repoRoot, session, agent, resolvedModel),
       id: createId("env"),

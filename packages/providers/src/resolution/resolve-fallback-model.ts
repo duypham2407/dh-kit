@@ -1,9 +1,14 @@
 import { DEFAULT_AGENT_REGISTRY } from "../../../shared/src/constants/roles.js";
+import type { AgentRegistryEntry } from "../../../shared/src/types/agent.js";
 import { listModelsAsync, listProvidersAsync, listVariantsAsync } from "../provider/legacy-adapter.js";
 import type { ResolvedModelSelection } from "../../../shared/src/types/model.js";
 
-export async function resolveFallbackModel(repoRoot: string, agentId: string): Promise<ResolvedModelSelection> {
-  const agent = DEFAULT_AGENT_REGISTRY.find((entry) => entry.agentId === agentId);
+export async function resolveFallbackModel(
+  repoRoot: string,
+  agentId: string,
+  fallbackAgent?: AgentRegistryEntry,
+): Promise<ResolvedModelSelection> {
+  const agent = fallbackAgent ?? DEFAULT_AGENT_REGISTRY.find((entry) => entry.agentId === agentId);
   if (!agent?.defaultProvider || !agent.defaultModel || !agent.defaultVariant) {
     throw new Error(`No default model fallback is configured for agent '${agentId}'.`);
   }

@@ -5,6 +5,7 @@ import path from "node:path";
 import { closeDhDatabase } from "../../../storage/src/sqlite/db.js";
 import { SessionRuntimeEventsRepo } from "../../../storage/src/sqlite/repositories/session-runtime-events-repo.js";
 import type { ChatProvider } from "../../../providers/src/chat/types.js";
+import { AgentConfigService } from "../agent/agent-config-service.js";
 import { runDirectCommand } from "./run-direct-command.js";
 
 let repos: string[] = [];
@@ -142,5 +143,33 @@ describe("runDirectCommand", () => {
 
     expect(forked.sessionId).not.toBe(source.sessionId);
     expect(forked.events[0]?.payload).toMatchObject({ forkedFromSessionId: source.sessionId });
+  });
+
+  it("uses repo-local custom agents for dh run", async () => {
+    const repo = makeRepo();
+    new AgentConfigService(repo).createAgent({
+      id: "docs-writer",
+      mode: "primary",
+      prompt: "Write docs",
+      permission: "read_only",
+    });
+
+    const report = await runDirectCommand({
+      message: "draft docs",
+      repoRoot: repo,
+      agentId: "docs-writer",
+    });
+
+    expect(report.agentId).toBe("docs-writer");
+  });
+
+  it("refuses unknown run agents", async () => {
+    const repo = makeRepo();
+
+    await expect(runDirectCommand({
+      message: "hello",
+      repoRoot: repo,
+      agentId: "missing-agent",
+    })).rejects.toThrow("Agent 'missing-agent' is not registered.");
   });
 });

@@ -52,8 +52,8 @@ export class AgentConfigService {
       mode: input.mode,
       prompt: input.prompt,
       permission,
-      defaultProvider: model.provider,
-      defaultModel: model.model,
+      defaultProvider: model.provider ?? "openai",
+      defaultModel: model.model ?? "gpt-5",
       defaultVariant: "default",
     };
     const store = this.readStore();

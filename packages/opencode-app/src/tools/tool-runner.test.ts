@@ -5,6 +5,7 @@ import path from "node:path";
 import { closeDhDatabase } from "../../../storage/src/sqlite/db.js";
 import { ToolUsageAuditRepo } from "../../../storage/src/sqlite/repositories/tool-usage-audit-repo.js";
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
+import { createSubagentTaskExecutor } from "../agent/subagent-runtime.js";
 import { ToolRunner } from "./tool-runner.js";
 
 let repos: string[] = [];
@@ -143,5 +144,25 @@ describe("ToolRunner", () => {
       status: "unsupported",
       error: "Task tool requires an injected task executor.",
     });
+  });
+
+  it("runs task through an injected bounded subagent executor", async () => {
+    const repo = makeRepo();
+    const runner = new ToolRunner({
+      repoRoot: repo,
+      envelope: makeEnvelope(repo),
+      intent: "test",
+      permissionOverrides: { task: "allow" },
+      taskExecutor: createSubagentTaskExecutor({ agentId: "plan", maxResultBytes: 64 }),
+    });
+
+    const result = await runner.run("task", { prompt: "summarize repo" });
+
+    expect(result).toMatchObject({
+      toolName: "task",
+      status: "succeeded",
+      output: { result: expect.stringContaining("plan") },
+    });
+    expect(result.metadata.truncated).toBe(false);
   });
 });

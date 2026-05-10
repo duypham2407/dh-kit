@@ -79,4 +79,30 @@ describe("SessionRuntimeEventsRepo", () => {
 
     expect(events.listByEventType("session.created")[0]?.sessionId).toBe("session-new");
   });
+
+  it("upserts imported records and deletes events by session", () => {
+    const repo = makeRepo();
+    new SessionsRepo(repo).save(makeSession(repo, { sessionId: "session-import" }));
+    const events = new SessionRuntimeEventsRepo(repo);
+
+    events.saveRecord({
+      id: "event-imported",
+      sessionId: "session-import",
+      eventType: "text.delta",
+      eventJson: { payload: { text: "first" } },
+      createdAt: "2026-05-10T02:00:00.000Z",
+    });
+    events.saveRecord({
+      id: "event-imported",
+      sessionId: "session-import",
+      eventType: "text.delta",
+      eventJson: { payload: { text: "second" } },
+      createdAt: "2026-05-10T03:00:00.000Z",
+    });
+
+    expect(events.listBySession("session-import")).toHaveLength(1);
+    expect(events.listBySession("session-import")[0]?.eventJson).toEqual({ payload: { text: "second" } });
+    expect(events.deleteBySession("session-import")).toBe(1);
+    expect(events.listBySession("session-import")).toHaveLength(0);
+  });
 });

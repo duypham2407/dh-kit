@@ -1,6 +1,40 @@
 import type { SessionState } from "../../../../shared/src/types/session.js";
 import { openDhDatabase } from "../db.js";
 
+type SessionRow = {
+  session_id: string;
+  repo_root: string;
+  lane: SessionState["lane"];
+  lane_locked: number;
+  current_stage: SessionState["currentStage"];
+  status: SessionState["status"];
+  created_at: string;
+  updated_at: string;
+  semantic_mode: SessionState["semanticMode"];
+  tool_enforcement_level: SessionState["toolEnforcementLevel"];
+  active_work_item_ids_json: string;
+  latest_summary_id: string | null;
+  latest_checkpoint_id: string | null;
+  latest_revert_id: string | null;
+};
+
+const SESSION_COLUMNS = `
+  session_id,
+  repo_root,
+  lane,
+  lane_locked,
+  current_stage,
+  status,
+  created_at,
+  updated_at,
+  semantic_mode,
+  tool_enforcement_level,
+  active_work_item_ids_json,
+  latest_summary_id,
+  latest_checkpoint_id,
+  latest_revert_id
+`;
+
 export class SessionsRepo {
   constructor(private readonly repoRoot: string) {}
 
@@ -47,43 +81,54 @@ export class SessionsRepo {
   findById(sessionId: string): SessionState | undefined {
     const database = openDhDatabase(this.repoRoot);
     const row = database.prepare(`
-      SELECT
-        session_id,
-        repo_root,
-        lane,
-        lane_locked,
-        current_stage,
-        status,
-        created_at,
-        updated_at,
-        semantic_mode,
-        tool_enforcement_level,
-        active_work_item_ids_json,
-        latest_summary_id,
-        latest_checkpoint_id,
-        latest_revert_id
+      SELECT ${SESSION_COLUMNS}
       FROM sessions
       WHERE session_id = ?
       LIMIT 1
-    `).get(sessionId) as {
-      session_id: string;
-      repo_root: string;
-      lane: SessionState["lane"];
-      lane_locked: number;
-      current_stage: SessionState["currentStage"];
-      status: SessionState["status"];
-      created_at: string;
-      updated_at: string;
-      semantic_mode: SessionState["semanticMode"];
-      tool_enforcement_level: SessionState["toolEnforcementLevel"];
-      active_work_item_ids_json: string;
-      latest_summary_id: string | null;
-      latest_checkpoint_id: string | null;
-      latest_revert_id: string | null;
-    } | undefined;
+    `).get(sessionId) as SessionRow | undefined;
     if (!row) {
       return undefined;
     }
+    return this.rowToSession(row);
+  }
+
+  list(input: { limit?: number } = {}): SessionState[] {
+    const database = openDhDatabase(this.repoRoot);
+    const limit = input.limit ?? 20;
+    const rows = database.prepare(`
+      SELECT ${SESSION_COLUMNS}
+      FROM sessions
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT ?
+    `).all(limit) as SessionRow[];
+
+    return rows.map((row) => this.rowToSession(row));
+  }
+
+  findLatest(): SessionState | undefined {
+    return this.list({ limit: 1 })[0];
+  }
+
+  findLatestByLane(lane: SessionState["lane"]): SessionState | undefined {
+    const database = openDhDatabase(this.repoRoot);
+    const row = database.prepare(`
+      SELECT session_id
+      FROM sessions
+      WHERE lane = ?
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1
+    `).get(lane) as { session_id: string } | undefined;
+
+    return row ? this.findById(row.session_id) : undefined;
+  }
+
+  deleteById(sessionId: string): number {
+    const database = openDhDatabase(this.repoRoot);
+    const result = database.prepare("DELETE FROM sessions WHERE session_id = ?").run(sessionId) as { changes: number };
+    return result.changes;
+  }
+
+  private rowToSession(row: SessionRow): SessionState {
     return {
       sessionId: row.session_id,
       repoRoot: row.repo_root,
@@ -100,18 +145,5 @@ export class SessionsRepo {
       latestCheckpointId: row.latest_checkpoint_id ?? undefined,
       latestRevertId: row.latest_revert_id ?? undefined,
     };
-  }
-
-  findLatestByLane(lane: SessionState["lane"]): SessionState | undefined {
-    const database = openDhDatabase(this.repoRoot);
-    const row = database.prepare(`
-      SELECT session_id
-      FROM sessions
-      WHERE lane = ?
-      ORDER BY updated_at DESC, created_at DESC
-      LIMIT 1
-    `).get(lane) as { session_id: string } | undefined;
-
-    return row ? this.findById(row.session_id) : undefined;
   }
 }

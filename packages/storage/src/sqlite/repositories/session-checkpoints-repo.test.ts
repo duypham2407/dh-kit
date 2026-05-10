@@ -60,4 +60,41 @@ describe("SessionCheckpointsRepo", () => {
     expect(listed).toHaveLength(2);
     expect(checkpoints.findById(first.id)?.id).toBe(first.id);
   });
+
+  it("upserts imported checkpoints and deletes checkpoints by session", () => {
+    const repo = makeRepo();
+    const sessionsRepo = new SessionsRepo(repo);
+    const session: SessionState = {
+      sessionId: "session-checkpoint",
+      repoRoot: repo,
+      lane: "quick",
+      laneLocked: true,
+      currentStage: "quick_plan",
+      status: "in_progress",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      activeWorkItemIds: [],
+      semanticMode: "auto",
+      toolEnforcementLevel: "very-hard",
+    };
+    sessionsRepo.save(session);
+    const checkpoints = new SessionCheckpointsRepo(repo);
+
+    checkpoints.saveRecord({
+      id: "checkpoint-imported",
+      sessionId: "session-checkpoint",
+      checkpointType: "post_workflow",
+      lane: "quick",
+      stage: "quick_plan",
+      summarySnapshotJson: { filesChanged: 1 },
+      workflowSnapshotJson: {},
+      continuationJson: {},
+      metadataJson: {},
+      createdAt: "2026-05-10T02:00:00.000Z",
+    });
+
+    expect(checkpoints.listBySession("session-checkpoint")).toHaveLength(1);
+    expect(checkpoints.deleteBySession("session-checkpoint")).toBe(1);
+    expect(checkpoints.listBySession("session-checkpoint")).toHaveLength(0);
+  });
 });

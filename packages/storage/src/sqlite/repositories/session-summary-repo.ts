@@ -70,6 +70,10 @@ export class SessionSummaryRepo {
     return record;
   }
 
+  saveRecord(record: SessionSummaryRecord): SessionSummaryRecord {
+    return this.save(record);
+  }
+
   findLatestBySession(sessionId: string): SessionSummaryRecord | undefined {
     const database = openDhDatabase(this.repoRoot);
     const row = database.prepare(`
@@ -110,5 +114,48 @@ export class SessionSummaryRepo {
       continuationCreatedAt: row.continuation_created_at ?? undefined,
       updatedAt: row.updated_at,
     };
+  }
+
+  listBySession(sessionId: string): SessionSummaryRecord[] {
+    const database = openDhDatabase(this.repoRoot);
+    const rows = database.prepare(`
+      SELECT id, session_id, files_changed, additions, deletions, last_diff_at,
+             latest_stage, latest_checkpoint_id, continuation_summary, continuation_created_at, updated_at
+      FROM session_summaries
+      WHERE session_id = ?
+      ORDER BY updated_at DESC, rowid DESC
+    `).all(sessionId) as Array<{
+      id: string;
+      session_id: string;
+      files_changed: number;
+      additions: number;
+      deletions: number;
+      last_diff_at: string | null;
+      latest_stage: string | null;
+      latest_checkpoint_id: string | null;
+      continuation_summary: string | null;
+      continuation_created_at: string | null;
+      updated_at: string;
+    }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      sessionId: row.session_id,
+      filesChanged: row.files_changed,
+      additions: row.additions,
+      deletions: row.deletions,
+      lastDiffAt: row.last_diff_at ?? undefined,
+      latestStage: row.latest_stage as SessionSummaryRecord["latestStage"] | undefined,
+      latestCheckpointId: row.latest_checkpoint_id ?? undefined,
+      continuationSummary: row.continuation_summary ?? undefined,
+      continuationCreatedAt: row.continuation_created_at ?? undefined,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  deleteBySession(sessionId: string): number {
+    const database = openDhDatabase(this.repoRoot);
+    const result = database.prepare("DELETE FROM session_summaries WHERE session_id = ?").run(sessionId) as { changes: number };
+    return result.changes;
   }
 }

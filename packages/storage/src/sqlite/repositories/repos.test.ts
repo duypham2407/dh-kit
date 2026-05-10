@@ -67,6 +67,59 @@ describe("SessionsRepo", () => {
 
     expect(sessions.findLatestByLane("quick")?.sessionId).toBe("session-new");
   });
+
+  it("lists sessions sorted by updated time with a limit", () => {
+    const repoRoot = makeTmpRepo();
+    const sessions = new SessionsRepo(repoRoot);
+    sessions.save(makeSession({
+      sessionId: "session-old",
+      repoRoot,
+      updatedAt: "2026-05-10T01:00:00.000Z",
+    }));
+    sessions.save(makeSession({
+      sessionId: "session-new",
+      repoRoot,
+      updatedAt: "2026-05-10T02:00:00.000Z",
+    }));
+    sessions.save(makeSession({
+      sessionId: "session-middle",
+      repoRoot,
+      updatedAt: "2026-05-10T01:30:00.000Z",
+    }));
+
+    expect(sessions.list({ limit: 2 }).map((session) => session.sessionId)).toEqual([
+      "session-new",
+      "session-middle",
+    ]);
+  });
+
+  it("finds the latest session across all lanes", () => {
+    const repoRoot = makeTmpRepo();
+    const sessions = new SessionsRepo(repoRoot);
+    sessions.save(makeSession({
+      sessionId: "session-quick",
+      repoRoot,
+      lane: "quick",
+      updatedAt: "2026-05-10T01:00:00.000Z",
+    }));
+    sessions.save(makeSession({
+      sessionId: "session-delivery",
+      repoRoot,
+      lane: "delivery",
+      updatedAt: "2026-05-10T03:00:00.000Z",
+    }));
+
+    expect(sessions.findLatest()?.sessionId).toBe("session-delivery");
+  });
+
+  it("deletes a session by id", () => {
+    const repoRoot = makeTmpRepo();
+    const sessions = new SessionsRepo(repoRoot);
+    sessions.save(makeSession({ sessionId: "session-delete", repoRoot }));
+
+    expect(sessions.deleteById("session-delete")).toBe(1);
+    expect(sessions.findById("session-delete")).toBeUndefined();
+  });
 });
 
 describe("ChunksRepo", () => {

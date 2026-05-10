@@ -34,6 +34,27 @@ export class SessionRuntimeEventsRepo {
     return record;
   }
 
+  saveRecord(record: SessionRuntimeEventRecord): SessionRuntimeEventRecord {
+    const database = openDhDatabase(this.repoRoot);
+    database.prepare(`
+      INSERT INTO session_runtime_events (
+        id, session_id, event_type, event_json, created_at
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        session_id = excluded.session_id,
+        event_type = excluded.event_type,
+        event_json = excluded.event_json,
+        created_at = excluded.created_at
+    `).run(
+      record.id,
+      record.sessionId,
+      record.eventType,
+      JSON.stringify(record.eventJson),
+      record.createdAt,
+    );
+    return record;
+  }
+
   listBySession(sessionId: string): SessionRuntimeEventRecord[] {
     const database = openDhDatabase(this.repoRoot);
     const rows = database.prepare(`
@@ -80,5 +101,11 @@ export class SessionRuntimeEventsRepo {
       eventJson: JSON.parse(row.event_json) as Record<string, unknown>,
       createdAt: row.created_at,
     }));
+  }
+
+  deleteBySession(sessionId: string): number {
+    const database = openDhDatabase(this.repoRoot);
+    const result = database.prepare("DELETE FROM session_runtime_events WHERE session_id = ?").run(sessionId) as { changes: number };
+    return result.changes;
   }
 }

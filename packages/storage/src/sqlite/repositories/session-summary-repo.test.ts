@@ -50,4 +50,38 @@ describe("SessionSummaryRepo", () => {
     expect(found?.id).toBe(latest.id);
     expect(found?.filesChanged).toBe(3);
   });
+
+  it("lists, upserts, and deletes summaries by session", () => {
+    const repo = makeRepo();
+    const sessionsRepo = new SessionsRepo(repo);
+    const session: SessionState = {
+      sessionId: "session-summary",
+      repoRoot: repo,
+      lane: "quick",
+      laneLocked: true,
+      currentStage: "quick_plan",
+      status: "in_progress",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      activeWorkItemIds: [],
+      semanticMode: "auto",
+      toolEnforcementLevel: "very-hard",
+    };
+    sessionsRepo.save(session);
+    const summaries = new SessionSummaryRepo(repo);
+
+    summaries.saveRecord({
+      id: "summary-imported",
+      sessionId: "session-summary",
+      filesChanged: 1,
+      additions: 2,
+      deletions: 3,
+      latestStage: "quick_plan",
+      updatedAt: "2026-05-10T02:00:00.000Z",
+    });
+
+    expect(summaries.listBySession("session-summary").map((summary) => summary.id)).toEqual(["summary-imported"]);
+    expect(summaries.deleteBySession("session-summary")).toBe(1);
+    expect(summaries.listBySession("session-summary")).toHaveLength(0);
+  });
 });

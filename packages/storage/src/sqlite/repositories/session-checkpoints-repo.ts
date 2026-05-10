@@ -53,6 +53,38 @@ export class SessionCheckpointsRepo {
     return record;
   }
 
+  saveRecord(record: SessionCheckpointRecord): SessionCheckpointRecord {
+    const database = openDhDatabase(this.repoRoot);
+    database.prepare(`
+      INSERT INTO session_checkpoints (
+        id, session_id, checkpoint_type, lane, stage,
+        summary_snapshot_json, workflow_snapshot_json, continuation_json, metadata_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        session_id = excluded.session_id,
+        checkpoint_type = excluded.checkpoint_type,
+        lane = excluded.lane,
+        stage = excluded.stage,
+        summary_snapshot_json = excluded.summary_snapshot_json,
+        workflow_snapshot_json = excluded.workflow_snapshot_json,
+        continuation_json = excluded.continuation_json,
+        metadata_json = excluded.metadata_json,
+        created_at = excluded.created_at
+    `).run(
+      record.id,
+      record.sessionId,
+      record.checkpointType,
+      record.lane,
+      record.stage,
+      JSON.stringify(record.summarySnapshotJson),
+      JSON.stringify(record.workflowSnapshotJson),
+      JSON.stringify(record.continuationJson),
+      JSON.stringify(record.metadataJson),
+      record.createdAt,
+    );
+    return record;
+  }
+
   findById(checkpointId: string): SessionCheckpointRecord | undefined {
     const database = openDhDatabase(this.repoRoot);
     const row = database.prepare(`
@@ -125,5 +157,11 @@ export class SessionCheckpointsRepo {
       metadataJson: JSON.parse(row.metadata_json) as Record<string, unknown>,
       createdAt: row.created_at,
     }));
+  }
+
+  deleteBySession(sessionId: string): number {
+    const database = openDhDatabase(this.repoRoot);
+    const result = database.prepare("DELETE FROM session_checkpoints WHERE session_id = ?").run(sessionId) as { changes: number };
+    return result.changes;
   }
 }

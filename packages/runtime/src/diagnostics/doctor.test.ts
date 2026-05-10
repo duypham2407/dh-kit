@@ -334,19 +334,26 @@ describe("runDoctor", () => {
     const report = await runDoctor(repo);
 
     expect(report.summary).toContain("OpenCode parity:");
-    expect(report.summary).toContain("recommended next milestone: Milestone 3: Session Product Parity");
+    expect(report.summary).toContain("recommended next milestone: No active parity milestone after Milestone 12");
     expect(report.diagnostics.parity.source).toBe("opencode-gap-roadmap");
     expect(report.snapshot.parity.summary.missingCommandSurfaces).toEqual(
-      expect.arrayContaining(["serve", "web", "attach", "session", "providers", "models", "agent", "plugin"]),
+      expect.arrayContaining(["web", "attach", "db", "github", "pr", "acp"]),
     );
     expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toContain("run");
     expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toContain("mcp");
+    expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toContain("serve");
+    expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toContain("tui");
+    expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toContain("session");
+    expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toContain("providers");
+    expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toContain("models");
+    expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toContain("agent");
+    expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toContain("plugin");
     expect(report.snapshot.parity.summary.missingCommandSurfaces).not.toEqual(
       expect.arrayContaining(["ask", "explain", "trace", "index", "doctor"]),
     );
     expect(report.actions).toEqual(
       expect.arrayContaining([
-        "OpenCode parity is incomplete: implement Milestone 3: Session Product Parity before claiming session/provider/MCP/tool parity.",
+        "OpenCode parity remains incomplete: missing command surfaces are web, attach, db, github, pr, acp.",
       ]),
     );
   });

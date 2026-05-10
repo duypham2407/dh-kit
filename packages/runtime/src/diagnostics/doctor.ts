@@ -423,7 +423,7 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
   }
 
   if (parityReport.summary.byStatus.supported < parityReport.summary.total) {
-    actions.push(`OpenCode parity is incomplete: implement ${parityReport.summary.recommendedNextMilestone} before claiming session/provider/MCP/tool parity.`);
+    actions.push(buildParityAction(parityReport.summary.recommendedNextMilestone, parityReport.summary.missingCommandSurfaces));
   }
 
   const summaryLines = [
@@ -663,6 +663,14 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
       capabilityStateSummary,
     },
   };
+}
+
+function buildParityAction(recommendedNextMilestone: string, missingCommandSurfaces: readonly string[]): string {
+  if (recommendedNextMilestone.startsWith("No active parity milestone")) {
+    const missing = missingCommandSurfaces.length > 0 ? missingCommandSurfaces.join(", ") : "none";
+    return `OpenCode parity remains incomplete: missing command surfaces are ${missing}.`;
+  }
+  return `OpenCode parity is incomplete: implement ${recommendedNextMilestone} before claiming session/provider/MCP/tool parity.`;
 }
 
 async function summarizeRustCapabilityState(repoRoot: string): Promise<RustCapabilitySummary> {

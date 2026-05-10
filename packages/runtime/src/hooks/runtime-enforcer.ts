@@ -27,7 +27,7 @@ export class RuntimeEnforcer {
     toolName: string;
     toolArgs: Record<string, unknown>;
   }): { allow: boolean; reason: string } {
-    if (input.toolName !== "bash") {
+    if (input.toolName !== "bash" && input.toolName !== "shell") {
       this.writer.writeBashGuardDecision({
         sessionId: input.sessionId,
         envelopeId: input.envelopeId,

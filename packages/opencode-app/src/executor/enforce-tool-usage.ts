@@ -1,6 +1,7 @@
 import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution-envelope.js";
 import type { QueryIntent } from "../planner/required-tools-policy.js";
 import { REQUIRED_TOOLS_BY_INTENT } from "../planner/required-tools-policy.js";
+import { getToolDefinition } from "../tools/tool-registry.js";
 
 export type ToolDecision = {
   allow: boolean;
@@ -8,10 +9,18 @@ export type ToolDecision = {
 };
 
 export function enforceToolUsage(envelope: ExecutionEnvelopeState, toolName: string, intent: QueryIntent = "broad_codebase_question"): ToolDecision {
-  if (["grep", "find", "cat", "head", "tail", "sed", "awk"].includes(toolName)) {
+  if (["find", "cat", "head", "tail", "sed", "awk"].includes(toolName)) {
     return {
       allow: false,
       reason: `Tool '${toolName}' is blocked. Use structured or built-in repository tools instead.`,
+    };
+  }
+
+  const catalogTool = getToolDefinition(toolName);
+  if (catalogTool && envelope.requiredTools.length === 0) {
+    return {
+      allow: true,
+      reason: `Tool allowed for intent '${intent}'.`,
     };
   }
 

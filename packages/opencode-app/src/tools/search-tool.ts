@@ -51,7 +51,7 @@ export function executeGlobTool(input: {
       metadata: { truncated },
     };
   } catch (error) {
-    return failed("glob", error);
+    return failed<GlobToolOutput>("glob", error);
   }
 }
 
@@ -96,7 +96,7 @@ export function executeGrepTool(input: {
       metadata: { truncated },
     };
   } catch (error) {
-    return failed("grep", error);
+    return failed<GrepToolOutput>("grep", error);
   }
 }
 
@@ -153,7 +153,7 @@ function compilePattern(pattern: string, caseSensitive: boolean): RegExp {
   }
 }
 
-function failed<TToolName extends "glob" | "grep">(toolName: TToolName, error: unknown): ToolResultEnvelope {
+function failed<TOutput>(toolName: "glob" | "grep", error: unknown): ToolResultEnvelope<TOutput> {
   return {
     toolName,
     status: "failed",

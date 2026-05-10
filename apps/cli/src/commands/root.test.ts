@@ -50,7 +50,7 @@ describe("runCli help", () => {
     expect(output).toContain("Bounded broad ask can use Rust-authored query.buildEvidence only for finite static repository subjects.");
     expect(output).toContain("Legacy retrieval packets and TypeScript-hosted bridge paths are compatibility surfaces, not canonical authority for touched Rust-hosted build-evidence flows.");
     expect(output).toContain("Supported target platforms are Linux and macOS only.");
-    expect(output).toContain("No universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, or OpenCode server/provider/MCP/tool parity is claimed.");
+    expect(output).toContain("No universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, or OpenCode server/full MCP/model tool-call parity is claimed.");
     expect(output).not.toContain("TypeScript-hosted workflow compatibility path");
     expect(output).not.toContain("full workflow-lane parity is claimed");
     expect(output).toContain("bounded Rust query.buildEvidence when a finite static subject is available");

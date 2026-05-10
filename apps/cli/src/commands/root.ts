@@ -59,7 +59,7 @@ Lifecycle boundary:
   Narrow ask/explain keep search, definition, or relationship methods when those are the truthful surface.
   Legacy retrieval packets and TypeScript-hosted bridge paths are compatibility surfaces, not canonical authority for touched Rust-hosted build-evidence flows.
   Supported target platforms are Linux and macOS only.
-  No universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, or OpenCode server/provider/MCP/tool parity is claimed.
+  No universal repository reasoning, runtime tracing support, daemon mode, worker pool, remote/local socket control plane, Windows platform support, or OpenCode server/full MCP/model tool-call parity is claimed.
 
 TypeScript CLI setup:
   1. dh --help

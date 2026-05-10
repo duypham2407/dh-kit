@@ -61,12 +61,12 @@ describe("HookEnforcer.preToolExec", () => {
     expect(latest!.decision).toBe("allow");
   });
 
-  it("blocks a hard-blocked OS tool and writes a block decision", () => {
+  it("blocks a hard-blocked legacy OS tool alias and writes a block decision", () => {
     const repoRoot = makeTmpRepo();
     const enforcer = new HookEnforcer(repoRoot);
     const envelope = makeEnvelope();
 
-    const result = enforcer.preToolExec(envelope, "grep", { args: ["pattern"] });
+    const result = enforcer.preToolExec(envelope, "cat", { path: "src/app.ts" });
 
     expect(result.allow).toBe(false);
     expect(result.decision).toBe("block");

@@ -53,6 +53,37 @@ describe("RuntimeEnforcer", () => {
     expect(result.reason).toContain("Blocked by bash guard");
   });
 
+  it("routes shell tool commands through the same guard as legacy bash", () => {
+    const repo = makeRepo();
+    const sessions = new SessionsRepo(repo);
+    sessions.save({
+      sessionId: "s1",
+      repoRoot: repo,
+      lane: "quick",
+      laneLocked: true,
+      currentStage: "quick_plan",
+      status: "in_progress",
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      activeWorkItemIds: [],
+      semanticMode: "auto",
+      toolEnforcementLevel: "very-hard",
+    });
+
+    const enforcer = new RuntimeEnforcer(repo);
+    const result = enforcer.preToolExec({
+      sessionId: "s1",
+      envelopeId: "e1",
+      role: "quick",
+      intent: "trace_flow",
+      toolName: "shell",
+      toolArgs: { command: "grep -r auth src" },
+    });
+
+    expect(result.allow).toBe(false);
+    expect(result.reason).toContain("Blocked by bash guard");
+  });
+
   it("gates structural answer without graph evidence", () => {
     const repo = makeRepo();
     const enforcer = new RuntimeEnforcer(repo);

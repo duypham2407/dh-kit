@@ -24,14 +24,8 @@ describe("buildOpenCodeParityReport", () => {
         "serve",
         "web",
         "attach",
-        "session",
-        "export",
-        "import",
-        "providers",
-        "models",
         "agent",
         "plugin",
-        "stats",
         "db",
         "github",
         "pr",
@@ -40,6 +34,12 @@ describe("buildOpenCodeParityReport", () => {
     );
     expect(report.summary.missingCommandSurfaces).not.toContain("run");
     expect(report.summary.missingCommandSurfaces).not.toContain("mcp");
+    expect(report.summary.missingCommandSurfaces).not.toContain("session");
+    expect(report.summary.missingCommandSurfaces).not.toContain("export");
+    expect(report.summary.missingCommandSurfaces).not.toContain("import");
+    expect(report.summary.missingCommandSurfaces).not.toContain("providers");
+    expect(report.summary.missingCommandSurfaces).not.toContain("models");
+    expect(report.summary.missingCommandSurfaces).not.toContain("stats");
     expect(report.summary.missingCommandSurfaces).not.toEqual(
       expect.arrayContaining(["ask", "explain", "trace", "index", "doctor"]),
     );
@@ -48,10 +48,10 @@ describe("buildOpenCodeParityReport", () => {
     ).toEqual([]);
   });
 
-  it("recommends Rust runtime authority as the next milestone", () => {
+  it("recommends agent runtime as the next milestone", () => {
     const report = buildOpenCodeParityReport();
 
-    expect(report.summary.recommendedNextMilestone).toBe("Milestone 3: Session Product Parity");
+    expect(report.summary.recommendedNextMilestone).toBe("Milestone 7: Agent/Subagent Runtime");
     expect(report.summary.byStatus.partial).toBeGreaterThan(0);
     expect(report.summary.byStatus.planned).toBeGreaterThan(0);
     expect(report.summary.byStatus.deferred).toBeGreaterThan(0);
@@ -101,6 +101,27 @@ describe("buildOpenCodeParityReport", () => {
       "OAuth callback handling",
       "runtime MCP server lifecycle",
       "MCP stdio tool execution",
+    ]));
+  });
+
+  it("reports the tool catalog and runner while keeping model-loop gaps visible", () => {
+    const report = buildOpenCodeParityReport();
+    const tool = report.features.find((feature) => feature.category === "tool");
+
+    expect(tool?.dhSurface).toEqual(expect.arrayContaining([
+      "core tool catalog",
+      "validated tool runner",
+      "permission-bound shell execution",
+      "tool event streaming",
+    ]));
+    expect(tool?.missingRuntimeCapabilities).not.toEqual(expect.arrayContaining([
+      "OpenCode-equivalent tool schemas",
+      "streaming tool output",
+      "tool result envelopes",
+    ]));
+    expect(tool?.missingRuntimeCapabilities).toEqual(expect.arrayContaining([
+      "model tool-call loop integration",
+      "interactive permission prompt UI",
     ]));
   });
 });

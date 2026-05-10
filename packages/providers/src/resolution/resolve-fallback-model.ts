@@ -8,13 +8,13 @@ export async function resolveFallbackModel(repoRoot: string, agentId: string): P
     throw new Error(`No default model fallback is configured for agent '${agentId}'.`);
   }
 
-  const providers = await listProvidersAsync();
+  const providers = await listProvidersAsync(repoRoot);
   const provider = providers.find((entry) => entry.providerId === agent.defaultProvider && entry.available);
   if (!provider) {
     throw new Error(`Default provider '${agent.defaultProvider}' is not enabled for agent '${agentId}'.`);
   }
 
-  const models = await listModelsAsync(agent.defaultProvider);
+  const models = await listModelsAsync(agent.defaultProvider, repoRoot);
   const model = models.find((entry) => entry.modelId === agent.defaultModel && entry.available);
   if (!model) {
     throw new Error(`Default model '${agent.defaultModel}' is not available for agent '${agentId}'.`);

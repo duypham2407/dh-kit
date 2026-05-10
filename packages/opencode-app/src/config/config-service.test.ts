@@ -87,6 +87,25 @@ describe("ConfigService", () => {
     });
   });
 
+  describe("provider registry", () => {
+    it("lists custom providers from opencode.json through config service", async () => {
+      const repo = makeTmpRepo();
+      fs.writeFileSync(path.join(repo, "opencode.json"), JSON.stringify({
+        provider: {
+          localai: {
+            name: "LocalAI",
+            npm: "@ai-sdk/openai-compatible",
+            models: { "local-model": { name: "Local Model" } },
+          },
+        },
+      }));
+
+      const providers = await createConfigService(repo).listProviders();
+
+      expect(providers.some((provider) => provider.providerId === "localai")).toBe(true);
+    });
+  });
+
   describe("embedding model change reembed workflow", () => {
     it("reembeds all chunks when model changes", async () => {
       const original = process.env.OPENAI_API_KEY;

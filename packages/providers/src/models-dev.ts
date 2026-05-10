@@ -9,6 +9,11 @@ const cacheDir = path.join(os.homedir(), ".dh", "cache");
 const filepath = path.join(cacheDir, "models.json");
 const ttl = 5 * 60 * 1000;
 
+export type ModelsCacheMetadata = {
+  path: string;
+  ageMs?: number;
+};
+
 async function ensureCacheDir() {
   await fs.mkdir(cacheDir, { recursive: true }).catch(() => {});
 }
@@ -108,6 +113,27 @@ export async function refresh(force = false) {
   } catch (e) {
     console.error("Failed to refresh models.dev", e);
   }
+}
+
+export function formatCachePathForDisplay(cachePath = filepath, home = os.homedir()): string {
+  if (cachePath === home) return "~";
+  return cachePath.startsWith(`${home}${path.sep}`) ? `~${cachePath.slice(home.length)}` : cachePath;
+}
+
+export async function readModelsCacheMetadata(cachePath = filepath): Promise<ModelsCacheMetadata> {
+  const stat = await fs.stat(cachePath).catch(() => null);
+  return {
+    path: formatCachePathForDisplay(cachePath),
+    ageMs: stat ? Date.now() - stat.mtimeMs : undefined,
+  };
+}
+
+export async function refreshWithMetadata(force = false): Promise<{ refreshed: boolean; cache: ModelsCacheMetadata }> {
+  await refresh(force);
+  return {
+    refreshed: true,
+    cache: await readModelsCacheMetadata(),
+  };
 }
 
 if (!process.env.DH_DISABLE_MODELS_FETCH) {

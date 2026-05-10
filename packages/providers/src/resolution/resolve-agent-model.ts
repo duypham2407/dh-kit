@@ -16,13 +16,13 @@ export async function resolveAgentModel(repoRoot: string, agentId: string, assig
 }
 
 export async function validateResolvedModel(repoRoot: string, agentId: string, providerId: string, modelId: string, variantId: string): Promise<void> {
-  const providers = await listProvidersAsync();
+  const providers = await listProvidersAsync(repoRoot);
   const provider = providers.find((entry) => entry.providerId === providerId && entry.available);
   if (!provider) {
     throw new Error(`Provider '${providerId}' is not enabled for agent '${agentId}'.`);
   }
 
-  const models = await listModelsAsync(providerId);
+  const models = await listModelsAsync(providerId, repoRoot);
   const model = models.find((entry) => entry.modelId === modelId && entry.available);
   if (!model) {
     throw new Error(`Model '${modelId}' is not available for provider '${providerId}' and agent '${agentId}'.`);

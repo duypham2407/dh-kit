@@ -1,52 +1,28 @@
-import { Effect } from "effect";
-import { Provider } from "./index.js";
-import type { ProviderID, ModelID } from "../schema.js";
+import { loadProviderRegistry, loadProviderRuntimeConfig } from "../config/provider-config-loader.js";
+import * as ModelsDev from "../models-dev.js";
 
 export type ProviderRegistryEntry = { providerId: string; name: string; available: boolean; priority: number };
 export type ModelRegistryEntry = { providerId: string; modelId: string; name: string; available: boolean };
 export type VariantRegistryEntry = { providerId: string; modelId: string; variantId: string };
 
-function runEffect<T>(effect: Effect.Effect<T, Error, never>): T {
-  // Use runSync since these are currently used in sync functions in opencode-app
-  // Wait, Provider.layer uses ModelsDev.get() which returns Promise.
-  // This means runSync will fail if the layer is async!
-  throw new Error("Cannot run async layer synchronously. Please use the async adapter.");
-}
-
-export async function listProvidersAsync(): Promise<ProviderRegistryEntry[]> {
-  const list = await Effect.runPromise(
-    Effect.provide(
-      Effect.gen(function* () {
-        const service = yield* Provider.Service;
-        return yield* service.list();
-      }),
-      Provider.layer
-    )
-  );
-
-  return Object.entries(list).map(([id, info]) => ({
-    providerId: id,
-    name: info.name ?? id,
-    available: true,
+export async function listProvidersAsync(repoRoot = process.cwd()): Promise<ProviderRegistryEntry[]> {
+  const report = await loadProviderRegistry(repoRoot);
+  return report.providers.map((provider) => ({
+    providerId: provider.providerId,
+    name: provider.name,
+    available: provider.enabled && provider.runtimeAvailable,
     priority: 0,
   }));
 }
 
-export async function listModelsAsync(providerId: string): Promise<ModelRegistryEntry[]> {
-  const list = await Effect.runPromise(
-    Effect.provide(
-      Effect.gen(function* () {
-        const service = yield* Provider.Service;
-        return yield* service.list();
-      }),
-      Provider.layer
-    )
-  );
+export async function listModelsAsync(providerId: string, repoRoot = process.cwd()): Promise<ModelRegistryEntry[]> {
+  const catalog = await ModelsDev.get();
+  const report = await loadProviderRegistry(repoRoot, { catalog });
+  const provider = report.providers.find((entry) => entry.providerId === providerId);
+  if (!provider?.enabled) return [];
 
-  const provider = list[providerId as ProviderID];
-  if (!provider) return [];
-
-  return Object.entries(provider.models).map(([modelId, model]: [string, any]) => ({
+  const runtime = await loadProviderRuntimeConfig(repoRoot, providerId, { catalog });
+  return Object.entries(runtime.models ?? {}).map(([modelId, model]: [string, any]) => ({
     providerId,
     modelId,
     name: model.name || modelId,

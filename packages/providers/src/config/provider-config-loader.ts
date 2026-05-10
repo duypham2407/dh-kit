@@ -69,6 +69,17 @@ export async function loadProviderRegistry(
   return { providers };
 }
 
+export async function loadProviderRuntimeConfig(
+  repoRoot: string,
+  providerId: string,
+  input: { catalog?: Record<string, Info> } = {},
+): Promise<ProviderRuntimeConfig> {
+  const catalog = input.catalog ?? await getModelsDev();
+  const config = loadProviderConfigFile(repoRoot);
+  const overrides = new ConfigRepo(repoRoot).read<Record<string, ProviderConfig>>("provider.overrides") ?? {};
+  return resolveProviderRuntimeConfig(providerId, catalog, config.provider?.[providerId], overrides[providerId]);
+}
+
 export function resolveProviderRuntimeConfig(
   providerId: string,
   catalog: Record<string, Info>,

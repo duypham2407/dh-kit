@@ -37,8 +37,8 @@ export function createConfigService(repoRoot: string): ConfigService {
       const config = loadOpencodeConfig(repoRoot);
       return config?.provider;
     },
-    listProviders: () => listProvidersAsync(),
-    listModels: (providerId) => listModelsAsync(providerId),
+    listProviders: () => listProvidersAsync(repoRoot),
+    listModels: (providerId) => listModelsAsync(providerId, repoRoot),
     listVariants: (providerId, modelId) => listVariantsAsync(providerId, modelId),
     assignModel: async (input) => {
       await validateResolvedModel(repoRoot, input.agentId, input.providerId, input.modelId, input.variantId);

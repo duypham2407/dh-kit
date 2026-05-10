@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ProviderAuthStore } from "./provider-auth-store.js";
-import { loginProvider, logoutProvider, redactProviderSecrets, resolveProviderCredential } from "./provider-auth-service.js";
+import { loginProvider, logoutProvider, redactProviderSecrets, resolveProviderCredential, verifyProvider } from "./provider-auth-service.js";
 
 const repos: string[] = [];
 const originalEnv = { ...process.env };
@@ -12,6 +12,19 @@ function makeRepo(): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "dh-provider-auth-service-"));
   repos.push(repo);
   return repo;
+}
+
+function writeProviderConfig(repo: string) {
+  fs.writeFileSync(path.join(repo, "opencode.json"), JSON.stringify({
+    provider: {
+      openai: {
+        name: "OpenAI",
+        npm: "@ai-sdk/openai",
+        env: [],
+        models: { "gpt-test": { name: "GPT Test" } },
+      },
+    },
+  }));
 }
 
 afterEach(() => {
@@ -65,5 +78,49 @@ describe("provider auth service", () => {
       apiKey: "[REDACTED_SECRET]",
       nested: { authorization: "[REDACTED_SECRET]", safe: "visible" },
     });
+  });
+
+  it("classifies missing credentials during provider verification", async () => {
+    const repo = makeRepo();
+    writeProviderConfig(repo);
+    delete process.env.OPENAI_API_KEY;
+
+    const report = await verifyProvider(repo, {
+      providerId: "openai",
+      modelId: "gpt-test",
+      createChatProvider: async () => {
+        throw new Error("should not create provider without credentials");
+      },
+    });
+
+    expect(report).toMatchObject({
+      providerId: "openai",
+      ok: false,
+      reason: "missing_credential",
+    });
+  });
+
+  it("returns ok when tiny non-streaming verification succeeds", async () => {
+    const repo = makeRepo();
+    writeProviderConfig(repo);
+    delete process.env.OPENAI_API_KEY;
+    loginProvider(repo, { providerId: "openai", apiKey: "sk-secret" });
+
+    const report = await verifyProvider(repo, {
+      providerId: "openai",
+      modelId: "gpt-test",
+      createChatProvider: async () => ({
+        providerId: "openai",
+        chat: async () => ({
+          content: "OK",
+          model: "gpt-test",
+          finishReason: "stop",
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        }),
+      }),
+    });
+
+    expect(report).toMatchObject({ ok: true, providerId: "openai", modelId: "gpt-test" });
+    expect(JSON.stringify(report)).not.toContain("sk-secret");
   });
 });

@@ -1,4 +1,4 @@
-import { loginProvider, logoutProvider, redactProviderSecrets } from "../../../../packages/providers/src/auth/provider-auth-service.js";
+import { loginProvider, logoutProvider, redactProviderSecrets, verifyProvider } from "../../../../packages/providers/src/auth/provider-auth-service.js";
 import { loadProviderRegistry } from "../../../../packages/providers/src/config/provider-config-loader.js";
 import type { ProviderLoginReport, ProviderLogoutReport, ProviderRegistryReport, ProviderVerifyReport } from "../../../../packages/shared/src/types/provider.js";
 
@@ -13,12 +13,7 @@ const defaultDeps: ProvidersDeps = {
   listProviders: loadProviderRegistry,
   loginProvider,
   logoutProvider,
-  verifyProvider: async (repoRoot, input) => ({
-    providerId: input.providerId,
-    ok: false,
-    reason: "missing_credential",
-    message: "provider verification is unavailable",
-  }),
+  verifyProvider,
 };
 
 export async function runProvidersCommand(

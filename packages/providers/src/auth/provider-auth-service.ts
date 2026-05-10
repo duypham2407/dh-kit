@@ -2,7 +2,10 @@ import type {
   ProviderCredentialResolution,
   ProviderLoginReport,
   ProviderLogoutReport,
+  ProviderVerifyReport,
 } from "../../../shared/src/types/provider.js";
+import { createChatProvider } from "../chat/create-chat-provider.js";
+import { loadModelCatalog, loadProviderRegistry } from "../config/provider-config-loader.js";
 import { ProviderAuthStore } from "./provider-auth-store.js";
 
 export function loginProvider(repoRoot: string, input: { providerId: string; apiKey?: string; apiKeyEnv?: string }): ProviderLoginReport {
@@ -52,6 +55,64 @@ export function resolveProviderCredential(repoRoot: string, input: {
   return { providerId: input.providerId, status: "none" };
 }
 
+export async function verifyProvider(repoRoot: string, input: {
+  providerId: string;
+  modelId?: string;
+  createChatProvider?: typeof createChatProvider;
+}): Promise<ProviderVerifyReport> {
+  const registry = await loadProviderRegistry(repoRoot);
+  const provider = registry.providers.find((entry) => entry.providerId === input.providerId);
+  if (!provider) {
+    return {
+      providerId: input.providerId,
+      ok: false,
+      reason: "request_failed",
+      message: `Provider '${input.providerId}' was not found.`,
+    };
+  }
+  if (!provider.runtimeAvailable) {
+    return {
+      providerId: input.providerId,
+      ok: false,
+      reason: "unsupported_sdk",
+      message: `Provider '${input.providerId}' is not runtime-available.`,
+    };
+  }
+  if (provider.credentialStatus === "none") {
+    return {
+      providerId: input.providerId,
+      ok: false,
+      reason: "missing_credential",
+      message: `Provider '${input.providerId}' has no credential.`,
+    };
+  }
+
+  const modelId = input.modelId ?? await selectFirstModelId(repoRoot, input.providerId);
+  try {
+    const chat = await (input.createChatProvider ?? createChatProvider)(repoRoot, {
+      providerId: input.providerId,
+      modelId,
+      variantId: "default",
+    });
+    await chat.chat({
+      model: `${input.providerId}/${modelId}`,
+      messages: [{ role: "user", content: "Reply with OK." }],
+      maxTokens: 4,
+      temperature: 0,
+    });
+    return {
+      providerId: input.providerId,
+      modelId,
+      ok: true,
+      message: `Provider '${input.providerId}' verified with model '${modelId}'.`,
+    };
+  } catch (error) {
+    const message = String(redactProviderSecrets((error as Error).message));
+    const reason = (error as { kind?: string }).kind === "auth" ? "auth_failed" : "request_failed";
+    return { providerId: input.providerId, modelId, ok: false, reason, message };
+  }
+}
+
 export function redactProviderSecrets(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactProviderSecrets);
   if (value && typeof value === "object") {
@@ -87,4 +148,11 @@ export function envNamesForProvider(providerId: string, catalogEnv: string[]): s
 
 function isSecretKey(key: string): boolean {
   return /api[_-]?key|token|authorization|secret|password|accesskey|secretaccesskey/i.test(key);
+}
+
+async function selectFirstModelId(repoRoot: string, providerId: string): Promise<string> {
+  const catalog = await loadModelCatalog(repoRoot, { providerId });
+  const model = catalog.models.find((entry) => entry.available) ?? catalog.models[0];
+  if (!model) throw new Error(`Provider '${providerId}' has no models.`);
+  return model.modelId;
 }

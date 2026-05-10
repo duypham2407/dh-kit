@@ -13,6 +13,7 @@ import { runMigrateCommand } from "./migrate.js";
 import { runMcpCommand } from "./mcp.js";
 import { runModelsCommand } from "./models.js";
 import { runOperatorSafeMaintenanceCommand } from "./operator-safe-maintenance.js";
+import { runPluginCommand } from "./plugin.js";
 import { runProvidersCommand } from "./providers.js";
 import { runQuickCommand } from "./quick.js";
 import { runRunCommand } from "./run.js";
@@ -37,6 +38,7 @@ Commands:
   mcp <list|add|auth|logout|debug> [options]
   agent <list|create> [options]
   lsp diagnostics --file <path> [--json]
+  plugin <list|add> [options]
   quick <task> [--json]       (Rust-hosted lane workflow path)
   delivery <goal> [--json]    (Rust-hosted lane workflow path)
   migrate <goal> [--json]     (Rust-hosted lane workflow path)
@@ -100,6 +102,8 @@ export async function runCli(args: string[], repoRoot: string): Promise<number> 
       return runAgentCommand(rest, repoRoot);
     case "lsp":
       return runLspCommand(rest, repoRoot);
+    case "plugin":
+      return runPluginCommand(rest, repoRoot);
     case "quick":
       return runQuickCommand(rest, repoRoot);
     case "delivery":

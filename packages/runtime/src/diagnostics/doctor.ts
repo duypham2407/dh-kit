@@ -666,6 +666,9 @@ export async function runDoctor(repoRoot: string): Promise<DoctorReport> {
 }
 
 function buildParityAction(recommendedNextMilestone: string, missingCommandSurfaces: readonly string[]): string {
+  if (recommendedNextMilestone.startsWith("Personal Coding Assistant")) {
+    return `OpenCode community/cloud parity is intentionally deferred; active focus is ${recommendedNextMilestone}.`;
+  }
   if (recommendedNextMilestone.startsWith("No active parity milestone")) {
     const missing = missingCommandSurfaces.length > 0 ? missingCommandSurfaces.join(", ") : "none";
     return `OpenCode parity remains incomplete: missing command surfaces are ${missing}.`;

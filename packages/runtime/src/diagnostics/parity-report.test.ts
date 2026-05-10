@@ -48,10 +48,10 @@ describe("buildOpenCodeParityReport", () => {
     ).toEqual([]);
   });
 
-  it("reports no active parity milestone after the web and desktop ADR", () => {
+  it("reports the personal coding assistant roadmap as the active direction", () => {
     const report = buildOpenCodeParityReport();
 
-    expect(report.summary.recommendedNextMilestone).toBe("No active parity milestone after Milestone 12");
+    expect(report.summary.recommendedNextMilestone).toBe("Personal Coding Assistant v1: TUI + Deep Context + Speed");
     expect(report.summary.byStatus.partial).toBeGreaterThan(0);
     expect(report.summary.byStatus.planned).toBe(0);
     expect(report.summary.byStatus.deferred).toBeGreaterThan(0);
@@ -175,7 +175,7 @@ describe("buildOpenCodeParityReport", () => {
     const plugin = report.features.find((feature) => feature.category === "plugin");
 
     expect(report.summary.missingCommandSurfaces).not.toContain("plugin");
-    expect(plugin?.status).toBe("partial");
+    expect(plugin?.status).toBe("deferred");
     expect(plugin?.dhSurface).toEqual(expect.arrayContaining([
       "local plugin registry",
       "plugin list/add",
@@ -190,6 +190,9 @@ describe("buildOpenCodeParityReport", () => {
     expect(plugin?.missingRuntimeCapabilities).toEqual(expect.arrayContaining([
       "executable JS/WASM plugin API",
       "TUI plugin hooks",
+    ]));
+    expect(plugin?.notes).toEqual(expect.arrayContaining([
+      "Community plugin ecosystem is deferred by ADR 2026-05-10 personal coding assistant direction.",
     ]));
   });
 
@@ -231,6 +234,7 @@ describe("buildOpenCodeParityReport", () => {
     ]));
     expect(packaging?.notes).toEqual(expect.arrayContaining([
       "Web and desktop implementation deferred by ADR 2026-05-10.",
+      "Community/cloud surfaces are not part of Personal Coding Assistant v1.",
     ]));
   });
 });

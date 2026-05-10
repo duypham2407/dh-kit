@@ -16,7 +16,7 @@ export const OPENCODE_MISSING_COMMAND_SURFACES = [
   "acp",
 ] as const;
 
-const RECOMMENDED_NEXT_MILESTONE = "No active parity milestone after Milestone 12";
+const RECOMMENDED_NEXT_MILESTONE = "Personal Coding Assistant v1: TUI + Deep Context + Speed";
 
 const FEATURES: ParityFeature[] = [
   {
@@ -32,7 +32,7 @@ const FEATURES: ParityFeature[] = [
     status: "supported",
     priority: "P0",
     missingCommandSurfaces: [],
-    missingRuntimeCapabilities: ["OpenCode session/provider/MCP/tool lifecycle authority remains planned in later milestones"],
+    missingRuntimeCapabilities: ["personal assistant runtime still needs deeper context planner and faster freshness guarantees"],
     nextMilestone: RECOMMENDED_NEXT_MILESTONE,
     notes: ["Rust is authoritative for first-wave knowledge commands and lane command launch/supervision."],
   },
@@ -88,7 +88,7 @@ const FEATURES: ParityFeature[] = [
     missingCommandSurfaces: [...OPENCODE_MISSING_COMMAND_SURFACES],
     missingRuntimeCapabilities: ["web/attach/db/github/pr/acp command surfaces"],
     nextMilestone: RECOMMENDED_NEXT_MILESTONE,
-    notes: ["DH now has run, session, provider/model, and local MCP lifecycle command surfaces."],
+    notes: ["DH now has run, session, provider/model, local MCP, server, and TUI command surfaces; missing OpenCode community/cloud commands are not the active product focus."],
   },
   {
     category: "session",
@@ -219,7 +219,7 @@ const FEATURES: ParityFeature[] = [
       "deterministic declarative hooks",
       "plugin timeout/error isolation",
     ],
-    status: "partial",
+    status: "deferred",
     priority: "P2",
     missingCommandSurfaces: [],
     missingRuntimeCapabilities: [
@@ -229,7 +229,10 @@ const FEATURES: ParityFeature[] = [
       "remote/npm plugin installation",
     ],
     nextMilestone: RECOMMENDED_NEXT_MILESTONE,
-    notes: ["Local declarative plugin hooks exist; executable plugin APIs remain intentionally deferred."],
+    notes: [
+      "Local declarative plugin hooks exist; executable plugin APIs remain intentionally deferred.",
+      "Community plugin ecosystem is deferred by ADR 2026-05-10 personal coding assistant direction.",
+    ],
   },
   {
     category: "server",
@@ -294,6 +297,7 @@ const FEATURES: ParityFeature[] = [
     notes: [
       "This is intentionally outside the first parity program.",
       "Web and desktop implementation deferred by ADR 2026-05-10.",
+      "Community/cloud surfaces are not part of Personal Coding Assistant v1.",
     ],
   },
 ];

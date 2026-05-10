@@ -66,7 +66,7 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
     category: "write",
     defaultPermissionLevel: "ask",
     streams: false,
-    executable: false,
+    executable: true,
   },
   {
     name: "todo",

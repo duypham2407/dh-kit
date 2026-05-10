@@ -77,6 +77,34 @@ describe("renderTuiScreen", () => {
     expect(output).toContain("tool.started: read README.md");
   });
 
+  it("renders tool diff summaries", () => {
+    let state = connectedState();
+    state = reduceTuiState(state, {
+      type: "run.event",
+      event: {
+        type: "tool.finished",
+        sessionId: "session-1",
+        sequence: 1,
+        timestamp: "2026-05-10T00:00:00.000Z",
+        payload: {
+          tool: "apply_patch",
+          metadata: {
+            diffSummary: {
+              filesChanged: 1,
+              additions: 2,
+              deletions: 1,
+              paths: ["src/auth.ts"],
+            },
+          },
+        },
+      },
+    });
+
+    const output = renderTuiScreen(state);
+
+    expect(output).toContain("tool.finished: apply_patch diff: 1 file changed, +2 -1 (src/auth.ts)");
+  });
+
   it("renders model agent options, context evidence, and runtime status", () => {
     let state = connectedState();
     state = reduceTuiState(state, {

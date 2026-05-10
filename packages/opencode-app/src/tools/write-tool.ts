@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ToolInputMap, ToolResultEnvelope } from "./schemas.js";
+import { summarizeTextDiff } from "./diff-summary.js";
 import { resolveRepoPath } from "./tool-paths.js";
 
 export type WriteToolOutput = {
@@ -14,6 +15,9 @@ export function executeWriteTool(input: {
 }): ToolResultEnvelope<WriteToolOutput> {
   try {
     const resolved = resolveRepoPath(input.repoRoot, input.input.path);
+    const before = fs.existsSync(resolved.absolutePath)
+      ? fs.readFileSync(resolved.absolutePath, "utf8")
+      : "";
     if (input.input.createDirs) {
       fs.mkdirSync(path.dirname(resolved.absolutePath), { recursive: true });
     }
@@ -26,6 +30,7 @@ export function executeWriteTool(input: {
       metadata: {
         truncated: false,
         bytesReturned: bytesWritten,
+        diffSummary: summarizeTextDiff(resolved.relativePath, before, input.input.content),
       },
     };
   } catch (error) {

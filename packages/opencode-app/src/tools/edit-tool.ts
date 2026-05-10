@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import type { ToolInputMap, ToolResultEnvelope } from "./schemas.js";
+import { summarizeTextDiff } from "./diff-summary.js";
 import { resolveRepoPath } from "./tool-paths.js";
 
 export type EditToolOutput = {
@@ -39,6 +40,7 @@ export function executeEditTool(input: {
         truncated: false,
         bytesRead: Buffer.byteLength(original),
         bytesReturned: Buffer.byteLength(updated),
+        diffSummary: summarizeTextDiff(resolved.relativePath, original, updated),
       },
     };
   } catch (error) {

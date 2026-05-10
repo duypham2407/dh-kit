@@ -17,7 +17,7 @@ function makeRepo(): string {
   return repo;
 }
 
-function makeEnvelope(repo: string): ExecutionEnvelopeState {
+function makeEnvelope(repo: string, overrides: Partial<ExecutionEnvelopeState> = {}): ExecutionEnvelopeState {
   return {
     id: "env-1",
     sessionId: "session-1",
@@ -32,6 +32,7 @@ function makeEnvelope(repo: string): ExecutionEnvelopeState {
     semanticMode: "auto",
     evidencePolicy: "strict",
     createdAt: new Date().toISOString(),
+    ...overrides,
   };
 }
 
@@ -89,6 +90,117 @@ describe("ToolRunner", () => {
         },
       },
     ]);
+  });
+
+  it("requires permission before applying a patch and records audit without mutating files", async () => {
+    const repo = makeRepo();
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const runner = new ToolRunner({
+      repoRoot: repo,
+      envelope: makeEnvelope(repo),
+      intent: "test",
+      onEvent: (type, payload) => events.push({ type, payload }),
+    });
+
+    const result = await runner.run("apply_patch", {
+      patch: [
+        "*** Begin Patch",
+        "*** Add File: a.txt",
+        "+hello",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    expect(result.status).toBe("permission_required");
+    expect(fs.existsSync(path.join(repo, "a.txt"))).toBe(false);
+    expect(events).toEqual([
+      {
+        type: "permission.requested",
+        payload: {
+          toolName: "apply_patch",
+          permissionLevel: "ask",
+          reason: "Tool 'apply_patch' requires permission before execution.",
+        },
+      },
+    ]);
+    expect(new ToolUsageAuditRepo(repo).listBySession("session-1").map((record) => record.status)).toEqual([
+      "failed",
+      "called",
+    ]);
+  });
+
+  it("applies a permitted patch for the implementer role and returns a diff summary", async () => {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, "a.txt"), "old\nkeep\n");
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const runner = new ToolRunner({
+      repoRoot: repo,
+      envelope: makeEnvelope(repo, { lane: "delivery", role: "implementer", agentId: "implementer", stage: "full_implementation" }),
+      intent: "test",
+      permissionOverrides: { apply_patch: "allow" },
+      onEvent: (type, payload) => events.push({ type, payload }),
+    });
+
+    const result = await runner.run("apply_patch", {
+      patch: [
+        "*** Begin Patch",
+        "*** Update File: a.txt",
+        "@@",
+        "-old",
+        "+new",
+        " keep",
+        "*** End Patch",
+      ].join("\n"),
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(fs.readFileSync(path.join(repo, "a.txt"), "utf8")).toBe("new\nkeep\n");
+    expect(result.metadata.diffSummary).toEqual({
+      filesChanged: 1,
+      additions: 1,
+      deletions: 1,
+      paths: ["a.txt"],
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "tool.finished",
+      payload: {
+        toolName: "apply_patch",
+        status: "succeeded",
+        metadata: {
+          diffSummary: {
+            filesChanged: 1,
+            additions: 1,
+            deletions: 1,
+            paths: ["a.txt"],
+          },
+        },
+      },
+    });
+  });
+
+  it("blocks direct mutation tools for reviewer and tester roles even when explicitly allowed", async () => {
+    const repo = makeRepo();
+    const patch = [
+      "*** Begin Patch",
+      "*** Add File: review.txt",
+      "+no mutation",
+      "*** End Patch",
+    ].join("\n");
+
+    for (const role of ["reviewer", "tester"] as const) {
+      const runner = new ToolRunner({
+        repoRoot: repo,
+        envelope: makeEnvelope(repo, { lane: "delivery", role, agentId: role, stage: `full_${role}` }),
+        intent: "test",
+        permissionOverrides: { apply_patch: "allow", write: "allow", edit: "allow" },
+      });
+
+      const result = await runner.run("apply_patch", { patch });
+
+      expect(result.status).toBe("failed");
+      expect(result.error).toContain("Only the Fullstack Agent can execute write tools");
+      expect(fs.existsSync(path.join(repo, "review.txt"))).toBe(false);
+    }
   });
 
   it("runs read tools with started and finished events", async () => {

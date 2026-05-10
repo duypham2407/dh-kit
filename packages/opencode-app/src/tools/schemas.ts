@@ -31,6 +31,12 @@ export type ToolResultMetadata = {
   omittedBytes?: number;
   exitCode?: number | null;
   durationMs?: number;
+  diffSummary?: {
+    filesChanged: number;
+    additions: number;
+    deletions: number;
+    paths: string[];
+  };
 };
 
 export type ToolResultEnvelope<TOutput = unknown> = {

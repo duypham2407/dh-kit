@@ -235,6 +235,36 @@ describe("TUI state reducer", () => {
     expect(state.finalStatus).toBe("degraded_success");
   });
 
+  it("summarizes tool diff metadata in the event log", () => {
+    let state = createInitialTuiState({ serverUrl: "http://127.0.0.1:3000" });
+    state = reduceTuiState(state, {
+      type: "run.event",
+      event: {
+        type: "tool.finished",
+        sessionId: "session-1",
+        sequence: 1,
+        timestamp: "2026-05-10T00:00:00.000Z",
+        payload: {
+          tool: "apply_patch",
+          metadata: {
+            diffSummary: {
+              filesChanged: 1,
+              additions: 2,
+              deletions: 1,
+              paths: ["src/auth.ts"],
+            },
+          },
+        },
+      },
+    });
+
+    expect(state.eventLog.at(-1)).toEqual({
+      type: "tool.finished",
+      sessionId: "session-1",
+      label: "tool.finished: apply_patch diff: 1 file changed, +2 -1 (src/auth.ts)",
+    });
+  });
+
   it("clears permission prompt after approval or denial", () => {
     let state = createInitialTuiState({ serverUrl: "http://127.0.0.1:3000" });
     state = reduceTuiState(state, {

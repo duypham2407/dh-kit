@@ -4,6 +4,7 @@ import type { ExecutionEnvelopeState } from "../../../shared/src/types/execution
 import type { ToolUsageAudit } from "../../../shared/src/types/audit.js";
 import type { RunEventPayload, RunEventType } from "../../../shared/src/types/run.js";
 import { ToolUsageAuditRepo } from "../../../storage/src/sqlite/repositories/tool-usage-audit-repo.js";
+import { executeApplyPatchTool } from "./apply-patch-tool.js";
 import { executeEditTool } from "./edit-tool.js";
 import { executeReadTool } from "./read-tool.js";
 import { executeGlobTool, executeGrepTool } from "./search-tool.js";
@@ -78,11 +79,22 @@ export class ToolRunner {
       this.recordAudit(definition.name, "failed");
       return result;
     }
+    if (definition.category === "write" && !isWriteOwner(this.options.envelope)) {
+      const result: ToolResultEnvelope = {
+        toolName: definition.name,
+        status: "failed",
+        error: "Only the Fullstack Agent can execute write tools; reviewer, tester, and read-only roles must report findings through artifacts.",
+        metadata: { truncated: false },
+      };
+      this.recordAudit(definition.name, "failed");
+      return result;
+    }
 
-    this.options.onEvent?.("tool.started", { toolName: definition.name });
+    this.options.onEvent?.("tool.started", { toolName: definition.name, tool: definition.name });
     const result = await this.dispatch(definition.name, parsed.value as ToolInputMap[ToolName], permissionLevel);
     this.options.onEvent?.("tool.finished", {
       toolName: definition.name,
+      tool: definition.name,
       status: result.status,
       metadata: result.metadata,
     });
@@ -122,6 +134,7 @@ export class ToolRunner {
           onEvent: this.options.onEvent,
         });
       case "apply_patch":
+        return executeApplyPatchTool({ repoRoot: this.options.repoRoot, input: input as ToolInputMap["apply_patch"] });
       case "semantic_search":
       case "graph_find_symbol":
       case "graph_find_references":
@@ -178,6 +191,12 @@ function evaluateToolPermission(
     requiresPermission: true,
     reason: `Tool '${definition.name}' requires permission before automatic execution.`,
   };
+}
+
+function isWriteOwner(envelope: ExecutionEnvelopeState): boolean {
+  return envelope.role === "implementer"
+    || envelope.agentId === "implementer"
+    || envelope.agentId === "fullstack_agent";
 }
 
 function failedResult(toolName: ToolName, error: string): ToolResultEnvelope {

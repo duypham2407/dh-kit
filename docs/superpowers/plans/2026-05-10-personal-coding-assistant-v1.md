@@ -220,13 +220,22 @@ Runtime rules:
 
 **Tasks:**
 
-- [ ] Integrate audited tool runner into model tool-call loop.
-- [ ] Keep permission defaults conservative.
-- [ ] Add TUI tool result rendering with file diff summaries.
-- [ ] Add apply-patch execution only through existing permission/audit path.
-- [ ] Keep webfetch/websearch optional and disabled by default.
-- [ ] Keep write tools available to Fullstack Agent only by default.
-- [ ] Require Code Reviewer and QA Agent to report findings through artifacts, not direct mutation.
+- [x] Integrate audited tool runner into model tool-call loop.
+- [x] Keep permission defaults conservative.
+- [x] Add TUI tool result rendering with file diff summaries.
+- [x] Add apply-patch execution only through existing permission/audit path.
+- [x] Keep webfetch/websearch optional and disabled by default.
+- [x] Keep write tools available to Fullstack Agent only by default.
+- [x] Require Code Reviewer and QA Agent to report findings through artifacts, not direct mutation.
+
+**Implemented slice:**
+
+- Provider tool calls in `dh run` execute through `ToolRunner`, preserving audit records and normalized runtime events.
+- `apply_patch` is executable only through the same permissioned/audited tool path as other local tools.
+- Write-class tools remain permission-gated and are hard-blocked for reviewer/tester/read-only roles even with explicit allow overrides.
+- `write`, `edit`, and `apply_patch` return diff summary metadata with changed files, additions, deletions, and paths.
+- TUI renders tool diff summaries in event output.
+- `webfetch` and `websearch` remain absent from the core tool catalog by default.
 
 **Acceptance Gates:**
 

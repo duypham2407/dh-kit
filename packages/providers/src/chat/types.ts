@@ -23,10 +23,17 @@ export type ChatRequest = {
   responseFormat?: { type: "json_object" } | { type: "text" };
 };
 
+export type ChatToolCall = {
+  id?: string;
+  name: string;
+  input: unknown;
+};
+
 export type ChatResponse = {
   content: string;
   model: string;
   finishReason: "stop" | "length" | "content_filter" | "tool_calls" | "unknown";
+  toolCalls?: ChatToolCall[];
   usage: {
     promptTokens: number;
     completionTokens: number;

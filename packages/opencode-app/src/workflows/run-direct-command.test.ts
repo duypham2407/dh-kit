@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { closeDhDatabase } from "../../../storage/src/sqlite/db.js";
 import { SessionRuntimeEventsRepo } from "../../../storage/src/sqlite/repositories/session-runtime-events-repo.js";
-import type { ChatProvider } from "../../../providers/src/chat/types.js";
+import type { ChatProvider, ChatResponse } from "../../../providers/src/chat/types.js";
 import { AgentConfigService } from "../agent/agent-config-service.js";
 import { runDirectCommand } from "./run-direct-command.js";
 
@@ -70,6 +70,58 @@ describe("runDirectCommand", () => {
     ]);
     const persisted = new SessionRuntimeEventsRepo(repo).listBySession(report.sessionId);
     expect(persisted.some((event) => event.eventType === "text.delta")).toBe(true);
+  });
+
+  it("runs provider tool calls through the audited tool runner before the final response", async () => {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, "README.md"), "Project readme");
+    const prompts: string[] = [];
+    const provider: ChatProvider = {
+      providerId: "mock",
+      async chat(request) {
+        prompts.push(request.messages.map((message) => message.content).join("\n"));
+        if (prompts.length === 1) {
+          return {
+            content: "",
+            model: "mock",
+            finishReason: "tool_calls",
+            usage: { promptTokens: 5, completionTokens: 0, totalTokens: 5 },
+            toolCalls: [{ id: "call-1", name: "read", input: { path: "README.md" } }],
+          } as ChatResponse & { toolCalls: Array<{ id: string; name: string; input: unknown }> };
+        }
+        return {
+          content: "read Project readme",
+          model: "mock",
+          finishReason: "stop",
+          usage: { promptTokens: 12, completionTokens: 3, totalTokens: 15 },
+        };
+      },
+    };
+
+    const report = await runDirectCommand({
+      message: "inspect readme",
+      repoRoot: repo,
+      provider,
+      model: "mock/run",
+    });
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Tool result for read");
+    expect(prompts[1]).toContain("Project readme");
+    expect(report.text).toBe("read Project readme");
+    expect(report.events.map((event) => event.type)).toEqual([
+      "session.created",
+      "message.started",
+      "tool.started",
+      "tool.finished",
+      "text.delta",
+      "message.finished",
+      "session.finished",
+    ]);
+    expect(report.events.find((event) => event.type === "tool.finished")?.payload).toMatchObject({
+      toolName: "read",
+      status: "succeeded",
+    });
   });
 
   it("ingests UTF-8 text file attachments into prompt context and event metadata", async () => {

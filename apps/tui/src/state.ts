@@ -293,7 +293,7 @@ function applyRunEvent(state: TuiState, event: RunEvent): TuiState {
       ...base,
       permissionPrompt: {
         sessionId: event.sessionId,
-        tool: stringPayload(event.payload.tool) ?? "unknown",
+        tool: toolPayload(event.payload) ?? "unknown",
         reason: stringPayload(event.payload.reason),
       },
       eventLog: [...base.eventLog, toEventLogItem(event)],
@@ -302,7 +302,7 @@ function applyRunEvent(state: TuiState, event: RunEvent): TuiState {
 
   if (event.type === "tool.started" || event.type === "tool.delta" || event.type === "tool.finished") {
     const path = stringPayload(event.payload.path);
-    const tool = stringPayload(event.payload.tool);
+    const tool = toolPayload(event.payload);
     return {
       ...base,
       contextItems: path ? upsertContextItem(base.contextItems, {
@@ -340,9 +340,10 @@ function toEventLogItem(event: RunEvent): TuiEventLogItem {
 }
 
 function eventLabel(event: RunEvent): string {
-  const tool = stringPayload(event.payload.tool);
+  const tool = toolPayload(event.payload);
   const path = stringPayload(event.payload.path);
-  if (tool) return `${event.type}: ${path ? `${tool} ${path}` : tool}`;
+  const diff = diffSummaryLabel(event.payload.metadata);
+  if (tool) return `${event.type}: ${path ? `${tool} ${path}` : tool}${diff ? ` ${diff}` : ""}`;
   return event.type;
 }
 
@@ -382,7 +383,7 @@ function findPermissionPrompt(report: RunDirectReport): TuiPermissionPrompt | un
   if (!event) return undefined;
   return {
     sessionId: event.sessionId,
-    tool: stringPayload(event.payload.tool) ?? "unknown",
+    tool: toolPayload(event.payload) ?? "unknown",
     reason: stringPayload(event.payload.reason),
   };
 }
@@ -393,4 +394,32 @@ function isPermissionEvent(event: RunEvent): boolean {
 
 function stringPayload(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function toolPayload(payload: Record<string, unknown>): string | undefined {
+  return stringPayload(payload.tool) ?? stringPayload(payload.toolName);
+}
+
+function diffSummaryLabel(metadata: unknown): string | undefined {
+  if (!metadata || typeof metadata !== "object" || !("diffSummary" in metadata)) return undefined;
+  const diffSummary = (metadata as { diffSummary?: unknown }).diffSummary;
+  if (!diffSummary || typeof diffSummary !== "object") return undefined;
+  const values = diffSummary as {
+    filesChanged?: unknown;
+    additions?: unknown;
+    deletions?: unknown;
+    paths?: unknown;
+  };
+  if (
+    typeof values.filesChanged !== "number"
+    || typeof values.additions !== "number"
+    || typeof values.deletions !== "number"
+    || !Array.isArray(values.paths)
+  ) {
+    return undefined;
+  }
+  const paths = values.paths.filter((item): item is string => typeof item === "string");
+  const fileWord = values.filesChanged === 1 ? "file changed" : "files changed";
+  const pathList = paths.length > 0 ? ` (${paths.slice(0, 3).join(", ")})` : "";
+  return `diff: ${values.filesChanged} ${fileWord}, +${values.additions} -${values.deletions}${pathList}`;
 }

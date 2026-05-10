@@ -66,6 +66,67 @@ describe("TUI state reducer", () => {
     });
   });
 
+  it("applies streamed text deltas and tool events", () => {
+    let state = createInitialTuiState({ serverUrl: "http://127.0.0.1:3000" });
+    state = reduceTuiState(state, { type: "run.started", message: "inspect auth" });
+    state = reduceTuiState(state, {
+      type: "run.event",
+      event: {
+        type: "text.delta",
+        sessionId: "session-1",
+        sequence: 1,
+        timestamp: "2026-05-10T00:00:00.000Z",
+        payload: { text: "first " },
+      },
+    });
+    state = reduceTuiState(state, {
+      type: "run.event",
+      event: {
+        type: "tool.started",
+        sessionId: "session-1",
+        sequence: 2,
+        timestamp: "2026-05-10T00:00:00.001Z",
+        payload: { tool: "read", path: "src/auth.ts" },
+      },
+    });
+    state = reduceTuiState(state, {
+      type: "run.event",
+      event: {
+        type: "text.delta",
+        sessionId: "session-1",
+        sequence: 3,
+        timestamp: "2026-05-10T00:00:00.002Z",
+        payload: { text: "second" },
+      },
+    });
+
+    expect(state.transcript).toEqual([
+      { role: "user", text: "inspect auth", sessionId: undefined },
+      { role: "assistant", text: "first second", sessionId: "session-1" },
+    ]);
+    expect(state.currentSessionId).toBe("session-1");
+    expect(state.eventLog).toEqual([
+      { type: "tool.started", sessionId: "session-1", label: "tool.started: read src/auth.ts" },
+    ]);
+  });
+
+  it("returns to connected state when a streamed message finishes", () => {
+    let state = createInitialTuiState({ serverUrl: "http://127.0.0.1:3000" });
+    state = reduceTuiState(state, { type: "run.started", message: "inspect auth" });
+    state = reduceTuiState(state, {
+      type: "run.event",
+      event: {
+        type: "message.finished",
+        sessionId: "session-1",
+        sequence: 1,
+        timestamp: "2026-05-10T00:00:00.000Z",
+        payload: {},
+      },
+    });
+
+    expect(state.status).toBe("connected");
+  });
+
   it("enters read-only fallback when the server cannot be reached", () => {
     const initial = createInitialTuiState({ serverUrl: "http://127.0.0.1:9" });
     const state = reduceTuiState(initial, { type: "server.failed", reason: "connection refused" });

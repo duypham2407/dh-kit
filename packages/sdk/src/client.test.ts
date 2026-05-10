@@ -54,4 +54,50 @@ describe("DhClient", () => {
     await expect(client.sessions()).resolves.toEqual({ sessions: [] });
     await expect(client.run({ message: "hello", repoRoot: "/ignored" })).resolves.toMatchObject({ text: "hello" });
   });
+
+  it("streams run events from the server", async () => {
+    const started = await startDhServer({
+      repoRoot: makeRepo(),
+      host: "127.0.0.1",
+      port: 0,
+      runDirect: async () => ({
+        exitCode: 0,
+        command: "run",
+        sessionId: "s1",
+        model: "openai/gpt-5",
+        agentId: "quick-agent",
+        text: "hello",
+        events: [
+          {
+            type: "text.delta",
+            sessionId: "s1",
+            sequence: 1,
+            timestamp: "2026-05-10T00:00:00.000Z",
+            payload: { text: "hello" },
+          },
+          {
+            type: "tool.started",
+            sessionId: "s1",
+            sequence: 2,
+            timestamp: "2026-05-10T00:00:00.001Z",
+            payload: { tool: "read" },
+          },
+        ],
+        files: [],
+        runtimeAuthority: "typescript_worker",
+        finalStatus: "clean_success",
+        degradedReason: null,
+      }),
+    });
+    servers.push(started.server);
+    const client = new DhClient({ baseUrl: started.url });
+
+    const events = [];
+    for await (const event of client.runStream({ message: "hello" })) events.push(event);
+
+    expect(events).toEqual([
+      expect.objectContaining({ type: "text.delta", payload: { text: "hello" } }),
+      expect.objectContaining({ type: "tool.started", payload: { tool: "read" } }),
+    ]);
+  });
 });

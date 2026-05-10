@@ -35,6 +35,13 @@ export function renderTuiScreen(state: TuiState): string {
     );
   }
 
+  lines.push("", "events:");
+  if (state.eventLog.length === 0) {
+    lines.push("  none");
+  } else {
+    for (const event of state.eventLog.slice(-8)) lines.push(`  ${event.label}`);
+  }
+
   if (state.readOnlyReason) {
     lines.push("", `read-only: ${state.readOnlyReason}`);
   }

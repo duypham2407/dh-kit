@@ -44,6 +44,17 @@ export function createDhServer(options: DhServerOptions): Server {
         writeJson(response, 200, report);
         return;
       }
+      if (request.method === "POST" && url.pathname === "/command/run/stream") {
+        const body = await readJsonBody(request);
+        const message = typeof body["message"] === "string" ? body["message"] : "";
+        const report = await runDirect({
+          ...body,
+          message,
+          repoRoot: options.repoRoot,
+        } as RunDirectInput);
+        writeNdjson(response, 200, report.events);
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/sessions") {
         writeJson(response, 200, { sessions: [] });
         return;
@@ -89,4 +100,10 @@ async function readJsonBody(request: IncomingMessage): Promise<Record<string, un
 function writeJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.writeHead(statusCode, { "content-type": "application/json" });
   response.end(JSON.stringify(payload));
+}
+
+function writeNdjson(response: ServerResponse, statusCode: number, payloads: unknown[]): void {
+  response.writeHead(statusCode, { "content-type": "application/x-ndjson" });
+  for (const payload of payloads) response.write(`${JSON.stringify(payload)}\n`);
+  response.end();
 }

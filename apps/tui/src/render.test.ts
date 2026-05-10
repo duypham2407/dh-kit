@@ -58,6 +58,26 @@ describe("renderTuiScreen", () => {
     expect(output).toContain("modify file");
   });
 
+  it("renders streaming runtime events", () => {
+    let state = connectedState();
+    state = reduceTuiState(state, {
+      type: "run.event",
+      event: {
+        type: "tool.started",
+        sessionId: "session-1",
+        sequence: 1,
+        timestamp: "2026-05-10T00:00:00.000Z",
+        payload: { tool: "read", path: "README.md" },
+      },
+    });
+
+    const output = renderTuiScreen(state);
+
+    expect(output).toContain("events:");
+    expect(output).toContain("tool.started: read README.md");
+  });
+
+
   it("renders read-only fallback", () => {
     const state = reduceTuiState(
       createInitialTuiState({ serverUrl: "http://127.0.0.1:9" }),

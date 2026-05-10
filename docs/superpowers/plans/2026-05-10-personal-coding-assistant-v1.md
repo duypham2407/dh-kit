@@ -105,13 +105,20 @@ Runtime rules:
 
 **Tasks:**
 
-- [ ] Add real event streaming from `dh serve` to TUI.
+- [x] Add event streaming from `dh serve` to TUI through `/command/run/stream` NDJSON and SDK `runStream()`.
 - [ ] Render streaming text, tool start/delta/finish, runtime degradation, and session status.
 - [ ] Add interactive permission approval/deny flow.
 - [ ] Add session switch, resume, fork, delete shortcuts.
 - [ ] Add model and agent switch dialogs.
 - [ ] Add file/context panel showing selected evidence.
 - [ ] Keep non-interactive fallback testable with reducer/controller tests.
+
+**Implemented slice:**
+
+- `dh serve` exposes a local NDJSON run-event stream at `/command/run/stream`.
+- `packages/sdk` exposes `DhClient.runStream()` as an async iterator.
+- TUI controller prefers stream mode when available and falls back to report mode otherwise.
+- TUI state/rendering now handles streamed `text.delta`, tool events, permission events, and message/session finish status.
 
 **Acceptance Gates:**
 

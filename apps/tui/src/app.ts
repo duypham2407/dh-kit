@@ -1,4 +1,4 @@
-import type { RunDirectInput, RunDirectReport } from "../../../packages/shared/src/types/run.js";
+import type { RunDirectInput, RunDirectReport, RunEvent } from "../../../packages/shared/src/types/run.js";
 import { renderTuiScreen } from "./render.js";
 import {
   createInitialTuiState,
@@ -11,6 +11,7 @@ export type TuiAppClient = {
   health: () => Promise<{ ok: boolean; product: string }>;
   sessions: () => Promise<{ sessions: TuiSessionSummary[] }>;
   run: (input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }) => Promise<RunDirectReport>;
+  runStream?: (input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }) => AsyncIterable<RunEvent>;
 };
 
 export type TuiApp = {
@@ -39,13 +40,20 @@ export function createTuiApp(options: { serverUrl: string; client: TuiAppClient 
       if (!trimmed || state.status === "read_only") return;
       state = reduceTuiState(state, { type: "run.started", message: trimmed });
       try {
-        const report = await options.client.run({
+        const input = {
           message: trimmed,
           sessionId: state.currentSessionId,
           model: state.model,
           agentId: state.agentId,
-        });
-        state = reduceTuiState(state, { type: "run.reported", report });
+        };
+        if (options.client.runStream) {
+          for await (const event of options.client.runStream(input)) {
+            state = reduceTuiState(state, { type: "run.event", event });
+          }
+        } else {
+          const report = await options.client.run(input);
+          state = reduceTuiState(state, { type: "run.reported", report });
+        }
       } catch (error) {
         state = reduceTuiState(state, { type: "server.failed", reason: errorMessage(error) });
       }

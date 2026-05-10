@@ -84,6 +84,67 @@ describe("createTuiApp", () => {
     ]);
   });
 
+  it("streams prompt events into transcript and event log when available", async () => {
+    async function* runStream() {
+      yield {
+        type: "message.started" as const,
+        sessionId: "session-1",
+        sequence: 1,
+        timestamp: "2026-05-10T00:00:00.000Z",
+        payload: {},
+      };
+      yield {
+        type: "text.delta" as const,
+        sessionId: "session-1",
+        sequence: 2,
+        timestamp: "2026-05-10T00:00:00.001Z",
+        payload: { text: "streamed " },
+      };
+      yield {
+        type: "tool.started" as const,
+        sessionId: "session-1",
+        sequence: 3,
+        timestamp: "2026-05-10T00:00:00.002Z",
+        payload: { tool: "read", path: "README.md" },
+      };
+      yield {
+        type: "text.delta" as const,
+        sessionId: "session-1",
+        sequence: 4,
+        timestamp: "2026-05-10T00:00:00.003Z",
+        payload: { text: "answer" },
+      };
+      yield {
+        type: "message.finished" as const,
+        sessionId: "session-1",
+        sequence: 5,
+        timestamp: "2026-05-10T00:00:00.004Z",
+        payload: { finalStatus: "clean_success" },
+      };
+    }
+    const run = vi.fn(async () => makeReport({ text: "non-stream fallback" }));
+    const app = createTuiApp({
+      serverUrl: "http://127.0.0.1:3000",
+      client: makeClient({ run, runStream }),
+    });
+    await app.attach();
+
+    await app.submitPrompt("summarize repo");
+
+    expect(run).not.toHaveBeenCalled();
+    expect(app.getState().transcript).toEqual([
+      { role: "user", text: "summarize repo", sessionId: "session-1" },
+      { role: "assistant", text: "streamed answer", sessionId: "session-1" },
+    ]);
+    expect(app.getState().eventLog).toEqual([
+      { type: "message.started", sessionId: "session-1", label: "message.started" },
+      { type: "tool.started", sessionId: "session-1", label: "tool.started: read README.md" },
+      { type: "message.finished", sessionId: "session-1", label: "message.finished" },
+    ]);
+    expect(app.render()).toContain("events:");
+    expect(app.render()).toContain("tool.started: read README.md");
+  });
+
   it("ignores empty prompts", async () => {
     const run = vi.fn(async () => makeReport());
     const app = createTuiApp({

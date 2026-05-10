@@ -72,6 +72,65 @@ describe("DH server", () => {
     expect(await response.json()).toMatchObject({ text: "ran hello", sessionId: "s1" });
   });
 
+  it("streams run events as newline-delimited JSON", async () => {
+    const started = await startDhServer({
+      repoRoot: makeRepo(),
+      host: "127.0.0.1",
+      port: 0,
+      runDirect: async (input) => ({
+        exitCode: 0,
+        command: "run",
+        sessionId: "s1",
+        model: "openai/gpt-5",
+        agentId: "quick-agent",
+        text: `ran ${input.message}`,
+        events: [
+          {
+            type: "message.started",
+            sessionId: "s1",
+            sequence: 1,
+            timestamp: "2026-05-10T00:00:00.000Z",
+            payload: {},
+          },
+          {
+            type: "text.delta",
+            sessionId: "s1",
+            sequence: 2,
+            timestamp: "2026-05-10T00:00:00.001Z",
+            payload: { text: "ran hello" },
+          },
+          {
+            type: "message.finished",
+            sessionId: "s1",
+            sequence: 3,
+            timestamp: "2026-05-10T00:00:00.002Z",
+            payload: { finalStatus: "clean_success" },
+          },
+        ],
+        files: [],
+        runtimeAuthority: "typescript_worker",
+        finalStatus: "clean_success",
+        degradedReason: null,
+      }),
+    });
+    servers.push(started.server);
+
+    const response = await fetch(`${started.url}/command/run/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: "hello" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/x-ndjson");
+    const lines = (await response.text()).trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines).toEqual([
+      expect.objectContaining({ type: "message.started", sequence: 1 }),
+      expect.objectContaining({ type: "text.delta", sequence: 2, payload: { text: "ran hello" } }),
+      expect.objectContaining({ type: "message.finished", sequence: 3 }),
+    ]);
+  });
+
   it("requires a password for non-localhost bind", () => {
     expect(() => createDhServer({ repoRoot: makeRepo(), host: "0.0.0.0" }))
       .toThrow("dh serve requires --password when binding outside localhost.");

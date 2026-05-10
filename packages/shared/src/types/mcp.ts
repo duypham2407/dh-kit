@@ -71,3 +71,26 @@ export type McpListReport = {
 export type McpAuthListReport = {
   auth: McpAuthPublicRecord[];
 };
+
+export type McpDebugReport = {
+  name: string;
+  source: McpServerSource;
+  enabled: boolean;
+  authStatus: McpLifecycleStatus;
+  description?: string;
+  requiresAuth?: boolean;
+  capabilities: string[];
+  toolCount: number;
+  resourceCount: number;
+  promptCount: number;
+  launch?: {
+    command: string;
+    args: string[];
+    env: Record<string, "[REDACTED_SECRET]">;
+  };
+  runtime: {
+    state: "not_launched";
+    reason: string;
+  };
+  lastFailure?: string;
+};

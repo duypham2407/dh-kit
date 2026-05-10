@@ -57,6 +57,23 @@ describe("worker bundle packaging", () => {
     expect(manifest.checksumSha256).toBe(createHash("sha256").update(workerBytes).digest("hex"));
   });
 
+  it("builds a worker bundle that Node can start without a dynamic require crash", () => {
+    const outDir = makeTempDir();
+    const scriptPath = path.join(repoRoot, "scripts", "build-worker-bundle.sh");
+
+    execFileSync("sh", [scriptPath, "--out-dir", outDir], {
+      cwd: repoRoot,
+      stdio: "pipe",
+    });
+
+    const workerPath = path.join(outDir, "worker.mjs");
+    expect(() => execFileSync(process.execPath, [workerPath], {
+      cwd: repoRoot,
+      env: { ...process.env, DH_DISABLE_MODELS_FETCH: "1" },
+      stdio: "pipe",
+    })).not.toThrow();
+  });
+
   it("packages and installs the worker bundle next to the Rust host binary for release-directory installs", () => {
     const workerOutDir = makeTempDir();
     const sourceDir = makeTempDir();
@@ -87,6 +104,38 @@ describe("worker bundle packaging", () => {
     expect(fs.existsSync(path.join(releaseDir, "worker-manifest.json"))).toBe(true);
     expect(fs.existsSync(path.join(installDir, "ts-worker", "worker.mjs"))).toBe(true);
     expect(fs.existsSync(path.join(installDir, "ts-worker", "manifest.json"))).toBe(true);
+  });
+
+  it("removes stale release artifacts before packaging the current source directory", () => {
+    const workerOutDir = makeTempDir();
+    const sourceDir = makeTempDir();
+    const releaseDir = makeTempDir();
+    const binaryName = `dh-${releasePlatform()}-${releaseArch()}`;
+    const binaryPath = path.join(sourceDir, binaryName);
+    const staleBinaryPath = path.join(releaseDir, "dh-linux-amd64");
+
+    execFileSync("sh", [path.join(repoRoot, "scripts", "build-worker-bundle.sh"), "--out-dir", workerOutDir], {
+      cwd: repoRoot,
+      stdio: "pipe",
+    });
+    fs.writeFileSync(binaryPath, "#!/usr/bin/env sh\necho 'fresh dh';\n");
+    fs.chmodSync(binaryPath, 0o755);
+    fs.writeFileSync(staleBinaryPath, "#!/usr/bin/env sh\necho 'stale dh';\n");
+    fs.chmodSync(staleBinaryPath, 0o755);
+
+    execFileSync("sh", [path.join(repoRoot, "scripts", "package-release.sh"), sourceDir, releaseDir, "test"], {
+      cwd: repoRoot,
+      env: { ...process.env, DH_WORKER_BUNDLE_DIR: workerOutDir },
+      stdio: "pipe",
+    });
+
+    const manifest = JSON.parse(fs.readFileSync(path.join(releaseDir, "manifest.json"), "utf8")) as {
+      files: Array<{ name: string }>;
+    };
+
+    expect(fs.existsSync(path.join(releaseDir, binaryName))).toBe(true);
+    expect(fs.existsSync(staleBinaryPath)).toBe(false);
+    expect(manifest.files.map((entry) => entry.name)).not.toContain("dh-linux-amd64");
   });
 
   it("copies adjacent worker metadata on direct binary install when release sidecars are present", () => {

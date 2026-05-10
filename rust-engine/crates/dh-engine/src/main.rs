@@ -881,7 +881,8 @@ fn knowledge_command_bundle_search_roots(workspace: &std::path::Path) -> Vec<Pat
 
 fn handle_legacy_cli_compatibility(args: &[String]) -> Result<bool> {
     if args.is_empty() {
-        return Ok(false);
+        print_first_run_onboarding();
+        return Ok(true);
     }
 
     match args[0].as_str() {
@@ -904,4 +905,34 @@ fn handle_legacy_cli_compatibility(args: &[String]) -> Result<bool> {
         }
         _ => Ok(false),
     }
+}
+
+fn print_first_run_onboarding() {
+    println!("dh <command> [args]");
+    println!();
+    println!("Commands:");
+    println!("  status        Inspect local workspace/index/database state");
+    println!("  index         Build or refresh the local repository index");
+    println!("  ask <query>   Ask a bounded knowledge question about the codebase");
+    println!("  explain <id>  Explain a symbol, file, or module");
+    println!("  trace <query> Trace support is currently bounded and may return unsupported");
+    println!("  quick <task>  Run a Quick-lane workflow");
+    println!("  --help        Show the full command list");
+    println!("  --version     Print the installed binary version");
+    println!();
+    println!("version: dh {}", env!("CARGO_PKG_VERSION"));
+    println!("surface: CLI first-run onboarding");
+    println!("condition: ready");
+    println!("why: dh was launched without a command, so no workflow was started");
+    println!("works: command discovery, workspace status, indexing, and bounded knowledge commands are available");
+    println!("limited: no interactive session is started by the no-arg command; provider-backed quality depends on local config and index state");
+    println!("next:");
+    println!("  1. dh --help");
+    println!("  2. dh status");
+    println!("  3. dh index");
+    println!("  4. dh ask \"how does this project work?\"");
+    println!();
+    println!("first-run onboarding:");
+    println!("  run dh --help for the complete command surface.");
+    println!("  run dh status and dh index inside the repository you want to analyze.");
 }

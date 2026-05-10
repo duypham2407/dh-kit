@@ -12,6 +12,8 @@ if [ ! -d "$SOURCE_DIR" ]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
+rm -f "$OUTPUT_DIR"/dh-* "$OUTPUT_DIR"/worker.mjs "$OUTPUT_DIR"/worker-manifest.json "$OUTPUT_DIR"/SHA256SUMS "$OUTPUT_DIR"/manifest.json
+rm -rf "$OUTPUT_DIR"/ts-worker
 
 found=0
 for file in "$SOURCE_DIR"/dh-*; do

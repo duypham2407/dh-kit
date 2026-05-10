@@ -13,7 +13,10 @@ use serde_json::{json, Value};
 use std::io::{self, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
+use std::sync::{
+    mpsc::{self, Receiver, RecvTimeoutError, TryRecvError},
+    Arc, Mutex,
+};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use std::{error::Error, fmt};
@@ -24,6 +27,7 @@ const DEFAULT_HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const POST_EXIT_DRAIN_TIMEOUT: Duration = Duration::from_millis(100);
+const MAX_STDERR_TAIL_BYTES: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerSupervisorConfig {
@@ -127,6 +131,7 @@ struct WorkerProcess {
     stdin: ChildStdin,
     messages: Receiver<WorkerMessage>,
     _stdout_reader: JoinHandle<()>,
+    stderr_tail: Arc<Mutex<Vec<u8>>>,
     _stderr_drain: Option<JoinHandle<()>>,
 }
 
@@ -268,13 +273,20 @@ impl WorkerSupervisor {
 
         let stderr = child.stderr.take();
         let (messages, stdout_reader) = spawn_stdout_reader(stdout);
-        let stderr_drain = stderr.map(spawn_stderr_drain);
+        let (stderr_tail, stderr_drain) = match stderr {
+            Some(stderr) => {
+                let (tail, handle) = spawn_stderr_capture(stderr);
+                (tail, Some(handle))
+            }
+            None => (Arc::new(Mutex::new(Vec::new())), None),
+        };
 
         self.process = Some(WorkerProcess {
             child,
             stdin,
             messages,
             _stdout_reader: stdout_reader,
+            stderr_tail,
             _stderr_drain: stderr_drain,
         });
 
@@ -987,6 +999,7 @@ impl WorkerSupervisor {
                 TimeoutClass::None,
             ),
         };
+        let message = self.with_worker_stderr_excerpt(message);
 
         let report = report_for(
             self.report.platform.clone(),
@@ -1054,6 +1067,21 @@ impl WorkerSupervisor {
             report,
         }
     }
+
+    fn with_worker_stderr_excerpt(&self, message: String) -> String {
+        let Some(process) = self.process.as_ref() else {
+            return message;
+        };
+        let Ok(tail) = process.stderr_tail.lock() else {
+            return message;
+        };
+        let excerpt = String::from_utf8_lossy(&tail).trim().to_string();
+        if excerpt.is_empty() {
+            message
+        } else {
+            format!("{message}; worker stderr: {excerpt}")
+        }
+    }
 }
 
 impl Drop for WorkerSupervisor {
@@ -1094,10 +1122,31 @@ fn spawn_stdout_reader(
     (rx, handle)
 }
 
-fn spawn_stderr_drain(mut stderr: impl Read + Send + 'static) -> JoinHandle<()> {
-    thread::spawn(move || {
-        let _ = io::copy(&mut stderr, &mut io::sink());
-    })
+fn spawn_stderr_capture(
+    mut stderr: impl Read + Send + 'static,
+) -> (Arc<Mutex<Vec<u8>>>, JoinHandle<()>) {
+    let tail = Arc::new(Mutex::new(Vec::new()));
+    let thread_tail = Arc::clone(&tail);
+    let handle = thread::spawn(move || {
+        let mut buf = [0_u8; 1024];
+        loop {
+            match stderr.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let Ok(mut tail) = thread_tail.lock() else {
+                        break;
+                    };
+                    tail.extend_from_slice(&buf[..n]);
+                    if tail.len() > MAX_STDERR_TAIL_BYTES {
+                        let excess = tail.len() - MAX_STDERR_TAIL_BYTES;
+                        tail.drain(..excess);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    (tail, handle)
 }
 
 fn worker_protocol_matches(result: &Value, expected_protocol_version: &str) -> bool {
@@ -1332,7 +1381,7 @@ sleep 0.05
         let launch = RuntimeLaunchRequest::new(runtime, worker).with_platform("linux");
         let config = WorkerSupervisorConfig::new(launch, temp.path())
             .with_ready_timeout(Duration::from_secs(3))
-            .with_health_timeout(Duration::from_secs(1))
+            .with_health_timeout(Duration::from_secs(5))
             .with_shutdown_timeout(Duration::from_secs(1));
         let mut supervisor = WorkerSupervisor::new(config);
 
@@ -1383,6 +1432,37 @@ sleep 2
         assert_eq!(err.report.failure_phase, FailurePhase::Startup);
         assert_eq!(err.report.timeout_class, TimeoutClass::ReadyTimeout);
         assert_eq!(err.report.final_status, FinalStatus::StartupFailed);
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_failure_includes_worker_stderr_excerpt() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let runtime = fake_runtime(&temp)?;
+        let worker = worker_fixture(
+            &temp,
+            r#"#!/bin/sh
+printf '%s\n' 'fixture startup crash: dynamic require path' >&2
+sleep 0.05
+exit 42
+"#,
+        )?;
+
+        let launch = RuntimeLaunchRequest::new(runtime, worker).with_platform("linux");
+        let config = WorkerSupervisorConfig::new(launch, temp.path())
+            .with_ready_timeout(Duration::from_secs(3));
+        let mut supervisor = WorkerSupervisor::new(config);
+
+        let err = supervisor
+            .launch()
+            .expect_err("worker startup crash should fail launch");
+        assert_eq!(err.kind, WorkerSupervisorErrorKind::WorkerProtocolError);
+        assert!(err.message.contains("worker stdout closed"));
+        assert!(err
+            .message
+            .contains("fixture startup crash: dynamic require path"));
 
         Ok(())
     }

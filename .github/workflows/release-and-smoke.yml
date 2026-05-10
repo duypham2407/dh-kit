@@ -66,9 +66,9 @@ jobs:
         run: cargo test --workspace
         working-directory: rust-engine
 
-  # ---------- Cross-compile + package ----------
-  build-release:
-    name: Build release artifacts
+  # ---------- Build worker bundle ----------
+  build-worker-bundle:
+    name: Build TypeScript worker bundle
     needs: [ts-check, rust-test]
     runs-on: ubuntu-latest
     steps:
@@ -83,13 +83,77 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build worker bundle
+        run: make worker-bundle
+
+      - name: Upload worker bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-bundle
+          path: dist/ts-worker/
+          retention-days: 30
+
+  # ---------- Native binary build matrix ----------
+  build-binaries:
+    name: Build ${{ matrix.asset }}
+    needs: [ts-check, rust-test]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset: dh-linux-amd64
+            runner: ubuntu-24.04
+          - asset: dh-linux-arm64
+            runner: ubuntu-24.04-arm
+          - asset: dh-darwin-amd64
+            runner: macos-15-intel
+          - asset: dh-darwin-arm64
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.94.1
           components: rustfmt,clippy
 
-      - name: Build release artifacts
+      - name: Build release binary
+        run: make rust-build-release
+
+      - name: Verify expected asset was produced
+        run: test -x "dist/rust-engine/releases/${{ matrix.asset }}"
+
+      - name: Upload release binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binary-${{ matrix.asset }}
+          path: dist/rust-engine/releases/${{ matrix.asset }}
+          retention-days: 30
+
+  # ---------- Package + verify ----------
+  package-release:
+    name: Package release artifacts
+    needs: [build-worker-bundle, build-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download release binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-binary-*
+          path: dist/rust-engine/releases/
+          merge-multiple: true
+
+      - name: Download worker bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: worker-bundle
+          path: dist/ts-worker/
+
+      - name: Package release artifacts
         run: |
           # Extract version from tag (e.g. v0.1.0 -> 0.1.0), default to "dev"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
@@ -98,7 +162,7 @@ jobs:
             VERSION="dev"
           fi
           echo "Building with VERSION=$VERSION"
-          make release-all VERSION="$VERSION"
+          make package-release VERSION="$VERSION"
 
       - name: Verify release artifacts
         run: scripts/verify-release-artifacts.sh dist/releases
@@ -128,7 +192,7 @@ jobs:
   # ---------- Smoke test (linux) ----------
   smoke-linux:
     name: Smoke test (Linux)
-    needs: [build-release]
+    needs: [package-release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -200,7 +264,7 @@ jobs:
   # ---------- Smoke test (macOS) ----------
   smoke-macos:
     name: Smoke test (macOS)
-    needs: [build-release]
+    needs: [package-release]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

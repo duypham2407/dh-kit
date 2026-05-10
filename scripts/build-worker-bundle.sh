@@ -60,6 +60,7 @@ npx esbuild "$REPO_ROOT/packages/opencode-app/src/worker/worker-main.ts" \
   --platform=node \
   --target=node22 \
   --format=esm \
+  --banner:js='import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' \
   --outfile="$OUT_DIR/worker.mjs"
 
 node -e '

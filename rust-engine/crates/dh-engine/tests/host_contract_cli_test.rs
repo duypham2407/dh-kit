@@ -116,6 +116,28 @@ fn shipped_cli_help_does_not_advertise_doctor_command() {
 }
 
 #[test]
+fn no_arg_cli_prints_first_run_onboarding_without_usage_error() {
+    let result = Command::new(engine_bin())
+        .output()
+        .expect("dh-engine no-arg command should execute");
+
+    let stdout = String::from_utf8_lossy(&result.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&result.stderr).to_string();
+    assert!(
+        result.status.success(),
+        "no-arg command should succeed as onboarding\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(stderr.is_empty(), "no-arg onboarding should not write stderr");
+    assert!(stdout.contains("first-run onboarding"));
+    assert!(stdout.contains("dh --help"));
+    assert!(stdout.contains("dh status"));
+    assert!(stdout.contains("dh index"));
+    assert!(stdout.contains("dh ask"));
+}
+
+#[test]
 fn first_wave_command_without_worker_bundle_is_rust_classified_startup_failure() {
     let result = Command::new(engine_bin())
         .args(["ask", "where is runKnowledgeCommand?", "--json"])

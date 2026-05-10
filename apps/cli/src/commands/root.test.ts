@@ -40,6 +40,7 @@ describe("runCli help", () => {
     expect(output).toContain("models [provider] [--refresh] [--verbose] [--json]");
     expect(output).toContain("mcp <list|add|auth|logout|debug> [options]");
     expect(output).toContain("agent <list|create> [options]");
+    expect(output).toContain("lsp diagnostics --file <path> [--json]");
     expect(output).toContain("ask <question> [--json]     (Rust-hosted first-wave knowledge path)");
     expect(output).toContain("explain <symbol> [--json]   (Rust-hosted first-wave knowledge path)");
     expect(output).toContain("trace <target> [--json]     (Rust-hosted first-wave lifecycle path; trace result may be unsupported)");

@@ -52,7 +52,7 @@ class Dh < Formula
   version "$VERSION"
   license "MIT"
 
-  depends_on "node@22"
+  depends_on "node@24"
 
   if OS.mac? && Hardware::CPU.arm?
     url "$DOWNLOAD_BASE/dh-darwin-arm64"

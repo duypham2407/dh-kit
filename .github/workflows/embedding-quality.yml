@@ -6,16 +6,13 @@ on:
     # Run weekly on Sundays at 04:00 UTC
     - cron: "0 4 * * 0"
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   embedding-quality:
     name: Provider-backed retrieval quality test
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check for API key
         id: check-key
@@ -31,9 +28,9 @@ jobs:
 
       - name: Set up Node.js
         if: steps.check-key.outputs.has_key == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies

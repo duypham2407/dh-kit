@@ -14,21 +14,18 @@ on:
 permissions:
   contents: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   # ---------- TypeScript checks ----------
   ts-check:
     name: TypeScript check + tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
@@ -45,12 +42,12 @@ jobs:
     name: Rust workspace tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
@@ -72,12 +69,12 @@ jobs:
     needs: [ts-check, rust-test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
@@ -87,7 +84,7 @@ jobs:
         run: make worker-bundle
 
       - name: Upload worker bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: worker-bundle
           path: dist/ts-worker/
@@ -111,7 +108,7 @@ jobs:
           - asset: dh-darwin-arm64
             runner: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -126,7 +123,7 @@ jobs:
         run: test -x "dist/rust-engine/releases/${{ matrix.asset }}"
 
       - name: Upload release binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-binary-${{ matrix.asset }}
           path: dist/rust-engine/releases/${{ matrix.asset }}
@@ -138,17 +135,17 @@ jobs:
     needs: [build-worker-bundle, build-binaries]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download release binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: release-binary-*
           path: dist/rust-engine/releases/
           merge-multiple: true
 
       - name: Download worker bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: worker-bundle
           path: dist/ts-worker/
@@ -183,7 +180,7 @@ jobs:
           fi
 
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-artifacts
           path: dist/releases/
@@ -195,19 +192,19 @@ jobs:
     needs: [package-release]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
         run: npm ci
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-artifacts
           path: dist/releases/
@@ -267,19 +264,19 @@ jobs:
     needs: [package-release]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
         run: npm ci
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-artifacts
           path: dist/releases/
@@ -306,10 +303,10 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-artifacts
           path: dist/releases/
@@ -348,10 +345,10 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-artifacts
           path: dist/releases/

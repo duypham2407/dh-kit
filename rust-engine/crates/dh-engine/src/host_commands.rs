@@ -835,6 +835,7 @@ if [ ! -f "$MARKER" ]; then
   send '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"1","workerId":"fixture-first"}}'
   send '{"jsonrpc":"2.0","id":3,"result":{"protocolVersion":"1","workerId":"fixture-first"}}'
   send '{"jsonrpc":"2.0","method":"dh.ready","params":{"ready":true}}'
+  sleep 0.5
   exit 7
 fi
 send '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"1","workerId":"fixture-recovered"}}'
@@ -862,6 +863,7 @@ if [ ! -f "$FIRST_MARKER" ]; then
   send '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"1","workerId":"fixture-first"}}'
   send '{"jsonrpc":"2.0","method":"event.warning","params":{"message":"pre-ready warning queued before crash"}}'
   send '{"jsonrpc":"2.0","method":"dh.ready","params":{"ready":true}}'
+  sleep 0.5
   exit 7
 fi
 touch "$REPLAY_MARKER"

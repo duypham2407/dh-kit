@@ -7,7 +7,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 <!-- NEW_RELEASE_ENTRY -->
 
-## [0.3.1-rc.5](https://github.com/duypham2407/dh-kit/releases/tag/v0.3.1-rc.5) — 2026-05-10
+## [0.3.1-rc.6](https://github.com/duypham2407/dh-kit/releases/tag/v0.3.1-rc.6) — 2026-05-10
 
 ### Features
 
@@ -29,6 +29,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 - restore dh release startup path ([9b7680a](https://github.com/duypham2407/dh-kit/commit/9b7680a5b0828c41416f3455e9e86d0feca6fcb1))
 - stabilize release packaging test on linux ([0a2156f](https://github.com/duypham2407/dh-kit/commit/0a2156fb80c91eb2873f6dfc2bb82d6732523e1c))
+- stabilize recovered worker fixture for ci ([1400444](https://github.com/duypham2407/dh-kit/commit/140044410953bae69152776793cb5311917a57ec))
 
 ### Documentation
 

@@ -3,13 +3,17 @@ import { runCleanCommand } from "./clean.js";
 import { runConfigCommand } from "./config.js";
 import { runDeliveryCommand } from "./delivery.js";
 import { runDoctorCommand } from "./doctor.js";
+import { runExportCommand } from "./export.js";
 import { runExplainCommand } from "./explain.js";
+import { runImportCommand } from "./import.js";
 import { runIndexCommand } from "./index.js";
 import { runMigrateCommand } from "./migrate.js";
 import { runOperatorSafeMaintenanceCommand } from "./operator-safe-maintenance.js";
 import { runQuickCommand } from "./quick.js";
 import { runRunCommand } from "./run.js";
 import { runSemanticCleanupCommand } from "./semantic-cleanup.js";
+import { runSessionCommand } from "./session.js";
+import { runStatsCommand } from "./stats.js";
 import { runTraceCommand } from "./trace.js";
 import { DH_VERSION } from "../version.js";
 import { ChunksRepo } from "../../../../packages/storage/src/sqlite/repositories/chunks-repo.js";
@@ -19,6 +23,10 @@ const HELP = `dh <command> [args]
 
 Commands:
   run [message] [--json] [--continue|--session <id>] [--file <path>]  (Rust-hosted direct run path)
+  session <list|show|delete|fork> [options]
+  export [session-id] [--sanitize]
+  import <file>
+  stats [--days <n>] [--models <n>] [--tools <n>] [--json]
   quick <task> [--json]       (Rust-hosted lane workflow path)
   delivery <goal> [--json]    (Rust-hosted lane workflow path)
   migrate <goal> [--json]     (Rust-hosted lane workflow path)
@@ -64,6 +72,14 @@ export async function runCli(args: string[], repoRoot: string): Promise<number> 
   switch (command) {
     case "run":
       return runRunCommand(rest, repoRoot);
+    case "session":
+      return runSessionCommand(rest, repoRoot);
+    case "export":
+      return runExportCommand(rest, repoRoot);
+    case "import":
+      return runImportCommand(rest, repoRoot);
+    case "stats":
+      return runStatsCommand(rest, repoRoot);
     case "quick":
       return runQuickCommand(rest, repoRoot);
     case "delivery":

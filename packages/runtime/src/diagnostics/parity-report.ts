@@ -306,7 +306,7 @@ export function buildOpenCodeParityReport(): ParityReport {
   return {
     source: "opencode-gap-roadmap",
     baseline: {
-      dh: "v0.3.1-rc.7 / 506b0af",
+      dh: "v0.4.0-rc.1 / personal-coding-assistant-v1",
       opencode: "dev / 903d81819",
     },
     categories: PARITY_CATEGORIES,

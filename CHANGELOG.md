@@ -7,6 +7,91 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 <!-- NEW_RELEASE_ENTRY -->
 
+## [0.4.0-rc.1](https://github.com/duypham2407/dh-kit/releases/tag/v0.4.0-rc.1) — 2026-05-10
+
+### Features
+
+- add agent config service ([bc3a5bc](https://github.com/duypham2407/dh-kit/commit/bc3a5bc51b0758788b5c277b6382bdbd8e3696d5))
+- add agent lifecycle cli ([a389cc4](https://github.com/duypham2407/dh-kit/commit/a389cc406f467c9559195fb1cf498e1a6b5e0a38))
+- add audited tool runner ([b50a490](https://github.com/duypham2407/dh-kit/commit/b50a490b63ad814ad32874559a7bd7c23d2af405))
+- add bounded full workflow runtime ([32979fb](https://github.com/duypham2407/dh-kit/commit/32979fbc741f04e3ef445fee359c28182812f968))
+- add bounded subagent task runtime ([a113327](https://github.com/duypham2407/dh-kit/commit/a113327479c0f43c8099cd62ef4bfac65e74fc97))
+- add context evidence ledger ([b0dd234](https://github.com/duypham2407/dh-kit/commit/b0dd2344627071acaf80b65450c81f19ff9b527b))
+- add filesystem tool implementations ([1a41058](https://github.com/duypham2407/dh-kit/commit/1a4105836fc18fa1f97774b9324daccfd03798c7))
+- add local headless server ([276e113](https://github.com/duypham2407/dh-kit/commit/276e113238f48b8ac757db4d9653174077dbc3c5))
+- add local mcp config service ([656fff3](https://github.com/duypham2407/dh-kit/commit/656fff3bd93bc7ae9183a25b50151dc598e9f95d))
+- add local plugin loader ([7bfb216](https://github.com/duypham2407/dh-kit/commit/7bfb2162d17e621d5b7a2c4e7db50799bdde18b4))
+- add lsp diagnostics cli ([394b714](https://github.com/duypham2407/dh-kit/commit/394b71433ba75d9039460242d491b9d65d9f78a3))
+- add lsp service boundary ([ff299d7](https://github.com/duypham2407/dh-kit/commit/ff299d725746c2d8e9ee0c7b9b7b5825f95675b1))
+- add lsp tool wrappers ([a492749](https://github.com/duypham2407/dh-kit/commit/a492749ce2ce1f37b71bed4c82e8cbbb2ce467a5))
+- add mcp debug reports ([f9312b1](https://github.com/duypham2407/dh-kit/commit/f9312b128ac2a4337555c10c376292b2d76ed9b4))
+- add mcp lifecycle cli ([267e3b9](https://github.com/duypham2407/dh-kit/commit/267e3b93d9d41d68e36712be28422678931563e5))
+- add opencode parity contract ([f90816f](https://github.com/duypham2407/dh-kit/commit/f90816faa0cddd11c498508c2e87c9a3fcf7686e))
+- add plugin cli ([fe68f40](https://github.com/duypham2407/dh-kit/commit/fe68f40b2711eeb07b0594c1fc1595308517ac55))
+- add plugin hook execution ([72ea711](https://github.com/duypham2407/dh-kit/commit/72ea711e9f896cf8815e14be7ba6d1b1e81a75d8))
+- add provider and model CLI commands ([6fbc8b7](https://github.com/duypham2407/dh-kit/commit/6fbc8b7fd30de1ef138113d38694effd5c74cde9))
+- add provider auth service ([0989c23](https://github.com/duypham2407/dh-kit/commit/0989c2366b2d5bdb968610efde8c4e5c6b9c9628))
+- add provider auth store ([2de312a](https://github.com/duypham2407/dh-kit/commit/2de312acb454b7a373f94a3c8b42dfcc7141c83d))
+- add provider config loader ([71a16cd](https://github.com/duypham2407/dh-kit/commit/71a16cdb9c99c96182d74d439ecf7f320a497bc2))
+- add provider verification ([b1d4406](https://github.com/duypham2407/dh-kit/commit/b1d44069a6141f797286c3fe7c9225e1ad2b0dc4))
+- add rust-hosted dh run ([9299edd](https://github.com/duypham2407/dh-kit/commit/9299edd7d5d257084ad5646e03c9de3511ea4447))
+- add serve command surface ([8a02467](https://github.com/duypham2407/dh-kit/commit/8a0246757fd7bf7907741839b8279a79c54ed79d))
+- add server sdk client ([6251eb4](https://github.com/duypham2407/dh-kit/commit/6251eb42cb1ba9f289b804d2cceae8cfd2c460bc))
+- add session import delete and fork services ([7aff2d9](https://github.com/duypham2407/dh-kit/commit/7aff2d952a17c3f613ec79cf09e4464db9c3c74d))
+- add session product CLI commands ([f6e3f8f](https://github.com/duypham2407/dh-kit/commit/f6e3f8fd8329b8fecc4c3d559deb274af80be719))
+- add session query and export services ([0a24c1b](https://github.com/duypham2407/dh-kit/commit/0a24c1bc5959de5b8c4950caf56f9f3f8b1d2e54))
+- add session stats service ([9da3d25](https://github.com/duypham2407/dh-kit/commit/9da3d2528a40989ef9b0a0bf86afcc56f287c4be))
+- add session storage management helpers ([285ee86](https://github.com/duypham2407/dh-kit/commit/285ee86cba8a38234e66be04e8322afc0ecdacc1))
+- add shell tool permission execution ([f719b88](https://github.com/duypham2407/dh-kit/commit/f719b889a01982a9d9fefa45cf4a1f82dabfbed1))
+- add tool catalog schemas ([805f0fe](https://github.com/duypham2407/dh-kit/commit/805f0fe94bc7bd14eda059f3d5fbdb0b37cd48d7))
+- add tui app controller ([c2b6628](https://github.com/duypham2407/dh-kit/commit/c2b662880d21c4e35f29e2ae8ec9031c971ca03a))
+- add tui command surface ([a89d5c9](https://github.com/duypham2407/dh-kit/commit/a89d5c9a25b308a671e37a946692bdb996dd420f))
+- add tui model agent context panels ([71cd48a](https://github.com/duypham2407/dh-kit/commit/71cd48ad478c61ebfc8e4e2d66d4e52291e6f22e))
+- add tui permission response flow ([6c52729](https://github.com/duypham2407/dh-kit/commit/6c527294b5b71e16bb3e39d969602f30397e6aea))
+- add tui session lifecycle commands ([e3f21b6](https://github.com/duypham2407/dh-kit/commit/e3f21b6ef70478fd7208e194447b3a6b458e9827))
+- add tui state renderer ([2a5b4c6](https://github.com/duypham2407/dh-kit/commit/2a5b4c62d9dfca762c0625cb800b774fe52cd52a))
+- add workspace freshness diagnostics ([07d1b79](https://github.com/duypham2407/dh-kit/commit/07d1b799f65cb32e2e053ccf4ad6bb8ff4ccb003))
+- define session product DTOs ([47e7ba3](https://github.com/duypham2407/dh-kit/commit/47e7ba37b63b77878764a19ff0bceddb9030db19))
+- harden personal tool loop ([3a3ecbe](https://github.com/duypham2407/dh-kit/commit/3a3ecbe6cc846290c9172174438d586bda3c5106))
+- make rust lane runtime authority ([33e3932](https://github.com/duypham2407/dh-kit/commit/33e3932a0089f19b2cb4aea152acdd6f2eab3061))
+- resolve provider credentials for chat runtime ([861228c](https://github.com/duypham2407/dh-kit/commit/861228ce3cec1038d8eae37351ff585840b11ab8))
+- resolve run agents from registry ([ebaade9](https://github.com/duypham2407/dh-kit/commit/ebaade9e6c16f610169d9be86acbe221ad3bcf4e))
+- route provider registry through config loader ([adc4720](https://github.com/duypham2407/dh-kit/commit/adc47200d2ce5fecfafe55a63394fa402ac69164))
+- stream run events to tui ([89caa5b](https://github.com/duypham2407/dh-kit/commit/89caa5bd926839f0f470025c7cde484262221705))
+
+### Bug Fixes
+
+- refresh default agent model variants ([9cd526d](https://github.com/duypham2407/dh-kit/commit/9cd526d9c2ea783f2ad2599363f8064da1890620))
+- update doctor parity milestone ([1f4f179](https://github.com/duypham2407/dh-kit/commit/1f4f1792ae54910963052254be1acc9cac4bcbc5))
+
+### Documentation
+
+- add delivery request scope package ([e8e3cf7](https://github.com/duypham2407/dh-kit/commit/e8e3cf7754354c2ead07e33c14b20487b53783cd))
+- add multi agent to personal assistant plan ([d0e8ba8](https://github.com/duypham2407/dh-kit/commit/d0e8ba88709fb7dd6c0e9e672ae7dfa772ad4848))
+- decide web desktop parity ([f819167](https://github.com/duypham2407/dh-kit/commit/f819167db80b7fb4e9afdc74c3ff8186d0aa8e46))
+- focus dh on personal coding assistant ([deacf51](https://github.com/duypham2407/dh-kit/commit/deacf51e41e31df7c017f364f7a3dd246c3af57b))
+- plan agent subagent runtime ([64b8ea2](https://github.com/duypham2407/dh-kit/commit/64b8ea20490ae484f97d54a638218c6a34f9754a))
+- plan dh run direct loop ([ee5a63d](https://github.com/duypham2407/dh-kit/commit/ee5a63d470c858ed35f7e3952c260025b1c6bf8e))
+- plan lsp graph augmentation ([238e952](https://github.com/duypham2407/dh-kit/commit/238e95251fd56f7fccac1bdc16253a7ca22d4c66))
+- plan mcp lifecycle option a ([8d702f9](https://github.com/duypham2407/dh-kit/commit/8d702f946c5d719bafdf00f544ac764ab80f19bd))
+- plan plugin mvp ([f35e4ad](https://github.com/duypham2407/dh-kit/commit/f35e4adead34c63db25f2c34d0bc3a9bab6903ce))
+- plan provider model lifecycle ([79102f7](https://github.com/duypham2407/dh-kit/commit/79102f76f693c59faa9da7b0652b9fc0f9bdc4f9))
+- plan rust runtime authority ([d36efaf](https://github.com/duypham2407/dh-kit/commit/d36efaff35beaa56b2e32cb3a0b997deff95a83f))
+- plan server sdk ([c435dbf](https://github.com/duypham2407/dh-kit/commit/c435dbf542e7ef624895e2529baabbdfd3bf06a0))
+- plan session product parity ([6e95c7d](https://github.com/duypham2407/dh-kit/commit/6e95c7d04bf15d6fdc5fe57acb5fce33b934f7e2))
+- plan tool runtime permissions ([673f4f7](https://github.com/duypham2407/dh-kit/commit/673f4f71baaf0c353150fd6b5999a17d77de9034))
+- plan tui mvp ([9b9dd5d](https://github.com/duypham2407/dh-kit/commit/9b9dd5d6298a90b8f16735f0a1aa7e9e91b8b874))
+- specify dh run direct loop ([b17154a](https://github.com/duypham2407/dh-kit/commit/b17154a774b8da730b072638dd2080723949cbaf))
+- specify provider model lifecycle ([31c1a97](https://github.com/duypham2407/dh-kit/commit/31c1a971842d71b06abcb72cb6d51b1b7e31fffc))
+- specify session product parity ([117dcea](https://github.com/duypham2407/dh-kit/commit/117dcead28667e305fa550bf2f38a6956ce33fb1))
+- update agent runtime parity status ([693a8c4](https://github.com/duypham2407/dh-kit/commit/693a8c4753bdf6f00a79a505e7f445d5bf494ccf))
+- update lsp parity status ([7e6e36f](https://github.com/duypham2407/dh-kit/commit/7e6e36fb837b8775505cc5b23174083101c67e96))
+- update mcp parity status ([2f8fe03](https://github.com/duypham2407/dh-kit/commit/2f8fe0386fe970bac9b78d79788fcd085fdbf983))
+- update plugin parity status ([7479caf](https://github.com/duypham2407/dh-kit/commit/7479caf11195fec999f66843c18e8b51dca56e65))
+- update tool runtime parity status ([657ca5c](https://github.com/duypham2407/dh-kit/commit/657ca5c1b686707ef58827105fe9b569ac055ab0))
+
+---
+
 ## [0.3.1-rc.7](https://github.com/duypham2407/dh-kit/releases/tag/v0.3.1-rc.7) — 2026-05-10
 
 ### Features

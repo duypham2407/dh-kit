@@ -1,4 +1,5 @@
 import { runDoctor } from "../../../packages/runtime/src/diagnostics/doctor.js";
+import { startFullWorkflow } from "../../../packages/runtime/src/workflow/full-workflow-runtime.js";
 import { runIndexWorkflow } from "../../../packages/runtime/src/jobs/index-job-runner.js";
 import { runRustHostedDirectCommand } from "../../../packages/opencode-app/src/workflows/run-rust-hosted-direct-command.js";
 import { runRustHostedLaneWorkflow } from "../../../packages/opencode-app/src/workflows/run-rust-hosted-lane-command.js";
@@ -21,6 +22,7 @@ import type {
 
 export type RuntimeClient = {
   runDirect: (input: RunDirectInput) => Promise<RunDirectReport>;
+  runFullWorkflow: (input: { repoRoot: string; objective: string; maxReadOnlyWorkers?: number }) => ReturnType<typeof startFullWorkflow>;
   runLane: (input: { lane: WorkflowLane; objective: string; repoRoot: string; resumeSessionId?: string }) => ReturnType<typeof runLaneWorkflow>;
   runKnowledge: (input: { kind: "ask" | "explain" | "trace"; input: string; repoRoot: string; resumeSessionId?: string }) => ReturnType<typeof runKnowledgeCommand>;
   runDoctor: (repoRoot: string) => ReturnType<typeof runDoctor>;
@@ -48,6 +50,7 @@ export type RuntimeClient = {
 export function createRuntimeClient(): RuntimeClient {
   return {
     runDirect: runRustHostedDirectCommand,
+    runFullWorkflow: startFullWorkflow,
     runLane: (input) => {
       if (process.env.DH_ENABLE_TS_LANE_COMPAT === "1") {
         return runLaneWorkflow(input);

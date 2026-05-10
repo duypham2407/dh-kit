@@ -1,6 +1,6 @@
 export type ExtensionContractVersion = "v1";
 
-export type ExtensionLane = "quick" | "delivery" | "migration";
+export type ExtensionLane = "quick" | "delivery" | "migration" | "full";
 
 export type ExtensionRole =
   | "quick"

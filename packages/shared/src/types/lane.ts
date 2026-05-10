@@ -1,4 +1,4 @@
-export type WorkflowLane = "quick" | "delivery" | "migration";
+export type WorkflowLane = "quick" | "delivery" | "migration" | "full";
 
 export type SemanticMode = "always" | "auto" | "off";
 

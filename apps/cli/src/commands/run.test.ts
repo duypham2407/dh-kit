@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runRunCommand } from "./run.js";
 import type { RuntimeClient } from "../runtime-client.js";
 import type { RunDirectReport } from "../../../../packages/shared/src/types/run.js";
+import type { FullWorkflowReport } from "../../../../packages/shared/src/types/full-workflow.js";
 
 function makeReport(overrides: Partial<RunDirectReport> = {}): RunDirectReport {
   return {
@@ -34,7 +35,33 @@ function runtime(calls: unknown[]): RuntimeClient {
       calls.push(input);
       return makeReport();
     },
+    runFullWorkflow: async (input) => {
+      calls.push(input);
+      return makeFullWorkflowReport();
+    },
   } as RuntimeClient;
+}
+
+function makeFullWorkflowReport(): FullWorkflowReport {
+  return {
+    parentSessionId: "session-full-1",
+    state: {
+      parentSessionId: "session-full-1",
+      objective: "ship auth refactor",
+      currentStage: "full_product",
+      currentOwner: "product_lead",
+      status: "running",
+      childSessions: [],
+      approvals: [],
+      artifacts: [],
+      rerouteIssues: [],
+      evidenceLedgerRefs: [],
+      audit: [],
+      concurrency: { maxReadOnlyWorkers: 3, singleWriteOwner: "fullstack_agent" },
+      createdAt: "2026-05-10T00:00:00.000Z",
+      updatedAt: "2026-05-10T00:00:00.000Z",
+    },
+  };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -62,6 +89,19 @@ describe("runRunCommand", () => {
     const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
     await runRunCommand(["--json", "hello"], "/repo", runtime([]));
     expect(JSON.parse(String(stdout.mock.calls[0]?.[0]).trim()).type).toBe("text.delta");
+  });
+
+  it("starts bounded full workflow for --multi", async () => {
+    const calls: unknown[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const exitCode = await runRunCommand(["--multi", "--json", "ship", "auth", "refactor"], "/repo", runtime(calls));
+
+    expect(exitCode).toBe(0);
+    expect(calls[0]).toMatchObject({ repoRoot: "/repo", objective: "ship auth refactor" });
+    const payload = JSON.parse(String(stdout.mock.calls[0]?.[0]));
+    expect(payload.parentSessionId).toBe("session-full-1");
+    expect(payload.state.currentStage).toBe("full_product");
+    expect(payload.state.currentOwner).toBe("product_lead");
   });
 
   it("rejects invalid flag combinations", async () => {

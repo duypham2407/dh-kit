@@ -1,8 +1,9 @@
 import type { AgentRole } from "./agent.js";
+import type { WorkflowLane } from "./lane.js";
 import type { WorkItemState } from "./work-item.js";
 
 export type CoordinatorOutputState = {
-  lane: "quick" | "delivery" | "migration";
+  lane: WorkflowLane;
   stage: string;
   nextRole: AgentRole | "complete";
   summary: string;

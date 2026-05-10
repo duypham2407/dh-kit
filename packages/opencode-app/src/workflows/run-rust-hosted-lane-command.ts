@@ -111,6 +111,7 @@ function adaptRustLaneEnvelope(envelope: Record<string, unknown>, fallbackExitCo
 }
 
 function laneCommand(lane: WorkflowLane): "quick" | "delivery" | "migrate" {
+  if (lane === "full") throw new Error("Full workflow is handled by the TypeScript bounded multi-agent runtime.");
   return lane === "migration" ? "migrate" : lane;
 }
 

@@ -25,7 +25,7 @@ export async function resumeSession(repoRoot: string, sessionId: string, request
     };
   }
 
-  if (record.session?.lane !== "quick" && record.session?.lane !== "delivery" && record.session?.lane !== "migration") {
+  if (record.session?.lane !== "quick" && record.session?.lane !== "delivery" && record.session?.lane !== "migration" && record.session?.lane !== "full") {
     return {
       ok: false,
       reason: `Session '${sessionId}' is corrupted: invalid lane value.`,

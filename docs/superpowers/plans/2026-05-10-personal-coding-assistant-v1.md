@@ -136,13 +136,21 @@ Runtime rules:
 
 **Tasks:**
 
-- [ ] Add canonical role, stage, approval-gate, artifact, and reroute contracts for `full` workflow.
-- [ ] Add parent session state for current stage, current owner, child agent sessions, approvals, artifacts, reroute issues, and shared evidence ledger refs.
-- [ ] Add Master Orchestrator routing that can start, inspect, advance, block, reroute, and close a full-delivery work item.
-- [ ] Add child agent task runtime for Product Lead, Solution Lead, Fullstack Agent, Code Reviewer, QA Agent, Context Scout, and Summarizer.
-- [ ] Add `dh run --multi "<task>" --json` or equivalent runtime entry that creates a parent session and first-stage child task.
-- [ ] Add audit records for role start/finish, gate approval/rejection, reroute, and artifact handoff.
-- [ ] Keep concurrency bounded with max read-only workers and single write owner.
+- [x] Add canonical role, stage, approval-gate, artifact, and reroute contracts for `full` workflow.
+- [x] Add parent session state for current stage, current owner, child agent sessions, approvals, artifacts, reroute issues, and shared evidence ledger refs.
+- [x] Add Master Orchestrator routing that can start, inspect, advance, block, reroute, and close a full-delivery work item.
+- [x] Add child agent task runtime for Product Lead, Solution Lead, Fullstack Agent, Code Reviewer, QA Agent, Context Scout, and Summarizer.
+- [x] Add `dh run --multi "<task>" --json` or equivalent runtime entry that creates a parent session and first-stage child task.
+- [x] Add audit records for role start/finish, gate approval/rejection, reroute, and artifact handoff.
+- [x] Keep concurrency bounded with max read-only workers and single write owner.
+
+**Implemented slice:**
+
+- `packages/shared` defines bounded full-workflow roles, stages, gates, artifacts, approvals, reroute issues, audit records, and parent state.
+- `packages/runtime` exposes `startFullWorkflow()`, `inspectFullWorkflow()`, `advanceFullWorkflow()`, `blockFullWorkflow()`, `rerouteFullWorkflow()`, `closeFullWorkflow()`, and support-role execution.
+- Full workflow creates a persisted `full` parent session, writes workflow state, stores inspectable parent state under `.dh/full-workflow`, and records audit events into `session_runtime_events`.
+- `dh run --multi "<task>" --json` starts the parent workflow and runs the Product Lead first-stage child task.
+- Concurrency contract is explicit: bounded read-only worker count plus `fullstack_agent` as the single write owner.
 
 **Acceptance Gates:**
 

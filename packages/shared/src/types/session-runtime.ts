@@ -12,7 +12,14 @@ export type SessionRuntimeEventType =
   | "summary_updated"
   | "compaction"
   | "checkpoint_created"
-  | "revert";
+  | "revert"
+  | "full.started"
+  | "full.role.started"
+  | "full.role.finished"
+  | "full.gate.approved"
+  | "full.gate.rejected"
+  | "full.rerouted"
+  | "full.closed";
 
 export type SessionRuntimeEventRecord = {
   id: string;

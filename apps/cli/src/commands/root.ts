@@ -31,6 +31,7 @@ const HELP = `dh <command> [args]
 
 Commands:
   run [message] [--json] [--continue|--session <id>] [--file <path>]  (Rust-hosted direct run path)
+  run --multi <task> [--json]  (Bounded multi-agent full workflow)
   serve [--host <host>] [--port <port>] [--password <password>] [--json]
   tui [--server <url>] [--password <password>]
   session <list|show|delete|fork> [options]

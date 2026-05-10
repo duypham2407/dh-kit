@@ -23,7 +23,14 @@ export type WorkflowStage =
   | "migration_execute"
   | "migration_review"
   | "migration_verify"
-  | "migration_complete";
+  | "migration_complete"
+  | "full_intake"
+  | "full_product"
+  | "full_solution"
+  | "full_implementation"
+  | "full_code_review"
+  | "full_qa"
+  | "full_done";
 
 export type WorkflowState = {
   lane: WorkflowLane;

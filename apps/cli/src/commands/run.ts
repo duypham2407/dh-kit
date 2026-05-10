@@ -4,6 +4,7 @@ import { createRuntimeClient, type RuntimeClient } from "../runtime-client.js";
 
 type ParsedRunArgs = RunDirectInput & {
   json: boolean;
+  multi: boolean;
 };
 
 export async function runRunCommand(
@@ -17,7 +18,13 @@ export async function runRunCommand(
     return 1;
   }
 
-  const { json, ...input } = parsed.value;
+  const { json, multi, ...input } = parsed.value;
+  if (multi) {
+    const report = await runtime.runFullWorkflow({ repoRoot, objective: input.message });
+    process.stdout.write(json ? `${JSON.stringify(report, null, 2)}\n` : `${renderFullWorkflowText(report)}\n`);
+    return 0;
+  }
+
   const report = await runtime.runDirect(input);
   const output = json ? renderRunNdjson(report) : renderRunText(report);
   if (report.exitCode === 0) {
@@ -32,6 +39,7 @@ function parseRunArgs(args: string[], repoRoot: string): { ok: true; value: Pars
   const messageParts: string[] = [];
   const files: string[] = [];
   let json = false;
+  let multi = false;
   let continueLatest = false;
   let sessionId: string | undefined;
   let fork = false;
@@ -45,6 +53,8 @@ function parseRunArgs(args: string[], repoRoot: string): { ok: true; value: Pars
     const arg = args[index]!;
     if (arg === "--json") {
       json = true;
+    } else if (arg === "--multi") {
+      multi = true;
     } else if (arg === "--continue") {
       continueLatest = true;
     } else if (arg === "--fork") {
@@ -119,6 +129,16 @@ function parseRunArgs(args: string[], repoRoot: string): { ok: true; value: Pars
       title,
       autoApprove,
       json,
+      multi,
     },
   };
+}
+
+function renderFullWorkflowText(report: Awaited<ReturnType<RuntimeClient["runFullWorkflow"]>>): string {
+  return [
+    `parent session: ${report.parentSessionId}`,
+    `stage: ${report.state.currentStage}`,
+    `owner: ${report.state.currentOwner}`,
+    `status: ${report.state.status}`,
+  ].join("\n");
 }

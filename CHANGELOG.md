@@ -7,6 +7,40 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 <!-- NEW_RELEASE_ENTRY -->
 
+## [0.3.1-rc.4](https://github.com/duypham2407/dh-kit/releases/tag/v0.3.1-rc.4) — 2026-05-10
+
+### Features
+
+- add binary JSON-RPC bridge negotiation ([3ed61ba](https://github.com/duypham2407/dh-kit/commit/3ed61ba68db4c100f8fc7cd335d29af66b9673f4))
+- add fallback to openai-compatible SDK when provider or model is not found in registry ([20d8d7f](https://github.com/duypham2407/dh-kit/commit/20d8d7f4e25d2c7041bdd044205387e9f8072454))
+- add local vector DB retrieval backend ([2c972d6](https://github.com/duypham2407/dh-kit/commit/2c972d6c2177dc304791482937d52579ca8cb0a3))
+- add provider configuration schema and factory for dynamic AI model initialization ([35b1f88](https://github.com/duypham2407/dh-kit/commit/35b1f8814b3718d8ea207ae88dd83b37f417ac8c))
+- add session.runLane protocol and implement runtime.ping status reporting ([f8dfe4b](https://github.com/duypham2407/dh-kit/commit/f8dfe4bd546be47de2ac359877cb7e11558229ef))
+- expand CLI query support and doctor visibility, update Quick Agent prompt and parser, and adjust benchmark improvement thresholds ([509d9a9](https://github.com/duypham2407/dh-kit/commit/509d9a9e31a3a6799f56cd5b27f36759e1887c2b))
+- implement core graph schema models and add architectural documentation for release validation. ([c37b109](https://github.com/duypham2407/dh-kit/commit/c37b109888b81dd22db67d2747a4ff11009d26c5))
+- implement hybrid evidence ranking and batch embedding support with configurable provider base URLs ([99800d4](https://github.com/duypham2407/dh-kit/commit/99800d4070e04d0eaf051309b8903004935d63bf))
+- implement session management CLI and introduce workflow lanes to core engine logic ([fe7d832](https://github.com/duypham2407/dh-kit/commit/fe7d832534266669cff2ff5dc3caddc02556c4ef))
+- implement session management engine and state machine for workflow lifecycle tracking ([fda70de](https://github.com/duypham2407/dh-kit/commit/fda70de2d1311b7b5f28c0bbaedaafff9ded0103))
+- implement worker heartbeat monitoring and make JSON-RPC IDs optional ([8a5ced7](https://github.com/duypham2407/dh-kit/commit/8a5ced77617428cfe1fdeb7381e3069f0e7ac12b))
+- integrate semantic search, entry point analysis, and enhanced evidence gathering capabilities across the query engine. ([015e6c9](https://github.com/duypham2407/dh-kit/commit/015e6c9910e66bf76fec8b7097ec1a1f3e830b5c))
+- migrate graph extraction to Rust ([d27ab82](https://github.com/duypham2407/dh-kit/commit/d27ab8280c4fff3316e4e19356f62c16de7433fe))
+
+### Bug Fixes
+
+- restore dh release startup path ([9b7680a](https://github.com/duypham2407/dh-kit/commit/9b7680a5b0828c41416f3455e9e86d0feca6fcb1))
+
+### Documentation
+
+- add migration plan and feature improvement documentation for the Rust engine transition ([90264bd](https://github.com/duypham2407/dh-kit/commit/90264bdcc67947fbe7c93f93f76c72ba0f933308))
+- rewrite README — concise English-only intro, setup, and usage ([cc451a1](https://github.com/duypham2407/dh-kit/commit/cc451a1eb9da821d1bfd1e98fb6c2d9766a298fc))
+
+### Chores
+
+- bump version to 0.2.0 for Rust-engine release ([2403568](https://github.com/duypham2407/dh-kit/commit/2403568b4a01b22bfc1e21bb26d8ce81754480a8))
+- replace registry-based provider system with a new Copilot-compatible SDK and standardized mock utilities ([54ab32c](https://github.com/duypham2407/dh-kit/commit/54ab32cf5a0386837954a2b797f1c278b0097f45))
+
+---
+
 ## [Unreleased]
 
 ### Added

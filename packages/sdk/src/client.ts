@@ -5,6 +5,15 @@ export type DhClientOptions = {
   password?: string;
 };
 
+export type DhSessionSummary = {
+  id: string;
+  title?: string;
+};
+
+export type DhSessionsResponse = {
+  sessions: DhSessionSummary[];
+};
+
 export class DhClient {
   private readonly baseUrl: string;
 
@@ -14,6 +23,10 @@ export class DhClient {
 
   async health(): Promise<{ ok: boolean; product: string }> {
     return await this.request("GET", "/health");
+  }
+
+  async sessions(): Promise<DhSessionsResponse> {
+    return await this.request("GET", "/sessions");
   }
 
   async run(input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }): Promise<RunDirectReport> {

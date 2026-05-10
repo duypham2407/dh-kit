@@ -51,6 +51,7 @@ describe("DhClient", () => {
     const client = new DhClient({ baseUrl: started.url });
 
     await expect(client.health()).resolves.toMatchObject({ ok: true });
+    await expect(client.sessions()).resolves.toEqual({ sessions: [] });
     await expect(client.run({ message: "hello", repoRoot: "/ignored" })).resolves.toMatchObject({ text: "hello" });
   });
 });

@@ -24,6 +24,7 @@ function makeClient(overrides: Partial<TuiAppClient> = {}): TuiAppClient {
     health: async () => ({ ok: true, product: "dh" }),
     sessions: async () => ({ sessions: [{ id: "session-1", title: "Current work" }] }),
     run: async () => makeReport(),
+    respondPermission: async (input) => ({ ...input, recorded: true }),
     ...overrides,
   };
 }
@@ -157,5 +158,36 @@ describe("createTuiApp", () => {
 
     expect(run).not.toHaveBeenCalled();
     expect(app.getState().transcript).toEqual([]);
+  });
+
+  it("sends permission responses for the active prompt", async () => {
+    const respondPermission = vi.fn(async (input: { sessionId: string; tool: string; decision: "allow" | "deny"; reason?: string }) => ({
+      ...input,
+      recorded: true,
+    }));
+    const app = createTuiApp({
+      serverUrl: "http://127.0.0.1:3000",
+      client: makeClient({ respondPermission }),
+    });
+    await app.attach();
+    await app.submitPrompt("needs permission");
+    app.applyEvent({
+      type: "permission.requested",
+      sessionId: "session-1",
+      sequence: 1,
+      timestamp: "2026-05-10T00:00:00.000Z",
+      payload: { tool: "write", reason: "modify file" },
+    });
+
+    await app.respondPermission("deny", "not needed");
+
+    expect(respondPermission).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      tool: "write",
+      decision: "deny",
+      reason: "not needed",
+    });
+    expect(app.getState().permissionPrompt).toBeUndefined();
+    expect(app.render()).toContain("permission.denied: write not needed");
   });
 });

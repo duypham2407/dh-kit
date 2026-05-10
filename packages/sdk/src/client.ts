@@ -14,6 +14,19 @@ export type DhSessionsResponse = {
   sessions: DhSessionSummary[];
 };
 
+export type DhPermissionDecision = "allow" | "deny";
+
+export type DhPermissionResponseInput = {
+  sessionId: string;
+  tool: string;
+  decision: DhPermissionDecision;
+  reason?: string;
+};
+
+export type DhPermissionResponse = DhPermissionResponseInput & {
+  recorded: boolean;
+};
+
 export class DhClient {
   private readonly baseUrl: string;
 
@@ -31,6 +44,10 @@ export class DhClient {
 
   async run(input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }): Promise<RunDirectReport> {
     return await this.request("POST", "/command/run", input);
+  }
+
+  async respondPermission(input: DhPermissionResponseInput): Promise<DhPermissionResponse> {
+    return await this.request("POST", "/permission/respond", input);
   }
 
   async *runStream(input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }): AsyncGenerator<RunEvent> {

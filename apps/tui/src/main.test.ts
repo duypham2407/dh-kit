@@ -36,4 +36,25 @@ describe("runTui", () => {
     expect(chunks.join("")).toContain("DH TUI");
     expect(chunks.join("")).toContain("session-1 Current work");
   });
+
+  it("supports approve and deny commands in interactive mode", async () => {
+    const chunks: string[] = [];
+    const input = {
+      isTTY: true,
+    };
+    const questions = ["/approve", "/deny no", "/quit"];
+
+    await runTui({
+      serverUrl: "http://127.0.0.1:3000",
+      client: makeClient(),
+      input,
+      output: { write: (chunk: string) => chunks.push(chunk) },
+      createQuestionLoop: () => ({
+        question: async () => questions.shift() ?? "/quit",
+        close: () => undefined,
+      }),
+    });
+
+    expect(chunks.join("")).toContain("DH TUI");
+  });
 });

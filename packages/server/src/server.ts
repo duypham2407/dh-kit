@@ -59,6 +59,21 @@ export function createDhServer(options: DhServerOptions): Server {
         writeJson(response, 200, { sessions: [] });
         return;
       }
+      if (request.method === "POST" && url.pathname === "/permission/respond") {
+        const body = await readJsonBody(request);
+        const sessionId = readRequiredString(body, "sessionId");
+        const tool = readRequiredString(body, "tool");
+        const decision = readPermissionDecision(body);
+        const reason = typeof body["reason"] === "string" ? body["reason"] : undefined;
+        writeJson(response, 200, {
+          sessionId,
+          tool,
+          decision,
+          ...(reason ? { reason } : {}),
+          recorded: true,
+        });
+        return;
+      }
       writeJson(response, 404, { error: "not_found" });
     } catch (error) {
       writeJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
@@ -106,4 +121,16 @@ function writeNdjson(response: ServerResponse, statusCode: number, payloads: unk
   response.writeHead(statusCode, { "content-type": "application/x-ndjson" });
   for (const payload of payloads) response.write(`${JSON.stringify(payload)}\n`);
   response.end();
+}
+
+function readRequiredString(body: Record<string, unknown>, key: string): string {
+  const value = body[key];
+  if (typeof value !== "string" || value.length === 0) throw new Error(`${key} is required.`);
+  return value;
+}
+
+function readPermissionDecision(body: Record<string, unknown>): "allow" | "deny" {
+  const value = body["decision"];
+  if (value === "allow" || value === "deny") return value;
+  throw new Error("decision must be allow or deny.");
 }

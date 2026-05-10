@@ -131,6 +131,31 @@ describe("DH server", () => {
     ]);
   });
 
+  it("records permission responses", async () => {
+    const started = await startDhServer({ repoRoot: makeRepo(), host: "127.0.0.1", port: 0 });
+    servers.push(started.server);
+
+    const response = await fetch(`${started.url}/permission/respond`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "s1",
+        tool: "write",
+        decision: "deny",
+        reason: "not needed",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      sessionId: "s1",
+      tool: "write",
+      decision: "deny",
+      reason: "not needed",
+      recorded: true,
+    });
+  });
+
   it("requires a password for non-localhost bind", () => {
     expect(() => createDhServer({ repoRoot: makeRepo(), host: "0.0.0.0" }))
       .toThrow("dh serve requires --password when binding outside localhost.");

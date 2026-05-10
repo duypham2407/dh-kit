@@ -100,4 +100,21 @@ describe("DhClient", () => {
       expect.objectContaining({ type: "tool.started", payload: { tool: "read" } }),
     ]);
   });
+
+  it("sends permission responses", async () => {
+    const started = await startDhServer({ repoRoot: makeRepo(), host: "127.0.0.1", port: 0 });
+    servers.push(started.server);
+    const client = new DhClient({ baseUrl: started.url });
+
+    await expect(client.respondPermission({
+      sessionId: "s1",
+      tool: "write",
+      decision: "allow",
+    })).resolves.toEqual({
+      sessionId: "s1",
+      tool: "write",
+      decision: "allow",
+      recorded: true,
+    });
+  });
 });

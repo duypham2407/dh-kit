@@ -127,6 +127,33 @@ describe("TUI state reducer", () => {
     expect(state.status).toBe("connected");
   });
 
+  it("clears permission prompt after approval or denial", () => {
+    let state = createInitialTuiState({ serverUrl: "http://127.0.0.1:3000" });
+    state = reduceTuiState(state, {
+      type: "run.event",
+      event: {
+        type: "permission.requested",
+        sessionId: "session-1",
+        sequence: 1,
+        timestamp: "2026-05-10T00:00:00.000Z",
+        payload: { tool: "write", reason: "modify file" },
+      },
+    });
+
+    state = reduceTuiState(state, {
+      type: "permission.responded",
+      decision: "deny",
+      reason: "not needed",
+    });
+
+    expect(state.permissionPrompt).toBeUndefined();
+    expect(state.eventLog.at(-1)).toEqual({
+      type: "permission.requested",
+      sessionId: "session-1",
+      label: "permission.denied: write not needed",
+    });
+  });
+
   it("enters read-only fallback when the server cannot be reached", () => {
     const initial = createInitialTuiState({ serverUrl: "http://127.0.0.1:9" });
     const state = reduceTuiState(initial, { type: "server.failed", reason: "connection refused" });

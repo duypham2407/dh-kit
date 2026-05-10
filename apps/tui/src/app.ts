@@ -1,4 +1,5 @@
 import type { RunDirectInput, RunDirectReport, RunEvent } from "../../../packages/shared/src/types/run.js";
+import type { DhPermissionDecision, DhPermissionResponse, DhPermissionResponseInput } from "../../../packages/sdk/src/client.js";
 import { renderTuiScreen } from "./render.js";
 import {
   createInitialTuiState,
@@ -12,11 +13,14 @@ export type TuiAppClient = {
   sessions: () => Promise<{ sessions: TuiSessionSummary[] }>;
   run: (input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }) => Promise<RunDirectReport>;
   runStream?: (input: Omit<RunDirectInput, "repoRoot"> & { repoRoot?: string }) => AsyncIterable<RunEvent>;
+  respondPermission?: (input: DhPermissionResponseInput) => Promise<DhPermissionResponse>;
 };
 
 export type TuiApp = {
   attach: () => Promise<void>;
   submitPrompt: (message: string) => Promise<void>;
+  applyEvent: (event: RunEvent) => void;
+  respondPermission: (decision: DhPermissionDecision, reason?: string) => Promise<void>;
   getState: () => TuiState;
   render: () => string;
 };
@@ -54,6 +58,24 @@ export function createTuiApp(options: { serverUrl: string; client: TuiAppClient 
           const report = await options.client.run(input);
           state = reduceTuiState(state, { type: "run.reported", report });
         }
+      } catch (error) {
+        state = reduceTuiState(state, { type: "server.failed", reason: errorMessage(error) });
+      }
+    },
+    applyEvent(event: RunEvent) {
+      state = reduceTuiState(state, { type: "run.event", event });
+    },
+    async respondPermission(decision: DhPermissionDecision, reason?: string) {
+      if (!state.permissionPrompt) return;
+      const input = {
+        sessionId: state.permissionPrompt.sessionId,
+        tool: state.permissionPrompt.tool,
+        decision,
+        ...(reason ? { reason } : {}),
+      };
+      try {
+        if (options.client.respondPermission) await options.client.respondPermission(input);
+        state = reduceTuiState(state, { type: "permission.responded", decision, reason });
       } catch (error) {
         state = reduceTuiState(state, { type: "server.failed", reason: errorMessage(error) });
       }

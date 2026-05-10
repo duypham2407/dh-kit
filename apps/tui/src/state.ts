@@ -48,6 +48,7 @@ export type TuiAction =
   | { type: "agent.selected"; agentId: string }
   | { type: "run.started"; message: string }
   | { type: "run.event"; event: RunEvent }
+  | { type: "permission.responded"; decision: "allow" | "deny"; reason?: string }
   | { type: "run.reported"; report: RunDirectReport };
 
 export function createInitialTuiState(options: { serverUrl: string }): TuiState {
@@ -92,6 +93,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       };
     case "run.event":
       return applyRunEvent(state, action.event);
+    case "permission.responded":
+      return applyPermissionResponse(state, action.decision, action.reason);
     case "run.reported": {
       const permissionPrompt = findPermissionPrompt(action.report);
       const sessions = upsertSession(state.sessions, {
@@ -114,6 +117,23 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       };
     }
   }
+}
+
+function applyPermissionResponse(state: TuiState, decision: "allow" | "deny", reason?: string): TuiState {
+  if (!state.permissionPrompt) return state;
+  const suffix = reason ? ` ${reason}` : "";
+  return {
+    ...state,
+    permissionPrompt: undefined,
+    eventLog: [
+      ...state.eventLog,
+      {
+        type: "permission.requested",
+        sessionId: state.permissionPrompt.sessionId,
+        label: `permission.${decision === "allow" ? "approved" : "denied"}: ${state.permissionPrompt.tool}${suffix}`,
+      },
+    ],
+  };
 }
 
 function applyRunEvent(state: TuiState, event: RunEvent): TuiState {

@@ -51,7 +51,7 @@ describe("buildOpenCodeParityReport", () => {
   it("reports the personal coding assistant roadmap as the active direction", () => {
     const report = buildOpenCodeParityReport();
 
-    expect(report.summary.recommendedNextMilestone).toBe("Personal Coding Assistant v1: TUI + Deep Context + Speed");
+    expect(report.summary.recommendedNextMilestone).toBe("Personal Coding Assistant v1: TUI + Deep Context + Speed + Multi Agent");
     expect(report.summary.byStatus.partial).toBeGreaterThan(0);
     expect(report.summary.byStatus.planned).toBe(0);
     expect(report.summary.byStatus.deferred).toBeGreaterThan(0);

@@ -16,7 +16,7 @@ export const OPENCODE_MISSING_COMMAND_SURFACES = [
   "acp",
 ] as const;
 
-const RECOMMENDED_NEXT_MILESTONE = "Personal Coding Assistant v1: TUI + Deep Context + Speed";
+const RECOMMENDED_NEXT_MILESTONE = "Personal Coding Assistant v1: TUI + Deep Context + Speed + Multi Agent";
 
 const FEATURES: ParityFeature[] = [
   {

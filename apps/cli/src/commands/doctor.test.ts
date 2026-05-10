@@ -66,7 +66,7 @@ describe("runDoctorCommand", () => {
     expect(payload.snapshot.runtimePingLifecycleSeamState).toBeDefined();
     expect(payload.snapshot.capabilityStateSummary).toBeDefined();
     expect(payload.diagnostics.parity.source).toBe("opencode-gap-roadmap");
-    expect(payload.diagnostics.parity.summary.recommendedNextMilestone).toBe("Personal Coding Assistant v1: TUI + Deep Context + Speed");
+    expect(payload.diagnostics.parity.summary.recommendedNextMilestone).toBe("Personal Coding Assistant v1: TUI + Deep Context + Speed + Multi Agent");
     expect(payload.snapshot.parity.summary.missingCommandSurfaces).toEqual(
       expect.arrayContaining(["web", "attach", "db", "github", "pr", "acp"]),
     );

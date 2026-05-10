@@ -14,6 +14,7 @@ The product requirement is now:
 - a TUI experience close enough to OpenCode for daily terminal work
 - deep code understanding with low context loss
 - fast local-first indexing, retrieval, ranking, and context packing
+- bounded multi-agent workflow that behaves like a software delivery team
 - strong evidence and file/line grounding
 - minimal community/platform scope unless it improves the personal workflow
 
@@ -21,11 +22,13 @@ The product requirement is now:
 
 Supersede the full OpenCode parity roadmap as the active product direction.
 
-DH will focus on **Personal Coding Assistant v1: TUI + Deep Context + Speed**.
+DH will focus on **Personal Coding Assistant v1: TUI + Deep Context + Speed + Multi Agent**.
 
 The following are core:
 
 - interactive TUI quality
+- OpenKit-style team workflow with Master Orchestrator, Product Lead, Solution Lead, Fullstack Agent, Code Reviewer, and QA Agent
+- bounded parent/child agent sessions, stage gates, approval gates, artifacts, reroute, and audit
 - Rust-first indexing and retrieval
 - tree-sitter/LSP/symbol graph augmentation
 - context planner and evidence ledger
@@ -41,6 +44,7 @@ The following are intentionally deferred or out of core scope:
 - cloud console, hosted share, billing, and account console
 - GitHub/PR automation as a first-class product surface
 - OpenCode `db`, `acp`, and console parity
+- free-form agent swarm or autonomous background team behavior
 
 ## Rationale
 
@@ -49,6 +53,7 @@ The following are intentionally deferred or out of core scope:
 3. Community features add API compatibility, packaging, sandboxing, docs, and support cost without improving the maintainer's daily loop.
 4. TUI quality and context correctness directly affect daily usefulness.
 5. Speed depends on bounded retrieval, incremental indexing, and native graph work; those need focus.
+6. Multi-agent work is valuable when it mirrors a real software team with role boundaries, artifacts, approvals, and QA evidence; it is risky when implemented as an unbounded swarm.
 
 ## Consequences
 
@@ -56,13 +61,14 @@ Positive:
 
 - Roadmap decisions can optimize for one real workflow instead of broad platform parity.
 - Doctor/parity diagnostics can remain truthful without pressuring implementation of intentionally deferred surfaces.
-- Engineering effort moves to TUI, context coverage, ranking, and runtime latency.
+- Engineering effort moves to TUI, context coverage, ranking, runtime latency, and bounded team workflow.
 
 Trade-offs:
 
 - DH will not claim full OpenCode parity.
 - Plugin/community/web/desktop/GitHub surfaces remain available only as future opt-in projects.
 - OpenCode parity report remains a conservative comparison artifact, not the active roadmap.
+- Multi-agent capability must stay local, inspectable, and permission-bounded.
 
 ## Verification
 

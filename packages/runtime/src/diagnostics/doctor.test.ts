@@ -334,7 +334,7 @@ describe("runDoctor", () => {
     const report = await runDoctor(repo);
 
     expect(report.summary).toContain("OpenCode parity:");
-    expect(report.summary).toContain("recommended next milestone: Personal Coding Assistant v1: TUI + Deep Context + Speed");
+    expect(report.summary).toContain("recommended next milestone: Personal Coding Assistant v1: TUI + Deep Context + Speed + Multi Agent");
     expect(report.diagnostics.parity.source).toBe("opencode-gap-roadmap");
     expect(report.snapshot.parity.summary.missingCommandSurfaces).toEqual(
       expect.arrayContaining(["web", "attach", "db", "github", "pr", "acp"]),
@@ -353,7 +353,7 @@ describe("runDoctor", () => {
     );
     expect(report.actions).toEqual(
       expect.arrayContaining([
-        "OpenCode community/cloud parity is intentionally deferred; active focus is Personal Coding Assistant v1: TUI + Deep Context + Speed.",
+        "OpenCode community/cloud parity is intentionally deferred; active focus is Personal Coding Assistant v1: TUI + Deep Context + Speed + Multi Agent.",
       ]),
     );
   });

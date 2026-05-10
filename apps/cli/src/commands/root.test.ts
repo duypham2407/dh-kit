@@ -36,6 +36,8 @@ describe("runCli help", () => {
     expect(output).toContain("export [session-id] [--sanitize]");
     expect(output).toContain("import <file>");
     expect(output).toContain("stats [--days <n>] [--models <n>] [--tools <n>] [--json]");
+    expect(output).toContain("providers <list|login|logout|verify> [options]");
+    expect(output).toContain("models [provider] [--refresh] [--verbose] [--json]");
     expect(output).toContain("ask <question> [--json]     (Rust-hosted first-wave knowledge path)");
     expect(output).toContain("explain <symbol> [--json]   (Rust-hosted first-wave knowledge path)");
     expect(output).toContain("trace <target> [--json]     (Rust-hosted first-wave lifecycle path; trace result may be unsupported)");

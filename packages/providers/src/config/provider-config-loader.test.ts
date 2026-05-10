@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { closeDhDatabase } from "../../../storage/src/sqlite/db.js";
-import { loadProviderRegistry } from "./provider-config-loader.js";
+import { loadModelCatalog, loadProviderRegistry } from "./provider-config-loader.js";
 
 const repos: string[] = [];
 
@@ -84,5 +84,40 @@ describe("provider config loader", () => {
     fs.writeFileSync(path.join(repo, "opencode.json"), "{");
 
     await expect(loadProviderRegistry(repo, { catalog: {} as never })).rejects.toThrow("Failed to parse opencode.json:");
+  });
+
+  it("builds a model catalog from custom opencode providers", async () => {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, "opencode.json"), JSON.stringify({
+      provider: {
+        localai: {
+          name: "LocalAI",
+          npm: "@ai-sdk/openai-compatible",
+          models: {
+            "local-model": {
+              name: "Local Model",
+              status: "beta",
+              release_date: "2026-05-10",
+            },
+          },
+        },
+      },
+    }));
+
+    const report = await loadModelCatalog(repo, { providerId: "localai", verbose: true, catalog: {} as never });
+
+    expect(report.refreshed).toBe(false);
+    expect(report.cache.path).toContain("models.json");
+    expect(report.models).toEqual([{
+      providerId: "localai",
+      modelId: "local-model",
+      name: "Local Model",
+      available: true,
+      status: "beta",
+      releaseDate: "2026-05-10",
+      limit: undefined,
+      cost: undefined,
+      modalities: undefined,
+    }]);
   });
 });

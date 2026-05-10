@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Info } from "../../../shared/src/types/model.js";
-import type { ProviderRegistryReport } from "../../../shared/src/types/provider.js";
+import type { ModelCatalogEntry, ModelCatalogReport, ProviderRegistryReport } from "../../../shared/src/types/provider.js";
 import { OpencodeConfigSchema, type OpencodeConfig, type ProviderConfig } from "../../../shared/src/types/config-schema.js";
 import { ConfigRepo } from "../../../storage/src/sqlite/repositories/config-repo.js";
 import { resolveProviderCredential } from "../auth/provider-auth-service.js";
-import { get as getModelsDev } from "../models-dev.js";
+import { get as getModelsDev, readModelsCacheMetadata, refreshWithMetadata } from "../models-dev.js";
 
 const SUPPORTED_SDKS = new Set([
   "@ai-sdk/openai",
@@ -80,6 +80,30 @@ export async function loadProviderRuntimeConfig(
   return resolveProviderRuntimeConfig(providerId, catalog, config.provider?.[providerId], overrides[providerId]);
 }
 
+export async function loadModelCatalog(
+  repoRoot: string,
+  input: { providerId?: string; refresh?: boolean; verbose?: boolean; catalog?: Record<string, Info> } = {},
+): Promise<ModelCatalogReport> {
+  const cache = input.refresh ? await refreshWithMetadata(true) : { refreshed: false, cache: await readModelsCacheMetadata() };
+  const catalog = input.catalog ?? await getModelsDev();
+  const registry = await loadProviderRegistry(repoRoot, { catalog });
+  const providerEntries = registry.providers.filter((provider) => !input.providerId || provider.providerId === input.providerId);
+  const models: ModelCatalogEntry[] = [];
+
+  for (const provider of providerEntries) {
+    const runtime = await loadProviderRuntimeConfig(repoRoot, provider.providerId, { catalog });
+    for (const [modelId, model] of Object.entries(runtime.models ?? {}).sort(([left], [right]) => left.localeCompare(right))) {
+      models.push(toModelCatalogEntry(provider.providerId, modelId, model, Boolean(input.verbose)));
+    }
+  }
+
+  return {
+    refreshed: cache.refreshed,
+    cache: cache.cache,
+    models,
+  };
+}
+
 export function resolveProviderRuntimeConfig(
   providerId: string,
   catalog: Record<string, Info>,
@@ -139,4 +163,29 @@ function providerDefaultNpm(providerId: string): string | undefined {
     openrouter: "@openrouter/ai-sdk-provider",
   };
   return defaults[providerId];
+}
+
+function toModelCatalogEntry(providerId: string, modelId: string, model: unknown, verbose: boolean): ModelCatalogEntry {
+  const item = model && typeof model === "object" ? model as Record<string, unknown> : {};
+  const status = typeof item.status === "string" ? item.status : undefined;
+  const entry: ModelCatalogEntry = {
+    providerId,
+    modelId,
+    name: typeof item.name === "string" ? item.name : modelId,
+    available: status !== "deprecated",
+  };
+
+  if (verbose) {
+    entry.status = status;
+    entry.releaseDate = typeof item.release_date === "string" ? item.release_date : undefined;
+    entry.limit = objectField(item.limit);
+    entry.cost = objectField(item.cost);
+    entry.modalities = objectField(item.modalities);
+  }
+
+  return entry;
+}
+
+function objectField(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }

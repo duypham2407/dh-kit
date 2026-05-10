@@ -3,6 +3,7 @@ import { runConfigEmbeddingFlow } from "../interactive/config-embedding-flow.js"
 import { verifyConfiguredModelForLane } from "../../../../packages/opencode-app/src/config/verify-configured-model.js";
 import { createConfigService } from "../../../../packages/opencode-app/src/config/config-service.js";
 import type { SemanticMode } from "../../../../packages/shared/src/types/lane.js";
+import { loadProviderRegistry } from "../../../../packages/providers/src/config/provider-config-loader.js";
 
 const VALID_SEMANTIC_MODES: SemanticMode[] = ["always", "auto", "off"];
 
@@ -63,6 +64,7 @@ export async function runConfigCommand(args: string[], repoRoot: string): Promis
     const semanticMode = configService.getSemanticMode();
     const embeddingConfig = configService.getEmbeddingConfig();
     const assignments = await configService.listAssignments();
+    const providers = await loadProviderRegistry(repoRoot);
     const keySet = typeof process.env[embeddingConfig.apiKeyEnvVar] === "string" && process.env[embeddingConfig.apiKeyEnvVar]!.length > 0;
 
     const lines = [
@@ -85,6 +87,17 @@ export async function runConfigCommand(args: string[], repoRoot: string): Promis
     } else {
       for (const a of assignments) {
         lines.push(`  ${a.agentId}: ${a.providerId}/${a.modelId}/${a.variantId}`);
+      }
+    }
+
+    lines.push("", "Provider registry:");
+    if (providers.providers.length === 0) {
+      lines.push("  (none configured)");
+    } else {
+      for (const provider of providers.providers) {
+        const source = provider.credentialSource ? ` (${provider.credentialSource})` : "";
+        const runtime = provider.runtimeAvailable ? "available" : `unavailable:${provider.unavailableReason ?? "unknown"}`;
+        lines.push(`  ${provider.providerId}: credential: ${provider.credentialStatus}${source}; models: ${provider.modelCount}; runtime: ${runtime}`);
       }
     }
 

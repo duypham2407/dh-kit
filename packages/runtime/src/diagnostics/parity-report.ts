@@ -16,7 +16,7 @@ export const OPENCODE_MISSING_COMMAND_SURFACES = [
   "acp",
 ] as const;
 
-const RECOMMENDED_NEXT_MILESTONE = "Milestone 12: Web/Desktop Decision";
+const RECOMMENDED_NEXT_MILESTONE = "No active parity milestone after Milestone 12";
 
 const FEATURES: ParityFeature[] = [
   {
@@ -289,9 +289,12 @@ const FEATURES: ParityFeature[] = [
     status: "out_of_scope",
     priority: "P3",
     missingCommandSurfaces: [],
-    missingRuntimeCapabilities: ["desktop app", "cloud console", "remote share service"],
-    nextMilestone: "No milestone until local/server/TUI surfaces prove stable",
-    notes: ["This is intentionally outside the first parity program."],
+    missingRuntimeCapabilities: ["web app", "desktop app", "cloud console", "remote share service"],
+    nextMilestone: RECOMMENDED_NEXT_MILESTONE,
+    notes: [
+      "This is intentionally outside the first parity program.",
+      "Web and desktop implementation deferred by ADR 2026-05-10.",
+    ],
   },
 ];
 

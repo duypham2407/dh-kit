@@ -48,10 +48,10 @@ describe("buildOpenCodeParityReport", () => {
     ).toEqual([]);
   });
 
-  it("recommends web and desktop decision as the next milestone", () => {
+  it("reports no active parity milestone after the web and desktop ADR", () => {
     const report = buildOpenCodeParityReport();
 
-    expect(report.summary.recommendedNextMilestone).toBe("Milestone 12: Web/Desktop Decision");
+    expect(report.summary.recommendedNextMilestone).toBe("No active parity milestone after Milestone 12");
     expect(report.summary.byStatus.partial).toBeGreaterThan(0);
     expect(report.summary.byStatus.planned).toBe(0);
     expect(report.summary.byStatus.deferred).toBeGreaterThan(0);
@@ -214,6 +214,23 @@ describe("buildOpenCodeParityReport", () => {
       "WebSocket/event streaming",
       "interactive permission approval API",
       "TUI plugin hooks",
+    ]));
+  });
+
+  it("keeps web and desktop implementation out of scope after the ADR", () => {
+    const report = buildOpenCodeParityReport();
+    const packaging = report.features.find((feature) => feature.category === "packaging");
+
+    expect(packaging?.status).toBe("out_of_scope");
+    expect(packaging?.dhSurface).toEqual(expect.arrayContaining(["local CLI release assets"]));
+    expect(packaging?.missingRuntimeCapabilities).toEqual(expect.arrayContaining([
+      "web app",
+      "desktop app",
+      "cloud console",
+      "remote share service",
+    ]));
+    expect(packaging?.notes).toEqual(expect.arrayContaining([
+      "Web and desktop implementation deferred by ADR 2026-05-10.",
     ]));
   });
 });

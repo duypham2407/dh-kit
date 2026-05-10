@@ -8,7 +8,6 @@ import {
 } from "../../../shared/src/types/parity.js";
 
 export const OPENCODE_MISSING_COMMAND_SURFACES = [
-  "serve",
   "web",
   "attach",
   "db",
@@ -17,7 +16,7 @@ export const OPENCODE_MISSING_COMMAND_SURFACES = [
   "acp",
 ] as const;
 
-const RECOMMENDED_NEXT_MILESTONE = "Milestone 10: Server/SDK";
+const RECOMMENDED_NEXT_MILESTONE = "Milestone 11: TUI MVP";
 
 const FEATURES: ParityFeature[] = [
   {
@@ -61,6 +60,7 @@ const FEATURES: ParityFeature[] = [
     ],
     dhSurface: [
       "run (rust-hosted)",
+      "serve",
       "ask",
       "explain",
       "trace",
@@ -85,7 +85,7 @@ const FEATURES: ParityFeature[] = [
     status: "partial",
     priority: "P0",
     missingCommandSurfaces: [...OPENCODE_MISSING_COMMAND_SURFACES],
-    missingRuntimeCapabilities: ["headless server command surface", "db/github/pr/acp command surfaces"],
+    missingRuntimeCapabilities: ["web/attach/db/github/pr/acp command surfaces"],
     nextMilestone: RECOMMENDED_NEXT_MILESTONE,
     notes: ["DH now has run, session, provider/model, and local MCP lifecycle command surfaces."],
   },
@@ -234,13 +234,13 @@ const FEATURES: ParityFeature[] = [
     category: "server",
     surface: "Headless server and SDK",
     opencodeSurface: ["serve", "SDK client/server architecture"],
-    dhSurface: [],
-    status: "planned",
+    dhSurface: ["local HTTP server", "SDK client", "health route", "run command route", "local bind password guard"],
+    status: "partial",
     priority: "P2",
-    missingCommandSurfaces: ["serve"],
-    missingRuntimeCapabilities: ["local HTTP/WebSocket server", "session/event/provider/MCP APIs", "SDK client"],
-    nextMilestone: "Milestone 10: Server/SDK",
-    notes: ["Server should build on the run/session/event contract after it is stable."],
+    missingCommandSurfaces: [],
+    missingRuntimeCapabilities: ["WebSocket/event streaming", "complete session/provider/MCP APIs", "server lifecycle under Rust supervision"],
+    nextMilestone: RECOMMENDED_NEXT_MILESTONE,
+    notes: ["Local JSON HTTP server and SDK exist; streaming and full API coverage remain next server hardening work."],
   },
   {
     category: "tui",

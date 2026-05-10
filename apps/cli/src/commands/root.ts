@@ -18,6 +18,7 @@ import { runProvidersCommand } from "./providers.js";
 import { runQuickCommand } from "./quick.js";
 import { runRunCommand } from "./run.js";
 import { runSemanticCleanupCommand } from "./semantic-cleanup.js";
+import { runServeCommand } from "./serve.js";
 import { runSessionCommand } from "./session.js";
 import { runStatsCommand } from "./stats.js";
 import { runTraceCommand } from "./trace.js";
@@ -29,6 +30,7 @@ const HELP = `dh <command> [args]
 
 Commands:
   run [message] [--json] [--continue|--session <id>] [--file <path>]  (Rust-hosted direct run path)
+  serve [--host <host>] [--port <port>] [--password <password>] [--json]
   session <list|show|delete|fork> [options]
   export [session-id] [--sanitize]
   import <file>
@@ -84,6 +86,8 @@ export async function runCli(args: string[], repoRoot: string): Promise<number> 
   switch (command) {
     case "run":
       return runRunCommand(rest, repoRoot);
+    case "serve":
+      return runServeCommand(rest, repoRoot);
     case "session":
       return runSessionCommand(rest, repoRoot);
     case "export":

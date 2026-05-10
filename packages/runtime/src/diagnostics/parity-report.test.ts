@@ -21,7 +21,6 @@ describe("buildOpenCodeParityReport", () => {
     expect(report.summary.missingCommandSurfaces).toEqual(OPENCODE_MISSING_COMMAND_SURFACES);
     expect(report.summary.missingCommandSurfaces).toEqual(
       expect.arrayContaining([
-        "serve",
         "web",
         "attach",
         "db",
@@ -40,6 +39,7 @@ describe("buildOpenCodeParityReport", () => {
     expect(report.summary.missingCommandSurfaces).not.toContain("stats");
     expect(report.summary.missingCommandSurfaces).not.toContain("agent");
     expect(report.summary.missingCommandSurfaces).not.toContain("plugin");
+    expect(report.summary.missingCommandSurfaces).not.toContain("serve");
     expect(report.summary.missingCommandSurfaces).not.toEqual(
       expect.arrayContaining(["ask", "explain", "trace", "index", "doctor"]),
     );
@@ -48,10 +48,10 @@ describe("buildOpenCodeParityReport", () => {
     ).toEqual([]);
   });
 
-  it("recommends server SDK as the next milestone", () => {
+  it("recommends TUI as the next milestone", () => {
     const report = buildOpenCodeParityReport();
 
-    expect(report.summary.recommendedNextMilestone).toBe("Milestone 10: Server/SDK");
+    expect(report.summary.recommendedNextMilestone).toBe("Milestone 11: TUI MVP");
     expect(report.summary.byStatus.partial).toBeGreaterThan(0);
     expect(report.summary.byStatus.planned).toBeGreaterThan(0);
     expect(report.summary.byStatus.deferred).toBeGreaterThan(0);

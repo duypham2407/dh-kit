@@ -73,7 +73,7 @@ cd ~/Code/your-project
 dh --help
 dh status
 dh index
-dh ask "how does auth work?"
+dh explain "functionName"    # Recommended: lookup specific symbols
 ```
 
 Running bare `dh` prints first-run onboarding and next steps. It does not start
@@ -90,15 +90,45 @@ export OPENAI_API_KEY="sk-..."
 ## Most Important Commands
 
 ```sh
-dh                          # First-run onboarding and next steps
-dh --help                   # Full command list for the installed binary
-dh status                   # Workspace/index/database state
-dh index                    # Build or refresh the local index
-dh ask "how does auth work?"
-dh explain "createServer"
-dh trace "request flow"     # May return unsupported in the bounded contract
-dh quick "fix the login bug"
+dh                             # First-run onboarding and next steps
+dh --help                      # Full command list for the installed binary
+dh status                      # Workspace/index/database state
+dh index                       # Build or refresh the local index
+dh explain "functionName"      # Lookup symbols (recommended)
+dh ask "how does auth work?"   # Bounded support, may return unsupported
+dh trace "request flow"        # May return unsupported in current version
+dh quick "add logging"         # Quick-lane workflow (requires API key)
 ```
+
+## Understanding Knowledge Commands
+
+`dh` provides two main commands for exploring your codebase: `ask` and `explain`.
+
+### When to use `dh explain`
+
+**Use `dh explain` for symbol lookups** (functions, classes, variables):
+
+```sh
+dh explain "functionName"
+dh explain "ClassName"
+```
+
+`dh explain` works reliably for finding definitions and is the **recommended** command for looking up specific code symbols.
+
+### When to use `dh ask`
+
+`dh ask` has **bounded support** in the current release:
+
+- ✅ **Supported**: Search-aware file discovery, definition locations, one-hop relationships
+- ⚠️ **Limited**: Broad "how does X work" questions often return "unsupported"
+- ✅ **Supported**: Bounded broad-understanding with finite static subjects via `query.buildEvidence`
+
+**If `dh ask` returns "unsupported"**, try:
+1. Using `dh explain` for specific symbol lookups instead
+2. Running `dh index` to refresh the index
+3. Reformulating as a more specific question about a concrete symbol or file
+
+This is a known limitation of the bounded Rust-hosted architecture (see "Rust-Host Knowledge Boundary" above). As the system evolves, more question types will be supported.
 
 ## Version
 
@@ -124,18 +154,22 @@ cd ~/Code/your-project
 dh index
 ```
 
-4. Ask a grounded question:
-
-```sh
-dh ask "how does auth work?"
-```
-
-5. Use symbol-focused commands when the question is narrower:
+4. Look up specific code symbols:
 
 ```sh
 dh explain "createServer"
-dh trace "request flow"
+dh explain "UserModel"
 ```
+
+`dh explain` is the recommended command for finding definitions and understanding specific functions, classes, or variables.
+
+5. Try knowledge queries (bounded support):
+
+```sh
+dh ask "where is UserModel defined?"
+```
+
+Note: Many `dh ask` queries may return "unsupported" in the current release. Use `dh explain` for reliable symbol lookups.
 
 `dh trace` is Rust-hosted on the process lifecycle path, but the current bounded
 command result can still be `unsupported`.

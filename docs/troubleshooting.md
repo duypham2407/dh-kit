@@ -72,6 +72,24 @@ dh status
 dh index
 ```
 
+## Message "Shell cwd was reset to ..."
+
+Nếu bạn thấy message:
+
+```
+Shell cwd was reset to /path/to/directory
+```
+
+Đây **không phải** là lỗi của `dh`. Đây là thông báo từ Claude Code CLI tool (nếu bạn đang chạy `dh` trong Claude Code session). Message này chỉ mang tính thông tin và không ảnh hưởng đến việc thực thi lệnh.
+
+Working directory thực tế của bạn không bị thay đổi. Bạn có thể verify với:
+
+```sh
+pwd
+```
+
+Nếu bạn không dùng Claude Code, message này sẽ không xuất hiện.
+
 ## Cần gỡ `dh`
 
 ```sh

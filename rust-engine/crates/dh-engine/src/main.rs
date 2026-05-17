@@ -31,7 +31,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     Init {
-        #[arg(long)]
+        #[arg(long, default_value = ".")]
         workspace: PathBuf,
     },
     Status {
@@ -41,7 +41,7 @@ enum Commands {
         workspace_id: i64,
     },
     Index {
-        #[arg(long)]
+        #[arg(long, default_value = ".")]
         workspace: PathBuf,
         #[arg(long, default_value_t = false)]
         force_full: bool,

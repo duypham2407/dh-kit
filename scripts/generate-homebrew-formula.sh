@@ -32,13 +32,16 @@ else
   VERSION="0.1.0"
 fi
 
-# Extract SHA256 for each macOS binary
-SHA_ARM64=$(grep 'dh-darwin-arm64' "$SHA256_FILE" | awk '{print $1}')
-SHA_AMD64=$(grep 'dh-darwin-amd64' "$SHA256_FILE" | awk '{print $1}')
+# Extract SHA256 for each macOS tarball. The formula installs the self-contained
+# per-platform tarball (binary + ts-worker/ bundle), not the bare binary — the Rust host
+# resolves worker.mjs relative to the `dh` binary, so the worker must ship alongside it.
+SHA_ARM64=$(awk '$2 == "dh-darwin-arm64.tar.gz" {print $1}' "$SHA256_FILE")
+SHA_AMD64=$(awk '$2 == "dh-darwin-amd64.tar.gz" {print $1}' "$SHA256_FILE")
 
 if [ -z "$SHA_ARM64" ] || [ -z "$SHA_AMD64" ]; then
-  echo "Could not find SHA256 for macOS binaries in $SHA256_FILE" >&2
-  echo "Expected entries for dh-darwin-arm64 and dh-darwin-amd64" >&2
+  echo "Could not find SHA256 for macOS tarballs in $SHA256_FILE" >&2
+  echo "Expected entries for dh-darwin-arm64.tar.gz and dh-darwin-amd64.tar.gz" >&2
+  echo "(run scripts/package-release.sh to produce per-platform tarballs)" >&2
   exit 1
 fi
 
@@ -52,23 +55,31 @@ class Dh < Formula
   version "$VERSION"
   license "MIT"
 
-  depends_on "node@24"
+  # The Rust host spawns a bare \`node\` resolved from PATH and requires Node major >= 22.
+  # Use the unversioned, keg-linked node (on PATH); versioned node@NN formulae are keg-only
+  # and would not be visible to the host's PATH lookup.
+  depends_on "node"
 
   if OS.mac? && Hardware::CPU.arm?
-    url "$DOWNLOAD_BASE/dh-darwin-arm64"
+    url "$DOWNLOAD_BASE/dh-darwin-arm64.tar.gz"
     sha256 "$SHA_ARM64"
   elsif OS.mac? && Hardware::CPU.intel?
-    url "$DOWNLOAD_BASE/dh-darwin-amd64"
+    url "$DOWNLOAD_BASE/dh-darwin-amd64.tar.gz"
     sha256 "$SHA_AMD64"
   end
 
   def install
-    binary_name = Dir["dh-*"].first || "dh"
-    bin.install binary_name => "dh"
+    # Tarball contains: dh, ts-worker/worker.mjs, ts-worker/manifest.json.
+    # Install the worker bundle as a sibling of the binary so current_exe()-relative
+    # resolution finds #{bin}/ts-worker/worker.mjs at runtime.
+    bin.install "dh"
+    (bin/"ts-worker").install "ts-worker/worker.mjs", "ts-worker/manifest.json"
   end
 
   test do
     assert_match "dh", shell_output("#{bin}/dh --help")
+    assert_predicate bin/"ts-worker/worker.mjs", :exist?
+    assert_predicate bin/"ts-worker/manifest.json", :exist?
   end
 end
 FORMULA

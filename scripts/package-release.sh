@@ -46,6 +46,28 @@ cp "$WORKER_BUNDLE_DIR/manifest.json" "$OUTPUT_DIR/ts-worker/manifest.json"
 cp "$WORKER_BUNDLE_DIR/worker.mjs" "$OUTPUT_DIR/worker.mjs"
 cp "$WORKER_BUNDLE_DIR/manifest.json" "$OUTPUT_DIR/worker-manifest.json"
 
+# Per-platform tarballs that bundle the binary (as `dh`) with the worker bundle as a
+# `ts-worker/` sibling. This is the self-contained artifact the Homebrew formula installs:
+# the Rust host resolves worker.mjs relative to the `dh` binary, so the bundle must ship
+# alongside it. Built before the checksum/manifest loops below so the dh-* glob includes them.
+# Staged via a temp dir (instead of tar --transform/-s) to stay portable across GNU/BSD tar.
+for binary in "$OUTPUT_DIR"/dh-*; do
+  [ -f "$binary" ] || continue
+  case "$binary" in
+    *.tar.gz) continue ;;
+  esac
+  asset=$(basename "$binary")
+  stage="$OUTPUT_DIR/.pkg-$asset"
+  rm -rf "$stage"
+  mkdir -p "$stage/ts-worker"
+  cp "$binary" "$stage/dh"
+  chmod +x "$stage/dh"
+  cp "$OUTPUT_DIR/ts-worker/worker.mjs" "$stage/ts-worker/worker.mjs"
+  cp "$OUTPUT_DIR/ts-worker/manifest.json" "$stage/ts-worker/manifest.json"
+  tar -C "$stage" -czf "$OUTPUT_DIR/$asset.tar.gz" dh ts-worker/worker.mjs ts-worker/manifest.json
+  rm -rf "$stage"
+done
+
 (
   cd "$OUTPUT_DIR"
 

@@ -1,5 +1,7 @@
 # DH Implementation Roadmap
 
+> **Archived — Go-era / OpenCode-upstream design doc, retained for provenance.** Describes the abandoned forked-Go-core + upstream-vendoring direction. The Go core was removed in `ee2c1e2`; the runtime is now the Rust `dh-engine` host. Current architecture: `docs/architecture/system-overview.md`. Direction: `docs/adr/2026-05-10-personal-coding-assistant-direction.md`.
+
 Last reviewed against code: 2026-04-05
 
 ## Mục tiêu

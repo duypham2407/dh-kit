@@ -1,5 +1,7 @@
 # DH OpenCode Integration Decision
 
+> **Archived — superseded ADR, retained as decision history.** This ADR chose a forked Go OpenCode runtime core (`packages/opencode-core/`) with 6 Go hooks. That direction was reversed: the Go core was removed in `ee2c1e2`, the runtime is now the Rust `dh-engine` host. Current direction: `docs/adr/2026-05-10-personal-coding-assistant-direction.md`. Current architecture: `docs/architecture/system-overview.md`. Kept for provenance only.
+
 Last reviewed against code: 2026-04-05
 
 ## Status

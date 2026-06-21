@@ -1,466 +1,196 @@
 # DH System Overview
 
-Last reviewed against code: 2026-04-05
+Last reviewed against code: 2026-06-21
 
 ## Mục tiêu
 
-Tài liệu này mô tả kiến trúc tổng thể của `dh`, một AI software factory sở hữu toàn bộ runtime qua fork hoàn toàn OpenCode (Go core + TypeScript SDK), tập trung vào:
+Tài liệu này mô tả kiến trúc thực tế của `dh`, một AI coding assistant local-first chạy trên
+terminal cho macOS/Linux. Kiến trúc chia làm hai nửa rõ ràng:
 
-- ranh giới giữa các layer và package
-- vai trò của forked OpenCode runtime và 6 hook points
-- luồng dữ liệu chính từ query đến answer
-- trách nhiệm của từng khối
-- nguyên tắc thiết kế để AI có thể search, đọc hiểu và trace codebase chắc chắn
+- **Rust engine** (`dh-engine`): code intelligence + runtime host. Scan repo, parse bằng
+  tree-sitter, lưu SQLite, trả lời truy vấn có bằng chứng trong phạm vi giới hạn, và **làm chủ
+  process lifecycle** của toàn bộ cây tiến trình local.
+- **TypeScript worker** (`worker.mjs`): workflow/agent/LLM logic, chạy như tiến trình con được
+  Rust giám sát.
 
-Tài liệu này là overview cấp hệ thống. Chi tiết schema index nằm ở `docs/architecture/indexing-model.md`. Chi tiết retrieval pipeline nằm ở `docs/architecture/retrieval-strategy.md`. Chi tiết quyết định fork nằm ở `docs/architecture/opencode-integration-decision.md`. Bản nguyên tắc đọc hiểu code của DH nằm ở `docs/architecture/dh-code-understanding-principles-reference.md`. Bản kỹ thuật structural/hybrid retrieval chi tiết nằm ở `docs/architecture/ai-code-understanding-structural-techniques.md`.
+Tài liệu này là overview cấp hệ thống. Chi tiết schema index nằm ở
+`docs/architecture/indexing-model.md`. Chi tiết retrieval nằm ở
+`docs/architecture/retrieval-strategy.md`. Source tree thật nằm ở
+`docs/architecture/source-tree-blueprint.md`. Định hướng sản phẩm hiện tại nằm ở
+`docs/adr/2026-05-10-personal-coding-assistant-direction.md`.
 
-Current implementation note:
+> Lưu ý lịch sử: bản trước của tài liệu này mô tả `dh` như một fork OpenCode với Go core. Hướng
+> đó đã bị bỏ — Go core bị gỡ hoàn toàn ở commit `ee2c1e2`. Các tài liệu Go-era được giữ ở
+> `docs/archive/architecture/` chỉ để tham chiếu lịch sử.
 
-- Đây là tài liệu mô tả target architecture của hệ thống.
-- Ở code hiện tại, các phần chính của application, retrieval, intelligence, storage, Go runtime hook wiring và binary distribution path đã có implementation và validation usable end-to-end.
-- Các phần target-state trong tài liệu này nên được đọc chủ yếu như hướng scale-up, tuning và mở rộng capability, không còn là phần nền tảng chưa hoàn tất.
+## Ranh giới quyền lực (runtime authority)
 
-## Mục tiêu sản phẩm
+Nguyên tắc nền: **Rust là host, TypeScript là worker.** Ranh giới này được mã hóa trong code,
+không chỉ trong docs:
 
-Hệ thống cần hỗ trợ tốt các nhóm use case sau:
+- `packages/shared/src/types/runtime-authority.ts` — type `RuntimeAuthorityOwner`
+  (`"rust" | "typescript_worker" | "typescript_compatibility"`) và `finalStatus` được đóng dấu
+  lên mọi kết quả.
+- `rust-engine/crates/dh-engine/src/host_lifecycle.rs::lifecycle_contract()` — Rust khai báo nó
+  sở hữu startup, readiness, health, timeout, recovery, shutdown, cleanup và exit classification.
 
-1. `find definition`
-2. `explain module`
-3. `trace flow`
-4. `impact analysis`
-5. `bug investigation`
-6. `codebase Q&A`
+Phân chia trách nhiệm:
 
-Đầu ra kỳ vọng:
-
-- câu trả lời có evidence rõ ràng
-- có thể trích dẫn file, symbol và line range
-- context được xây từ nhiều nguồn thay vì chỉ text match
-- runtime có thể kiểm tra AI đã dùng đúng tool chưa
-- workflow lane được giữ ổn định trong suốt session
-
-## Nguyên tắc thiết kế
-
-1. Context quality quan trọng hơn model size.
-2. Code intelligence phải là capability lõi, không phải phần phụ.
-3. Retrieval phải là hybrid retrieval: semantic + keyword + AST + graph.
-4. Tool usage phải được enforce ở runtime bằng code hook, không chỉ prompt.
-5. Mỗi layer chỉ nên giữ một loại trách nhiệm chính.
-6. Evidence phải đi cùng context trong toàn bộ pipeline.
-7. Lane lock là runtime contract bắt buộc.
-8. `dh` sở hữu runtime qua fork — không phụ thuộc external install.
-9. 6 hook points là surface kiểm soát chính cho mọi enforcement.
+| Quyền | Chủ sở hữu |
+|---|---|
+| Process lifecycle: spawn/supervise/timeout/recovery/exit-code | Rust `dh-engine` |
+| Code intelligence: parse, index, store, query evidence | Rust crates |
+| Workflow/agent orchestration, prompt, LLM call, session memory | TS worker |
 
 ## Kiến trúc phân lớp
 
-Hệ thống gồm 6 khối chính, trong đó forked OpenCode runtime là lõi thực thi:
-
 ```text
-CLI Interface
--> dh Application Layer (lane, planning, enforcement, context)
--> Forked OpenCode Runtime (Go core + TS SDK, with 6 dh hooks)
--> Retrieval Layer
--> Code Intelligence Engine
--> Storage + Runtime Services
+CLI (apps/cli, hoặc invoke trực tiếp dh-engine)
+-> Rust host: dh-engine (supervisor + bridge RPC router + lifecycle authority)
+   -> spawn + giám sát TS worker (node worker.mjs) qua JSON-RPC/stdio
+   -> phục vụ reverse-RPC query.* từ worker vào QueryEngine trên SQLite
+-> Rust code-intelligence crates: dh-indexer / dh-parser / dh-query / dh-graph / dh-storage
+-> SQLite (dh-index.db): sqlite-vec + FTS5
 ```
 
-Quan hệ thực tế:
+TS worker không bao giờ tự spawn Rust; nó chỉ phục vụ command và gọi ngược vào host đang chạy
+(`HostBridgeClient`).
 
-- `CLI Interface` gọi `dh Application Layer`
-- `Application Layer` quyết định policy, tạo execution envelope
-- `Forked Runtime` là target nơi policy sẽ được enforce đầy đủ qua 6 hooks: model override, pre-tool-exec, pre-answer, skill activation, MCP routing, session state injection
-- `Retrieval` truy vấn dữ liệu từ `Storage` và logic từ `Code Intelligence Engine`
-- `Runtime Services` hỗ trợ jobs, telemetry, watch, diagnostics
+## Rust crate map
 
-## Runtime Hook Points
+7 crate, đồ thị phụ thuộc là DAG không có cycle (leaf → root):
 
-`dh` patch 6 hook points vào forked OpenCode Go core. Đây là surface kiểm soát trung tâm:
+| Crate | Vai trò |
+|---|---|
+| `dh-types` | leaf — vocab chung: File/Symbol/Span/Chunk/EdgeKind/EvidencePacket/AnswerState |
+| `dh-storage` | SQLite (rusqlite bundled + sqlite-vec + FTS5), repository traits, schema |
+| `dh-parser` | tree-sitter extraction: TS/TSX/JS/JSX đầy đủ; Python/Go/Rust adapter; module resolver |
+| `dh-graph` | projection `graph_edges`, hydration theo freshness |
+| `dh-query` | trait `QueryEngine`; `build_evidence` — entrypoint bounded explain-only |
+| `dh-indexer` | pipeline: scan → hash (blake3) → dirty-set → parse/persist → link → hydrate → embed |
+| `dh-engine` | binary: CLI + worker supervisor + bridge RPC router + lifecycle authority |
 
-| Hook | Where in Go Core | Purpose |
-|---|---|---|
-| Model Selection Override | model dispatch path | Override model cho từng agent identity |
-| Pre-Tool-Execution | tool execution path | Enforce required tools, block unauthorized, audit log |
-| Pre-Answer | answer pipeline | Validate evidence, gate confidence, retry nếu thiếu |
-| Skill Activation | agent initialization | Inject active skills theo lane/role/intent policy |
-| MCP Routing | MCP connection/dispatch | Override MCP priority và blocking per task type |
-| Session State Injection | session context building | Inject dh lane, stage, envelope, semantic mode |
+Phụ thuộc: `dh-engine` → tất cả; `dh-indexer` → parser/storage/graph/query/types;
+`dh-query`/`dh-graph` → storage/types; mọi crate → `dh-types`.
 
-Chi tiết interface cho từng hook nằm ở `docs/architecture/opencode-integration-decision.md`.
+## TypeScript package map
 
-## Workflow modes
+Đây là các package logic (xem `source-tree-blueprint.md` về việc chúng không phải npm workspace
+unit thật). Tất cả dep nằm ở `package.json` gốc; import chéo dùng path tương đối + tsconfig alias.
 
-`dh` có 3 workflow mode chính:
+| Package | Vai trò |
+|---|---|
+| `opencode-app` | package TS lớn nhất: worker entry, lane workflows, team/tools/agent/planner/executor |
+| `providers` | wrapper quanh Vercel AI SDK + các `@ai-sdk/*` provider, model routing |
+| `runtime` | session, workflow state, hooks, diagnostics, extensions |
+| `retrieval` + `storage` | RAG TS (legacy cho luồng Rust-hosted — xem mục Canonical vs legacy) |
+| `intelligence` | parse bằng web-tree-sitter WASM (song song với Rust `dh-parser`) |
+| `opencode-sdk` | SDK/bridge nội bộ dh-original (KHÔNG vendored), cung cấp protocol + runtime values |
+| `shared` | types/constants/contracts dùng chung, gồm `runtime-authority.ts` |
+| `sdk` + `server` | fetch client + localhost HTTP server cho `dh serve` / TUI |
 
-1. `quick`
-2. `delivery`
-3. `migration`
+Apps: `apps/cli` (router lệnh mỏng), `apps/tui` (REPL readline trên `dh serve`).
 
-Mỗi mode là một lane runtime thực sự với topology và policy riêng.
+> Tên `opencode-app` / `opencode-sdk` / `opencode.json` là di tích branding ban đầu — đây là code
+> dh-original, không phải fork upstream (xem `packages/opencode-sdk/FORK_ORIGIN.md`).
 
-### `quick`
-
-- 1 agent owner
-- dùng đầy đủ retrieval và intelligence stack
-- tối ưu tốc độ cho task hàng ngày
-
-### `delivery`
-
-- coordinator
-- analyst
-- architect
-- implementers
-- reviewers
-- testers
-
-Quy tắc điều phối:
-
-- phân tích và thiết kế chạy tuần tự
-- thực thi và kiểm tra có thể song song nếu task độc lập
-
-### `migration`
-
-- topology giống `delivery`
-- policy ưu tiên preserve behavior
-- giữ nguyên UI/UX và core logic khi nâng stack hoặc migrate project
-
-## Lane lock
-
-Khi session đã vào một lane bằng command tương ứng, lane đó bị khóa cho đến khi user chủ động chọn lane khác.
-
-Ví dụ:
-
-- `/quick` -> session lock = `quick`
-- `/delivery` -> session lock = `delivery`
-- `/migrate` -> session lock = `migration`
-
-Coordinator hoặc orchestrator không được tự override lane lock.
-
-## Package boundaries
-
-Cấu trúc thực tế của `dh`:
+## Luồng điều khiển — `dh ask` / `explain` / `trace`
 
 ```text
-apps/
-  cli/
-
-packages/
-  opencode-core/     <- Forked Go runtime with dh hooks
-  opencode-sdk/      <- dh-owned internal bridge SDK
-  shared/
-  opencode-app/      <- dh application logic
-  intelligence/
-  retrieval/
-  storage/
-  runtime/
-  providers/
+CLI -> main::run_knowledge_command
+  -> resolve worker bundle (worker.mjs) + check platform (chỉ linux/macos)
+  -> host_commands::run_hosted_knowledge_command: mở dh-index.db
+  -> dựng WorkerSupervisor + BridgeRpcRouter (bound vào DB)
+  -> supervisor spawn `node worker.mjs`
+  -> handshake: dh.initialize / version-check / dh.initialized / dh.ready
+  -> gửi session.runCommand
+       worker dựng report bằng TS, nhưng gọi NGƯỢC JSON-RPC query.* (search/definition/
+       buildEvidence/...) -> host_handler -> route_worker_query -> dh_query::QueryEngine trên SQLite
+       event.tool.outputChunk stream ra stdout
+  -> khi có kết quả: supervisor.shutdown()
+  -> bọc trong RustHostedKnowledgeReport (Rust giữ lifecycle authority; body TS là "evidence only")
 ```
 
-Target distribution của `dh` là single pre-built binary cho macOS/Linux. Current state vẫn có TypeScript-centric developer/runtime surfaces; khi packaging path hoàn tất thì end users không cần cài Node.js, Go, hay OpenCode riêng.
+Giao thức: JSON-RPC trên stdio, `protocolVersion = 1`, Content-Length framing, codec msgpack/json.
+Lifecycle: heartbeat ping (2 lần miss = fail), timeout → cancel → grace-drain, recovery
+single-restart replay-safe; phân loại `CleanSuccess` vs `RecoveredDegradedSuccess`.
 
-## Trách nhiệm của từng package
+`dh trace` được host hóa trên lifecycle path nhưng kết quả command vẫn có thể là `unsupported`
+trong bản hiện tại — đây là giới hạn cố ý.
 
-### `apps/cli`
-
-Trách nhiệm:
-
-- nhận lệnh từ user
-- hiển thị progress và stream output
-- gọi vào application facade
-
-Không nên chứa:
-
-- parsing logic
-- retrieval logic
-- graph traversal logic
-- hook implementation
-
-### `packages/opencode-core`
-
-Trách nhiệm:
-
-- forked Go runtime — process orchestration, model dispatch, tool execution, LLM streaming
-- 6 hook point integration: model override, pre-tool-exec, pre-answer, skill activation, MCP routing, session state injection
-- binary entrypoint (`cmd/dh/`)
-- build target: cross-compiled binary cho macOS/Linux
-
-Không nên chứa:
-
-- dh business logic (lane policy, skill selection, agent config)
-- TypeScript code trực tiếp trong Go
-
-### `packages/opencode-sdk`
-
-Trách nhiệm:
-
-- dh-owned internal bridge SDK
-- type definitions và protocol contracts
-- client-side utilities cho communication với Go core
-
-### `packages/opencode-app`
-
-Trách nhiệm (đây là nơi chứa dh business logic):
-
-- classify intent
-- resolve lane
-- build retrieval plan
-- chọn tool cần dùng
-- chạy tool song song khi hợp lý
-- merge và rerank evidence
-- build final prompt
-- enforce tool usage policy (called by pre-tool-exec hook)
-- enforce answer confidence policy (called by pre-answer hook)
-- enforce skill activation policy (called by skill activation hook)
-- enforce MCP routing policy (called by MCP routing hook)
-- resolve agent model assignment (called by model override hook)
-- enforce lane lock (called by session state injection hook)
-- điều phối team topology cho `delivery` và `migration`
-
-Đây là nơi quyết định pipeline trả lời.
-
-### `packages/intelligence`
-
-Trách nhiệm:
-
-- parse file bằng tree-sitter hoặc parser phù hợp
-- extract symbol, import, export, call site
-- build import graph và call graph
-- tạo chunk theo symbol hoặc block
-- hỗ trợ incremental indexing
-
-Đây là lõi đọc hiểu codebase.
-
-### `packages/retrieval`
-
-Trách nhiệm:
-
-- semantic search
-- keyword search
-- AST hoặc symbol query
-- graph expansion
-- normalize và score kết quả từ nhiều nguồn
-
-Semantic search trong `dh` mặc định luôn bật và dùng `text-embedding-3-small`, nhưng có thể hạ xuống `auto` hoặc `off` bằng config hoặc command.
-
-Đây là lớp truy xuất và hợp nhất evidence.
-
-### `packages/storage`
-
-Trách nhiệm:
-
-- quản lý SQLite schema và repositories
-- lưu file, symbol, chunk, graph edges
-- lưu embeddings và query logs
-- cung cấp cache cho AST, embedding, retrieval result
-
-### `packages/runtime`
-
-Trách nhiệm:
-
-- session context
-- job runner
-- file watcher
-- telemetry và diagnostics
-- tool audit
-
-### `packages/providers`
-
-Trách nhiệm:
-
-- provider/model/variant registry
-- agent model assignment resolution
-- provider capability sync
-
-### `packages/shared`
-
-Trách nhiệm:
-
-- shared types
-- constants
-- helper utilities
-- normalized contracts giữa các package
-
-## Luồng dữ liệu chính
-
-Luồng trả lời một query:
+## Luồng điều khiển — lane `quick` (và `delivery`/`migration`)
 
 ```text
-User Query
--> CLI Interface
--> dh Application Layer: verify or set lane lock (via session state hook)
--> dh Application Layer: classify intent
--> dh Application Layer: build plan, resolve agent model
--> Forked Runtime: dispatch agent (model override hook selects provider/model/variant)
--> Forked Runtime: agent requests tool (pre-tool-exec hook enforces policy)
--> Retrieval: run hybrid retrieval in parallel
--> Retrieval: merge and rerank
--> Retrieval: graph expansion
--> dh Application Layer: context ranking and trimming
--> Forked Runtime: LLM generates answer (pre-answer hook validates evidence)
--> CLI Interface: stream final answer
+apps/cli/runtime-client.ts -> runLane (mặc định Rust-hosted)
+  -> run-rust-hosted-lane-command.ts: spawn `cargo run -p dh-engine -- <lane> --json`
+  -> parse envelope Rust (workerResult + rustLifecycle), đóng dấu runtimeAuthority='rust'
+       trong worker: session.runLane -> runLaneWorkflow -> runQuickWorkflow
+         -> runQuickAgent (LLM coordinator) + gate eval + browser verify + quality-gate report
 ```
 
-## Hai vòng lặp chính của hệ thống
+Lane thuần TS chỉ chạy khi `DH_ENABLE_TS_LANE_COMPAT=1`, tự đóng dấu `typescript_compatibility`.
 
-### 1. Query-time loop
+## build_evidence — "packet truth"
 
-Vòng lặp này phục vụ câu hỏi thời gian thực:
+`dh-query::build_evidence` là entrypoint bounded cho hiểu-rộng tĩnh:
 
-1. nhận query
-2. classify intent
-3. chạy retrieval
-4. build context
-5. gọi model
-6. validate answer
+- validate intent, phân loại các lớp **unsupported** (`runtime_trace`, `impact_analysis`,
+  `call_hierarchy`, `multi_hop`, `unbounded_scope`).
+- trả về `EvidencePacket` với `AnswerState` (`Grounded` / `Partial` / `Insufficient` /
+  `Unsupported`) kèm bounds và gaps.
 
-Trong `delivery` và `migration`, query-time loop nằm bên trong workflow stage hiện tại và chịu điều phối bởi lane coordinator.
+Đây là lý do `dh ask` từ chối các câu hỏi mở quá rộng thay vì bịa câu trả lời — một quyết định
+thiết kế trung thực, không phải bug.
 
-### 2. Index-time loop
+## Indexing model
 
-Vòng lặp này phục vụ cập nhật kiến thức về codebase:
+`dh-indexer` chạy incremental:
 
-1. enumerate workspace
-2. detect changed files
-3. parse files
-4. extract symbols và edges
-5. build chunks
-6. update storage
-7. refresh embeddings nếu cần
+1. scan workspace
+2. hash bằng blake3 (content / structure / public-API) để tính dirty-set
+3. parse + persist symbol/edge/chunk
+4. link relationship
+5. hydrate graph theo freshness
+6. embed (nếu có `OPENAI_API_KEY`; thiếu key thì degrade về stub zero-vector, doctor báo rõ)
 
-Hai vòng lặp này phải tách rời nhau để request path không bị phụ thuộc vào reindex nặng.
+Freshness state machine: `refreshed` / `retained` / `degraded` / `not_current` / `deleted`.
 
-## Dependency direction
+## Nguyên tắc thiết kế
 
-```text
-apps/cli -> opencode-app -> retrieval -> intelligence -> storage
-apps/cli -> opencode-app -> providers
-opencode-core (Go) -> hooks -> opencode-app (via FFI or embedded TS)
-runtime -> intelligence
-runtime -> storage
-all packages -> shared
-```
+1. Rust làm chủ lifecycle; TS làm workflow. Ranh giới enforce trong code, không chỉ prompt.
+2. Code intelligence là capability lõi (Rust), không phải phần phụ.
+3. Evidence đi cùng câu trả lời; thà trả `unsupported` còn hơn bịa.
+4. Index-time loop tách khỏi query-time loop để request path không phụ thuộc reindex nặng.
+5. Phạm vi cố tình hẹp: hiểu repo tĩnh có giới hạn; không OpenCode parity, không web/desktop,
+   không plugin cộng đồng (xem ADR 2026-05-10).
 
-Không nên để:
+## Canonical vs legacy/compatibility
 
-- `intelligence` phụ thuộc `opencode-app`
-- `storage` phụ thuộc `retrieval`
-- `cli` phụ thuộc trực tiếp `storage`
-- `opencode-core` chứa dh business logic (chỉ chứa hook call sites)
+**Canonical (đường chính):**
+- Rust `dh-engine` host; `runDirect`/`runLane` mặc định Rust-hosted (`runtimeAuthority='rust'`).
+- `ask`/`explain`/`trace` qua worker (`typescript_worker`, evidence ủy quyền cho Rust).
+- `dh-query::build_evidence`; `dh-storage` sqlite-vec; `dh-indexer` native tree-sitter.
 
-## Các primitive cốt lõi của hệ thống
-
-Toàn bộ hệ thống nên xoay quanh một số primitive chuẩn hóa.
-
-### Session
-
-Giữ lane lock, repo target, semantic mode, workflow state.
-
-### Lane
-
-Đại diện cho `quick`, `delivery`, `migration` cùng policy riêng của từng lane.
-
-### Role
-
-Đại diện cho coordinator, analyst, architect, implementer, reviewer, tester.
-
-### Work Item
-
-Đại diện cho đơn vị công việc trong `delivery` hoặc `migration`, là thứ có thể được chia nhỏ để thực thi song song.
-
-### Workspace
-
-Đại diện cho root codebase đang được phân tích.
-
-### File
-
-Đơn vị vật lý trên filesystem, có metadata và parse status.
-
-### Symbol
-
-Đơn vị ngữ nghĩa như function, class, method, interface, route handler, schema block.
-
-### Chunk
-
-Đơn vị context để retrieval và LLM sử dụng, nên bám theo symbol hoặc block.
-
-### Edge
-
-Quan hệ giữa các node, ví dụ import, export, call, reference.
-
-### Evidence Packet
-
-Đơn vị context cuối cùng gửi cho model, có file path, symbol, line range, reason và score.
-
-## Tại sao phải tách Retrieval khỏi Intelligence
-
-Hai khối này liên quan chặt nhưng không nên trộn vào một package.
-
-`Intelligence` chịu trách nhiệm xây hiểu biết nền:
-
-- parse code
-- extract structure
-- build graph
-
-`Retrieval` chịu trách nhiệm dùng hiểu biết đó để trả lời query:
-
-- chạy search
-- merge nhiều nguồn
-- rank theo intent
-
-Tách như vậy giúp:
-
-- dễ benchmark retrieval quality
-- dễ đổi ranking policy mà không phá parser/indexer
-- dễ tái sử dụng intelligence engine cho nhiều workflow khác
-
-## Tại sao phải có Runtime layer riêng
-
-Nếu không có runtime layer, các concern sau thường bị dồn vào CLI hoặc orchestrator:
-
-- index jobs
-- file watcher
-- telemetry
-- debug tools
-- diagnostics
-
-Điều đó khiến hệ thống nhanh chóng rối và khó vận hành. Runtime layer giúp tách phần điều hành sản phẩm khỏi phần logic đọc hiểu code.
-
-## Thiết kế cho độ chắc chắn thay vì chỉ demo
-
-Để AI đọc hiểu codebase chắc chắn, không đủ chỉ có semantic search. Hệ thống cần đồng thời có:
-
-1. symbol-aware indexing
-2. graph-aware expansion
-3. evidence-aware ranking
-4. tool usage enforcement
-5. answer validation
-
-Đây là các yếu tố biến hệ thống từ `text search có LLM` thành `code intelligence app`.
-
-## Những quyết định kiến trúc quan trọng
-
-1. Fork toàn bộ OpenCode runtime (Go core + TypeScript SDK) và diverge hoàn toàn.
-2. Implement 6 runtime hook points trong Go core cho Level 3 control.
-3. Ship dưới dạng single pre-built binary — user không cần runtime dependencies.
-4. Chọn `apps/ + packages/` với `opencode-core` và `opencode-sdk` là packages riêng.
-5. Tách `opencode-app`, `retrieval`, `intelligence`, `storage`, `runtime`, `providers` thành các package độc lập.
-6. Dùng `shared` để chuẩn hóa contracts và tránh circular dependency.
-7. Giữ lane lock như runtime contract không được vi phạm — enforce qua session state injection hook.
-8. Giữ `query-time flow` tách khỏi `index-time flow`.
+**Legacy/compatibility-only:**
+- lane thuần TS `runLaneWorkflow` (gated `DH_ENABLE_TS_LANE_COMPAT=1`).
+- `dh serve` HTTP server + `apps/tui`.
+- retrieval TS (`runRetrieval`/`buildEvidencePackets`) — packet TS non-canonical cho luồng
+  Rust-hosted; vector store TS (JSON-TEXT + JS HNSW) bị Rust BLOB+sqlite-vec thay thế.
 
 ## Tài liệu liên quan
 
-- `docs/project-architecture.md`: tài liệu tổng hợp ý tưởng và roadmap
-- `docs/architecture/opencode-integration-decision.md`: ADR chốt fork strategy, hook points, binary distribution
+- `docs/architecture/source-tree-blueprint.md`: source tree thật
 - `docs/architecture/indexing-model.md`: schema và mô hình index
-- `docs/architecture/retrieval-strategy.md`: strategy cho intent, tool selection và context building
-- `docs/architecture/workflow-orchestration.md`: lane model, handoff rules và orchestration contract
-- `docs/architecture/skills-and-mcp-integration.md`: default skills, MCP routing và activation policy
-- `docs/architecture/agent-contracts.md`: role contracts, execution envelope và escalation rules
-- `docs/architecture/runtime-state-schema.md`: session state, workflow state, work items, envelopes và audits
-- `docs/architecture/model-routing-and-agent-config.md`: agent model assignment, registry và config flow
-- `docs/architecture/source-tree-blueprint.md`: source tree và file layout cho implementation
-- `docs/architecture/implementation-sequence.md`: thứ tự build thực tế theo phases
+- `docs/architecture/retrieval-strategy.md`: intent, tool selection, context building
+- `docs/architecture/workflow-orchestration.md`: lane model, handoff, orchestration contract
+- `docs/architecture/runtime-state-schema.md`: session/workflow/work-item/envelope/audit state
+- `docs/adr/2026-05-10-personal-coding-assistant-direction.md`: định hướng sản phẩm hiện tại
+- `docs/adr/2026-05-10-web-desktop-parity-decision.md`: quyết định không làm web/desktop lúc này
+- `docs/archive/architecture/`: các tài liệu Go-era đã archive (chỉ tham chiếu lịch sử)
 
 ## Kết luận
 
-Kiến trúc này tối ưu cho một mục tiêu rất cụ thể: giúp AI có context thật về codebase thay vì đoán từ text match rời rạc. Muốn đạt điều đó, package boundaries phải rõ, data flow phải tách lớp, evidence phải đi xuyên suốt từ indexing đến final answer, và runtime hooks phải enforce mọi policy ở cấp code.
+Kiến trúc xoay quanh một mục tiêu cụ thể: cho AI context thật về codebase thay vì đoán từ text
+match. Đạt được bằng cách để Rust sở hữu code intelligence + lifecycle (chắc chắn, test kỹ) và để
+TS lo workflow/LLM (linh hoạt, nhiều provider). Ranh giới authority rõ ràng và enforce trong code
+là điểm mạnh nền tảng của hệ thống.

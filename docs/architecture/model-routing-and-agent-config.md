@@ -1,5 +1,7 @@
 # DH Model Routing And Agent Config
 
+> **Runtime note (2026-06):** Enforcement runs in the Rust `dh-engine` host (`HookDispatcher` in `rust-engine/crates/dh-engine/src/hooks.rs`), not a forked Go core. Mentions of "forked Go core" / "6 Go hooks" below are historical framing — the contracts (roles, lanes, routing, state) still hold; only the host changed. See `docs/architecture/system-overview.md`.
+
 Last reviewed against code: 2026-04-05
 
 ## Mục tiêu

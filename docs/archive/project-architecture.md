@@ -1,7 +1,10 @@
 # DH Architecture
 
-> **Archive-only note:** This document reflects historical Go-era architecture framing.
-> It is retained for provenance and is not authoritative for the current supported runtime path.
+> **Archived — Go-era architecture framing, retained for provenance only.** The body below describes
+> the abandoned "forked OpenCode Go core + 6 Go hooks" direction. The Go core was removed in
+> `ee2c1e2`; the runtime is now the Rust `dh-engine` host supervising a TS `worker.mjs`. For current
+> architecture see `docs/architecture/system-overview.md`; for the doc index see `docs/README.md`;
+> for product direction see `docs/adr/2026-05-10-personal-coding-assistant-direction.md`.
 
 Last reviewed against code: 2026-04-05
 

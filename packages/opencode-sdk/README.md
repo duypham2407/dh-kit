@@ -2,6 +2,15 @@
 
 dh-owned internal runtime bridge SDK for TypeScript ↔ Rust runtime communication.
 
+> **This package is LIVE, not vendored or dead.** Despite the `opencode-` name it is dh-original
+> code (see `FORK_ORIGIN.md`). It has **14 production consumers** but is easy to mistake for
+> unused: nothing imports the `@dh/opencode-sdk` specifier or a tsconfig alias — every consumer
+> imports it via a relative path (`../../../opencode-sdk/src/index.js`), and a specifier-only grep
+> finds zero hits. It contributes **runtime values** (not just types) to the worker bundle:
+> `buildBridgeEnvelopeContext` and `writeHookDecision` are used by
+> `opencode-app/src/executor/hook-enforcer.ts`. Consumers span `runtime`, `opencode-app`, `shared`,
+> and `storage`. Do not remove without re-checking relative imports.
+
 What exists today:
 
 - canonical bridge contract types (`types/`, `protocol/`, `client/`, `compat/`)

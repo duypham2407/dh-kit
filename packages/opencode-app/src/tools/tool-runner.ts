@@ -183,7 +183,13 @@ function evaluateToolPermission(
   if (permissionLevel === "allow") {
     return { allowed: true, requiresPermission: false, reason: "Tool explicitly allowed." };
   }
-  if (definition.defaultPermissionLevel === "auto_approve_with_policy") {
+  // Honor an explicit auto_approve_with_policy override (e.g. the tester running repo verify
+  // commands), not just tools whose own default is auto_approve_with_policy. The downstream
+  // tool (shell) still applies the strict bash-guard, so policy is enforced regardless.
+  if (
+    permissionLevel === "auto_approve_with_policy"
+    || definition.defaultPermissionLevel === "auto_approve_with_policy"
+  ) {
     return { allowed: true, requiresPermission: false, reason: "Tool auto-approved by policy." };
   }
   return {

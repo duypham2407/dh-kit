@@ -224,13 +224,14 @@ describe("workflow lanes", () => {
     });
 
     expect(result.summary.some((line) => line.includes("Executed work items: 1"))).toBe(true);
+    // The tester is deterministic (runs the repo's real verify commands) and does not call the
+    // provider — pass/fail is decided by exit codes, not by an LLM.
     expect(provider.calls.map((call) => call.messages[0]?.content)).toEqual([
       expect.stringContaining("Coordinator agent"),
       expect.stringContaining("Product Analyst"),
       expect.stringContaining("Solution Architect"),
       expect.stringContaining("Implementer agent"),
       expect.stringContaining("Code Reviewer agent"),
-      expect.stringContaining("QA Tester agent"),
     ]);
   });
 
@@ -266,12 +267,13 @@ describe("workflow lanes", () => {
     });
 
     expect(result.summary.some((line) => line.includes("Executed work items: 1"))).toBe(true);
+    // The tester is deterministic (runs the repo's real verify commands) and does not call the
+    // provider — pass/fail is decided by exit codes, not by an LLM.
     expect(provider.calls.map((call) => call.messages[0]?.content)).toEqual([
       expect.stringContaining("Coordinator agent"),
       expect.stringContaining("Solution Architect"),
       expect.stringContaining("Implementer agent"),
       expect.stringContaining("Code Reviewer agent"),
-      expect.stringContaining("QA Tester agent"),
     ]);
   });
 

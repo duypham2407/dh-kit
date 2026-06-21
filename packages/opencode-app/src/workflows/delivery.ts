@@ -54,6 +54,8 @@ export async function runDeliveryWorkflow(input: {
         browserEvidencePolicy: requiresBrowserVerification(input.objective) ? "required" : "optional",
         browserVerificationRequired: requiresBrowserVerification(input.objective),
         provider: input.provider,
+        repoRoot: input.repoRoot,
+        envelope: input.envelope,
       });
       const reviewGate = evaluateGate({
         workflow: {
@@ -78,7 +80,9 @@ export async function runDeliveryWorkflow(input: {
         },
         objective: input.objective,
         evidence: {
-          verificationEvidencePresent: tester.evidence.length > 0,
+          // Only a real FAIL (a verify command ran and exited non-zero) blocks the gate.
+          // PASS/PARTIAL pass through; this is what kills the old always-green gate.
+          verificationEvidencePresent: tester.status !== "FAIL",
         },
       });
 
@@ -117,8 +121,8 @@ export async function runDeliveryWorkflow(input: {
     localVerification: {
       pass: aggregateVerificationPass,
       reason: aggregateVerificationPass
-        ? "Tester evidence recorded for all delivery work items."
-        : "One or more delivery work items did not produce verification evidence.",
+        ? "Tester executed repo verification commands without a failing exit code across all delivery work items."
+        : "A repo verification command failed (non-zero exit) for one or more delivery work items.",
       evidence: executionReports.flatMap((report) => report.tester.evidence),
       limitations: executionReports.flatMap((report) => report.tester.limitations),
     },

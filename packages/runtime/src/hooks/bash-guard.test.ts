@@ -22,6 +22,16 @@ describe("evaluateBashCommand", () => {
     expect(result.blocked).toBe(false);
   });
 
+  it.each(["npm test", "cargo test", "go test ./...", "pytest", "yarn test", "bun test", "eslint ."])(
+    "explicitly allows verification command '%s' on strict",
+    (command) => {
+      const result = evaluateBashCommand(command, "strict");
+      expect(result.allowed).toBe(true);
+      expect(result.blocked).toBe(false);
+      expect(result.reason).toContain("Allowed command prefix");
+    },
+  );
+
   it("denies shell when permission level is deny", () => {
     const result = evaluateShellPermission("git status", "deny");
     expect(result.allowed).toBe(false);

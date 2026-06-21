@@ -30,7 +30,8 @@ export const SUBSTITUTION_RULES: BashSubstitutionRule[] = [
 ];
 
 export const ALLOWED_PREFIXES = [
-  "git", "npm", "pnpm", "node", "npx", "docker", "make", "cargo", "go", "python", "pip", "vitest", "tsc",
+  "git", "npm", "pnpm", "yarn", "bun", "node", "npx", "docker", "make", "cargo", "go", "python", "pip",
+  "pytest", "vitest", "tsc", "eslint",
 ];
 
 export function evaluateBashCommand(command: string, level: BashGuardLevel): BashGuardDecision {

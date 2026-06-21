@@ -120,8 +120,10 @@ describe("team agents with mock provider", () => {
     const reviewer = await runReviewer();
     expect(reviewer.status).toBe("PASS_WITH_NOTES");
 
+    // No repo context → tester cannot execute anything, so it reports PARTIAL honestly
+    // rather than fabricating a PASS.
     const tester = await runTester();
-    expect(tester.status).toBe("PASS");
+    expect(tester.status).toBe("PARTIAL");
   });
 
   it("tester fallback reports partial when required browser verification lacks evidence", async () => {

@@ -73,6 +73,7 @@ cd ~/Code/your-project
 dh --help
 dh status
 dh index
+dh ask "how does X work?"     # Grounded question over the indexed repo
 dh explain "functionName"    # Recommended: lookup specific symbols
 ```
 

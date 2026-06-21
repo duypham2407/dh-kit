@@ -1,1 +1,0 @@
-.opencode/openkit/AGENTS.md
